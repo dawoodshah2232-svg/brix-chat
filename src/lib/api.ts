@@ -1,15 +1,18 @@
-// Brix Chat — local API layer.
+// Brix Chat — API layer.
 //
 // Typed implementation whose method names and shapes mirror the REST catalog
-// documented in docs/API.md. Backed by localStorage today; swapping the
-// transport for HTTP later means re-implementing these same methods against
-// fetch — callers stay unchanged. Every method is async, returns a { data }
+// documented in docs/API.md. Every method is async, returns a { data }
 // envelope, and throws ApiError (HTTP-style code/status) on failure.
 //
-// LOCAL-ONLY: all data lives in this browser's localStorage. There is no
-// cross-device sync until a backend phase lands.
+// TRANSPORTS: BrixApi (this file's original class) is the localStorage
+// transport — all data lives in this browser. SupabaseBrixApi (bottom of this
+// file) implements the SAME repository surface against Supabase/PostgREST.
+// getTransport()/getApi() pick Supabase when VITE_SUPABASE_URL and
+// VITE_SUPABASE_ANON_KEY are set, else local. Method signatures and return
+// shapes never change between transports — callers stay unchanged.
 
 import { INTEGRATION_REGISTRY } from './integrations';
+import { isSupabaseEnabled } from './supabase-client';
 
 export interface Envelope<T> {
   data: T;
@@ -974,8 +977,8 @@ function paginate<T extends { id: string }>(items: T[], opts: ListOpts): Page<T>
 }
 
 export class BrixApi {
-  private workspace: string;
-  private actor: string;
+  protected workspace: string;
+  protected actor: string;
 
   constructor(workspace: string, actor = 'system') {
     this.workspace = workspace;
@@ -2669,7 +2672,2790 @@ export function samplePayload(event: string): Record<string, unknown> {
   }
 }
 
-/** Factory: one API instance per workspace (actor = signed-in display name). */
+/** Factory: one API instance per workspace (actor = signed-in display name).
+ *  Returns the active transport (Supabase when configured, else localStorage). */
 export function getApi(workspace: string, actor = 'system'): BrixApi {
-  return new BrixApi(workspace, actor);
+  return getTransport(workspace, actor);
 }
+
+// ===========================================================================
+// TRANSPORT LAYER — Supabase (PostgREST) implementation
+//
+// SupabaseBrixApi extends BrixApi and overrides namespace methods with
+// PostgREST implementations. Signatures and { data } envelopes are identical
+// to the localStorage transport; getTransport() picks this class only when
+// VITE_SUPABASE_URL + VITE_SUPABASE_ANON_KEY are both set.
+//
+// REAL SCHEMA (supabase/migrations/001_brix_core.sql, 002_seed_demo.sql,
+// 003_backend_contract.sql — read before touching this file):
+//   * UUID primary keys (gen_random_uuid()); this transport mints ids with
+//     crypto.randomUUID(). API id fields stay strings, so UUIDs fit.
+//   * Every table is scoped by workspace_id (uuid, NOT NULL). The local
+//     workspace slug (e.g. 'demo') is resolved to its UUID once per
+//     instance (wsId()) and applied to every query/insert.
+//   * conversations reference departments/members by UUID (department_id,
+//     assignee_id) — names are hydrated on read. Internal notes live in
+//     conversation_notes, NOT on the conversation row. Department membership
+//     is a join table (department_members). KB/canned/ticket categories are
+//     three separate tables (kb_categories, canned_categories,
+//     ticket_categories) with no scope column.
+//   * created_at/updated_at are timestamptz; the API's numeric created_at
+//     fields (ratings, departments, categories) are mapped epoch-millis.
+//   * Passcodes live in member_credentials (deny-all; RPCs only) — the
+//     browser NEVER reads or writes them directly. member_login() is the
+//     only anon-callable auth surface and returns safe columns only.
+//   * webhooks.secret_encrypted / webhooks.secret and api_keys.key_hash are
+//     excluded from member SELECT grants by design — the webhooks namespace
+//     stays on the local transport (a browser cannot mint an app-layer
+//     encrypted signing secret), and API keys store only SHA-256 hashes.
+//   * RLS: anon gets NO direct table access (widget RPCs + member_login
+//     only). Table reads/writes need an authenticated session whose
+//     auth.users id is linked via members.auth_user_id. Until such a
+//     session exists, PostgREST calls fail auth and guard() falls back to
+//     the localStorage transport — this is the designed graceful
+//     degradation, not a bug.
+//
+// GRACEFUL DEGRADATION: every remote call runs inside guard(). On
+// network/auth/PostgREST failure the call falls back to the localStorage
+// implementation with a non-blocking console warning. validation,
+// not_found, conflict and not_supported ApiErrors propagate (they are data
+// errors, not transport errors).
+//
+// Namespaces with no remote table (blog, helpDocs, contactMessages,
+// statusEntries, copilotSettings, securitySettings, dataSettings,
+// webhooks, deliveries, dataExport/dataImport/dataReset) intentionally keep
+// the localStorage implementation via the base class.
+//
+// REALTIME: the constructor calls ensureBrixRealtime(), which subscribes to
+// postgres_changes on conversations + messages + visitors (the tables the
+// migration publishes) and forwards events to onRemoteChange() listeners
+// (re-exported from this module).
+// ===========================================================================
+
+import { getSupabase, ensureBrixRealtime } from './supabase-client';
+import type { SupabaseClient } from '@supabase/supabase-js';
+
+export { onRemoteChange } from './supabase-client';
+export type { RemoteChange, RemoteChangeListener } from './supabase-client';
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+type Row = Record<string, any>;
+type Query = any;
+
+/** Map a PostgREST error to an ApiError. Auth/RLS denials become
+ *  'unauthorized' so guard() falls back to the local transport. */
+function supaError(e: unknown): ApiError {
+  const err = e as { code?: string; message?: string; status?: number };
+  const code = err?.code ?? '';
+  const msg = err?.message ?? 'Supabase request failed.';
+  if (code === 'PGRST116') return new ApiError('not_found', 'Record not found.', 404);
+  if (code === '23505') return new ApiError('conflict', msg, 409);
+  if (code === '23503') return new ApiError('validation', `Related record not found: ${msg}`, 422);
+  if (code === '23514') return new ApiError('validation', msg, 422);
+  if (code === '42501' || code === '28000' || err?.status === 401 || err?.status === 403) {
+    return new ApiError('unauthorized', msg, err?.status === 401 ? 401 : 403);
+  }
+  if (err?.status === 400) return new ApiError('validation', msg, 400);
+  return new ApiError('supabase_error', msg, err?.status ?? 500);
+}
+
+const asArr = <T>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
+const isoOf = (v: unknown): string => (typeof v === 'string' && v ? v : new Date().toISOString());
+const msOf = (v: unknown): number => {
+  const t = typeof v === 'string' && v ? Date.parse(v) : typeof v === 'number' ? v : NaN;
+  return Number.isFinite(t) ? t : Date.now();
+};
+/** Escape user text for a PostgREST ilike/or pattern. */
+const escLike = (s: string): string => s.replace(/[%_,*()]/g, (c) => `\\${c}`);
+
+// ---- row → API mappers (pure; mirror the migration column names) ----------
+
+const mapProperty = (r: Row): ApiProperty => ({
+  id: r.id,
+  name: r.name,
+  domain: r.domain ?? '',
+  public_key: r.public_key,
+  widget_config: { ...defaultWidgetConfig(), ...((r.widget_config ?? {}) as WidgetConfig) },
+  secure_mode: !!r.secure_mode,
+  created_at: isoOf(r.created_at),
+});
+
+const mapMessage = (r: Row): ApiMessage => ({
+  id: r.id,
+  conversation_id: r.conversation_id,
+  sender: (['visitor', 'agent', 'ai', 'system'] as MsgSender[]).includes(r.sender) ? r.sender : 'system',
+  kind: (['text', 'file', 'voice', 'rating'] as MsgKind[]).includes(r.kind) ? r.kind : 'text',
+  text: r.text ?? '',
+  metadata: (r.metadata ?? {}) as Record<string, unknown>,
+  created_at: isoOf(r.created_at),
+});
+
+const mapContact = (r: Row): ApiContact => ({
+  id: r.id,
+  name: r.name,
+  email: r.email ?? '',
+  phone: r.phone ?? '',
+  country: r.country ?? '',
+  tags: asArr<string>(r.tags),
+  notes: r.notes ?? '',
+  source: r.source ?? 'chat',
+  chats: r.chats_count ?? 0,
+  created_at: isoOf(r.created_at),
+  last_seen_at: isoOf(r.last_seen_at),
+});
+
+/** members table → legacy ApiAgent shape. passcode is NEVER readable
+ *  remotely (member_credentials is deny-all); it is '' here by design. */
+const mapAgent = (r: Row): ApiAgent => ({
+  id: r.id,
+  display_name: r.display_name,
+  role: r.role ?? 'agent',
+  online: r.status === 'online',
+  passcode: '',
+  created_at: isoOf(r.created_at),
+  last_login_at: r.last_login_at ? isoOf(r.last_login_at) : null,
+});
+
+const mapTicket = (r: Row): ApiTicket => ({
+  id: r.id,
+  property_id: r.property_id ?? null,
+  subject: r.subject,
+  requester_name: r.requester_name ?? 'Guest',
+  requester_email: r.requester_email ?? '',
+  message: r.message ?? '',
+  status: r.status ?? 'new',
+  priority: r.priority ?? 'medium',
+  assignee_id: r.assignee_id ?? null,
+  sla_due: r.sla_due ? isoOf(r.sla_due) : null,
+  conversation_id: r.conversation_id ?? null,
+  tags: asArr<string>(r.tags),
+  category_id: r.category_id ?? null,
+  created_at: isoOf(r.created_at),
+  updated_at: isoOf(r.updated_at),
+});
+
+const mapNotification = (r: Row): ApiNotification => ({
+  id: r.id,
+  type: r.type,
+  title: r.title,
+  body: r.body ?? '',
+  link: r.link ?? null,
+  read: !!r.read,
+  created_at: isoOf(r.created_at),
+});
+
+const mapRating = (r: Row): ApiRating => ({
+  id: r.id,
+  property_id: r.property_id,
+  conversation_id: r.conversation_id ?? null,
+  agent_id: r.member_id ?? null,
+  kind: r.kind,
+  score: r.score,
+  comment: r.comment ?? '',
+  created_at: msOf(r.created_at),
+});
+
+const mapCategory = (scope: ApiCategory['scope']) => (r: Row): ApiCategory => ({
+  id: r.id,
+  scope,
+  property_id: r.property_id ?? '',
+  name: r.name,
+  color: r.color ?? '#4f46e5',
+  created_at: msOf(r.created_at),
+});
+
+const CATEGORY_TABLES: Record<ApiCategory['scope'], string> = {
+  kb: 'kb_categories',
+  canned: 'canned_categories',
+  tickets: 'ticket_categories',
+};
+
+const mapView = (r: Row): ApiSavedView => ({
+  id: r.id,
+  name: r.name,
+  filters: (r.filters ?? {}) as ApiSavedView['filters'],
+  created_at: isoOf(r.created_at),
+});
+
+const mapPlay = (r: Row): ApiPlay => ({
+  id: r.id,
+  name: r.name,
+  steps: asArr<ApiPlayStep>(r.steps),
+  created_at: isoOf(r.created_at),
+});
+
+const mapGoal = (r: Row): ApiGoal => ({
+  id: r.id,
+  name: r.name,
+  event: r.event,
+  revenue: Number(r.revenue ?? 0),
+  created_at: isoOf(r.created_at),
+});
+
+const mapGoalEvent = (r: Row): ApiGoalEvent => ({
+  id: r.id,
+  goal_id: r.goal_id,
+  conversation_id: r.conversation_id ?? null,
+  value: Number(r.value ?? 0),
+  created_at: isoOf(r.created_at),
+});
+
+const mapCanned = (r: Row): ApiCanned => ({
+  id: r.id,
+  shortcut: r.shortcut ?? '',
+  title: r.title,
+  body: r.body ?? '',
+  category_id: r.category_id ?? null,
+});
+
+/** api_keys: key_hash is excluded from member SELECT grants by design, so it
+ *  is always '' here. The raw key is returned once at creation/rotation and
+ *  never persisted anywhere. */
+const mapApiKey = (r: Row): ApiKeyRecord => ({
+  id: r.id,
+  name: r.name,
+  prefix: r.prefix,
+  key_hash: '',
+  scopes: asArr<string>(r.scopes),
+  revoked: !!r.revoked,
+  usage_count: Number(r.usage_count ?? 0),
+  last_used_at: r.last_used_at ? isoOf(r.last_used_at) : null,
+  created_at: isoOf(r.created_at),
+});
+
+const mapAudit = (r: Row): AuditEntry => ({
+  id: r.id,
+  actor: r.actor_name ?? 'system',
+  action: r.action,
+  entity: r.entity ?? '',
+  entity_id: r.entity_id ?? '',
+  meta: (r.meta ?? {}) as Record<string, unknown>,
+  created_at: isoOf(r.created_at),
+});
+
+const mapUnanswered = (r: Row): ApiUnanswered => ({
+  id: r.id,
+  question: r.question,
+  conversation_id: r.conversation_id ?? null,
+  count: r.count ?? 1,
+  dismissed: !!r.dismissed,
+  created_at: isoOf(r.created_at),
+});
+
+
+// ===========================================================================
+// SupabaseBrixApi
+// ===========================================================================
+
+export class SupabaseBrixApi extends BrixApi {
+  private wsCache: string | null = null;
+
+  constructor(workspace: string, actor = 'system') {
+    super(workspace, actor);
+    ensureBrixRealtime();
+    this.wireNamespaces();
+  }
+
+  private sb(): SupabaseClient {
+    const c = getSupabase();
+    if (!c) throw new ApiError('supabase_unavailable', 'Supabase is not configured.', 503);
+    return c;
+  }
+
+  private rid(): string {
+    return crypto.randomUUID();
+  }
+
+  /**
+   * Resolve the local workspace slug (e.g. 'demo') to its UUID, caching the
+   * result. Throws unauthorized when the workspace is not provisioned in
+   * Supabase — guard() then falls back to the local transport, so an
+   * un-migrated project keeps working on localStorage.
+   */
+  private async wsId(): Promise<string> {
+    if (this.wsCache) return this.wsCache;
+    const { data, error } = await this.sb()
+      .from('workspaces')
+      .select('id')
+      .eq('slug', this.workspace)
+      .maybeSingle();
+    if (error) throw supaError(error);
+    if (!data) {
+      throw new ApiError('unauthorized', `Workspace '${this.workspace}' is not provisioned in Supabase.`, 401);
+    }
+    this.wsCache = (data as Row).id as string;
+    return this.wsCache;
+  }
+
+  /**
+   * Run a remote op; on transport failure (network/auth/RLS/PostgREST)
+   * fall back to the localStorage implementation with a non-blocking
+   * warning. validation / not_found / conflict / not_supported propagate —
+   * they are data errors, not transport errors.
+   */
+  private async guard<T>(remote: () => Promise<T>, local: () => Promise<T>): Promise<T> {
+    try {
+      return await remote();
+    } catch (e) {
+      if (
+        e instanceof ApiError &&
+        (e.code === 'validation' || e.code === 'not_found' || e.code === 'conflict' || e.code === 'not_supported')
+      ) {
+        throw e;
+      }
+      // eslint-disable-next-line no-console
+      console.warn('[brix-chat] Supabase transport failed — using local data instead:', e instanceof Error ? e.message : e);
+      return local();
+    }
+  }
+
+  // ---- PostgREST primitives -------------------------------------------------
+
+  /** Select rows scoped to this workspace. */
+  private async selWs<T>(table: string, map: (r: Row) => T, mod?: (q: Query) => Query): Promise<T[]> {
+    const ws = await this.wsId();
+    let q: Query = this.sb().from(table).select('*').eq('workspace_id', ws);
+    if (mod) q = mod(q);
+    const { data, error } = await q;
+    if (error) throw supaError(error);
+    return ((data ?? []) as Row[]).map(map);
+  }
+
+  private async oneWs<T>(table: string, map: (r: Row) => T, id: string, entity: string): Promise<T> {
+    const ws = await this.wsId();
+    const { data, error } = await this.sb()
+      .from(table)
+      .select('*')
+      .eq('workspace_id', ws)
+      .eq('id', id)
+      .maybeSingle();
+    if (error) throw supaError(error);
+    if (!data) throw new ApiError('not_found', `${entity} ${id} not found.`, 404);
+    return map(data as Row);
+  }
+
+  private async oneWsRaw(table: string, id: string, entity: string): Promise<Row> {
+    return this.oneWs(table, (r: Row) => r, id, entity);
+  }
+
+  private async ins<T>(table: string, row: Row, map: (r: Row) => T): Promise<T> {
+    const { data, error } = await this.sb().from(table).insert(row).select().single();
+    if (error) throw supaError(error);
+    return map(data as Row);
+  }
+
+  private async updWs<T>(table: string, id: string, patch: Row, map: (r: Row) => T, entity: string): Promise<T> {
+    const ws = await this.wsId();
+    const { data, error } = await this.sb()
+      .from(table)
+      .update(patch)
+      .eq('workspace_id', ws)
+      .eq('id', id)
+      .select();
+    if (error) throw supaError(error);
+    const rows = (data ?? []) as Row[];
+    if (!rows.length) throw new ApiError('not_found', `${entity} ${id} not found.`, 404);
+    return map(rows[0]);
+  }
+
+  private async delWs(table: string, id: string, entity: string): Promise<void> {
+    const ws = await this.wsId();
+    const { data, error } = await this.sb()
+      .from(table)
+      .delete()
+      .eq('workspace_id', ws)
+      .eq('id', id)
+      .select('id');
+    if (error) throw supaError(error);
+    if (!((data ?? []) as Row[]).length) throw new ApiError('not_found', `${entity} ${id} not found.`, 404);
+  }
+
+  /** Best-effort audit via the log_audit() RPC (authenticated-only). Audit
+   *  must never break the app, so all failures are swallowed. */
+  private async auditRemote(action: string, entity: string, entityId = '', meta: Row = {}): Promise<void> {
+    try {
+      const { error } = await this.sb().rpc('log_audit', {
+        p_action: action,
+        p_entity: entity,
+        p_entity_id: entityId,
+        p_meta: meta,
+      });
+      if (error) throw supaError(error);
+    } catch {
+      /* audit must never break the app */
+    }
+  }
+
+  /** Best-effort in-app notification. Swallowed on failure so a notification
+   *  can never turn a successful primary write into a local-fallback
+   *  duplicate. */
+  private async notify(
+    type: ApiNotification['type'],
+    title: string,
+    body: string,
+    link: string | null = null,
+    memberId: string | null = null,
+  ): Promise<void> {
+    try {
+      const ws = await this.wsId();
+      const { error } = await this.sb().from('notifications').insert({
+        id: this.rid(),
+        workspace_id: ws,
+        member_id: memberId,
+        type,
+        title,
+        body,
+        link,
+        read: false,
+      });
+      if (error) throw supaError(error);
+    } catch {
+      /* notifications must never break the app */
+    }
+  }
+
+  // ---- hydration helpers ----------------------------------------------------
+
+  /** conversations → ApiConversation: joins messages, conversation_notes,
+   *  department names and assignee display names. */
+  private async hydrateConvs(rows: Row[]): Promise<ApiConversation[]> {
+    const ids = rows.map((r) => r.id as string);
+    const msgByConv = new Map<string, ApiMessage[]>();
+    const notesByConv = new Map<string, ConvNote[]>();
+    if (ids.length) {
+      const { data: msgs, error: mErr } = await this.sb()
+        .from('messages')
+        .select('*')
+        .in('conversation_id', ids)
+        .order('created_at', { ascending: true });
+      if (mErr) throw supaError(mErr);
+      for (const m of (msgs ?? []) as Row[]) {
+        const arr = msgByConv.get(m.conversation_id) ?? [];
+        arr.push(mapMessage(m));
+        msgByConv.set(m.conversation_id, arr);
+      }
+      const { data: notes, error: nErr } = await this.sb()
+        .from('conversation_notes')
+        .select('*')
+        .in('conversation_id', ids)
+        .order('created_at', { ascending: true });
+      if (nErr) throw supaError(nErr);
+      for (const n of (notes ?? []) as Row[]) {
+        const arr = notesByConv.get(n.conversation_id) ?? [];
+        arr.push({ author: n.author_name ?? '', text: n.text ?? '', created_at: isoOf(n.created_at) });
+        notesByConv.set(n.conversation_id, arr);
+      }
+    }
+    const depIds = [...new Set(rows.map((r) => r.department_id).filter(Boolean))];
+    const memIds = [...new Set(rows.map((r) => r.assignee_id).filter(Boolean))];
+    const depName = new Map<string, string>();
+    const memName = new Map<string, string>();
+    if (depIds.length) {
+      const { data, error } = await this.sb().from('departments').select('id,name').in('id', depIds);
+      if (!error) for (const d of (data ?? []) as Row[]) depName.set(d.id, d.name);
+    }
+    if (memIds.length) {
+      const { data, error } = await this.sb().from('members').select('id,display_name').in('id', memIds);
+      if (!error) for (const m of (data ?? []) as Row[]) memName.set(m.id, m.display_name);
+    }
+    return rows.map((r) => ({
+      id: r.id,
+      property_id: r.property_id,
+      visitor_name: r.visitor_name ?? 'Guest',
+      visitor_email: r.visitor_email ?? '',
+      page_url: r.page_url ?? '',
+      referrer: r.referrer ?? '',
+      status: r.status ?? 'open',
+      department: r.department_id ? (depName.get(r.department_id) ?? '') : '',
+      agent_id: r.assignee_id ?? null,
+      agent_name: r.assignee_id ? (memName.get(r.assignee_id) ?? null) : null,
+      tags: asArr<string>(r.tags),
+      priority: r.priority ?? 'medium',
+      notes: notesByConv.get(r.id) ?? [],
+      rating: r.rating ?? null,
+      unread: r.unread ?? 0,
+      ai_handled: !!r.ai_handled,
+      created_at: isoOf(r.created_at),
+      updated_at: isoOf(r.updated_at),
+      closed_at: r.closed_at ? isoOf(r.closed_at) : null,
+      messages: msgByConv.get(r.id) ?? [],
+    }));
+  }
+
+  /** departments → ApiDepartment: agent_ids come from department_members. */
+  private async hydrateDepts(rows: Row[]): Promise<ApiDepartment[]> {
+    const ids = rows.map((r) => r.id as string);
+    const memByDep = new Map<string, string[]>();
+    if (ids.length) {
+      const { data, error } = await this.sb()
+        .from('department_members')
+        .select('department_id,member_id')
+        .in('department_id', ids);
+      if (error) throw supaError(error);
+      for (const j of (data ?? []) as Row[]) {
+        const arr = memByDep.get(j.department_id) ?? [];
+        arr.push(j.member_id);
+        memByDep.set(j.department_id, arr);
+      }
+    }
+    return rows.map((r) => ({
+      id: r.id,
+      property_id: r.property_id,
+      name: r.name,
+      description: r.description ?? '',
+      agent_ids: memByDep.get(r.id) ?? [],
+      routing_mode: r.routing_mode ?? 'round-robin',
+      hours_override: r.hours_override ?? null,
+      offline_behavior: r.offline_behavior ?? 'message',
+      created_at: msOf(r.created_at),
+    }));
+  }
+
+  /** members → ApiMember: department_ids come from department_members.
+   *  passcode is always '' remotely (member_credentials is deny-all). */
+  private async hydrateMembers(rows: Row[]): Promise<ApiMember[]> {
+    const ids = rows.map((r) => r.id as string);
+    const depByMem = new Map<string, string[]>();
+    if (ids.length) {
+      const { data, error } = await this.sb()
+        .from('department_members')
+        .select('department_id,member_id')
+        .in('member_id', ids);
+      if (error) throw supaError(error);
+      for (const j of (data ?? []) as Row[]) {
+        const arr = depByMem.get(j.member_id) ?? [];
+        arr.push(j.department_id);
+        depByMem.set(j.member_id, arr);
+      }
+    }
+    return rows.map((r) => ({
+      id: r.id,
+      display_name: r.display_name,
+      initials: r.initials || memberInitials(r.display_name),
+      color: r.color ?? '#4f46e5',
+      role: r.role ?? 'agent',
+      passcode: '',
+      last_login: r.last_login_at ? isoOf(r.last_login_at) : null,
+      status: r.status ?? 'offline',
+      job_title: r.job_title ?? '',
+      avatar_data_url: r.avatar_url ?? null,
+      department_ids: depByMem.get(r.id) ?? [],
+      created_at: isoOf(r.created_at),
+    }));
+  }
+
+  /** kb_articles → ApiArticle: category name resolved from kb_categories. */
+  private async hydrateArticles(rows: Row[]): Promise<ApiArticle[]> {
+    const ws = await this.wsId();
+    const catName = new Map<string, string>();
+    const { data, error } = await this.sb()
+      .from('kb_categories')
+      .select('id,name')
+      .eq('workspace_id', ws);
+    if (!error) for (const c of (data ?? []) as Row[]) catName.set(c.id, c.name);
+    return rows.map((r) => ({
+      id: r.id,
+      title: r.title,
+      slug: r.slug,
+      body: r.body ?? '',
+      category: r.category_id ? (catName.get(r.category_id) ?? '') : 'General',
+      category_id: r.category_id ?? null,
+      status: r.status ?? 'draft',
+      views: r.views ?? 0,
+      updated_at: isoOf(r.updated_at),
+    }));
+  }
+
+  /** Sync the department_members join rows for one department or member. */
+  private async syncDeptMembers(departmentId: string, memberIds: string[]): Promise<void> {
+    const { error: delErr } = await this.sb()
+      .from('department_members')
+      .delete()
+      .eq('department_id', departmentId);
+    if (delErr) throw supaError(delErr);
+    if (memberIds.length) {
+      const { error: insErr } = await this.sb()
+        .from('department_members')
+        .insert(memberIds.map((member_id) => ({ department_id: departmentId, member_id })));
+      if (insErr) throw supaError(insErr);
+    }
+  }
+
+  /** Resolve a department name to its UUID within a property (null when absent). */
+  private async deptIdByName(propertyId: string, name: string): Promise<string | null> {
+    const ws = await this.wsId();
+    const { data, error } = await this.sb()
+      .from('departments')
+      .select('id')
+      .eq('workspace_id', ws)
+      .eq('property_id', propertyId)
+      .ilike('name', name)
+      .maybeSingle();
+    if (error) throw supaError(error);
+    return (data as Row | null)?.id ?? null;
+  }
+
+
+  private wireNamespaces(): void {
+    // ---- properties -----------------------------------------------------
+    const base_properties = this.properties;
+    this.properties = {
+      ...base_properties,
+      list: () =>
+        this.guard(
+          async () => ({
+            data: await this.selWs('properties', mapProperty, (q) => q.order('created_at', { ascending: false })),
+          }),
+          () => base_properties.list(),
+        ),
+      get: (id: string) =>
+        this.guard(async () => ({ data: await this.oneWs('properties', mapProperty, id, 'Property') }), () =>
+          base_properties.get(id),
+        ),
+      getByPublicKey: (publicKey: string) =>
+        this.guard(
+          async () => {
+            const ws = await this.wsId();
+            const { data, error } = await this.sb()
+              .from('properties')
+              .select('*')
+              .eq('workspace_id', ws)
+              .eq('public_key', publicKey)
+              .maybeSingle();
+            if (error) throw supaError(error);
+            if (!data) throw new ApiError('not_found', `No property with public key ${publicKey}.`, 404);
+            return { data: mapProperty(data as Row) };
+          },
+          () => base_properties.getByPublicKey(publicKey),
+        ),
+      create: (input: { name: string; domain?: string }) =>
+        this.guard(
+          async () => {
+            if (!input.name.trim()) throw new ApiError('validation', 'Property name is required.', 422);
+            const ws = await this.wsId();
+            const row = {
+              id: this.rid(),
+              workspace_id: ws,
+              name: input.name.trim(),
+              domain: (input.domain ?? '').trim(),
+              public_key: `bx_${randomHex(9)}`,
+              widget_config: defaultWidgetConfig(),
+              secure_mode: false,
+            };
+            const out = await this.ins('properties', row, mapProperty);
+            await this.auditRemote('property.created', 'property', row.id, { name: row.name });
+            return { data: out };
+          },
+          () => base_properties.create(input),
+        ),
+      update: (id: string, patch: Partial<Pick<ApiProperty, 'name' | 'domain' | 'secure_mode'>>) =>
+        this.guard(
+          async () => ({ data: await this.updWs('properties', id, { ...patch }, mapProperty, 'Property') }),
+          () => base_properties.update(id, patch),
+        ),
+      regenerateKey: (id: string) =>
+        this.guard(
+          async () => {
+            const public_key = `bx_${randomHex(9)}`;
+            await this.updWs('properties', id, { public_key }, mapProperty, 'Property');
+            await this.auditRemote('property.key_regenerated', 'property', id, {});
+            return { data: { public_key } };
+          },
+          () => base_properties.regenerateKey(id),
+        ),
+      remove: (id: string) =>
+        this.guard(
+          async () => {
+            await this.delWs('properties', id, 'Property');
+            await this.auditRemote('property.deleted', 'property', id, {});
+            return { data: { deleted: true as const } };
+          },
+          () => base_properties.remove(id),
+        ),
+    };
+
+    // ---- widget config ----------------------------------------------------
+    const base_widget = this.widget;
+    this.widget = {
+      ...base_widget,
+      getConfig: (propertyId: string) =>
+        this.guard(
+          async () => ({ data: (await this.oneWs('properties', mapProperty, propertyId, 'Property')).widget_config }),
+          () => base_widget.getConfig(propertyId),
+        ),
+      updateConfig: (propertyId: string, patch: Partial<WidgetConfig>) =>
+        this.guard(
+          async () => {
+            const p = await this.oneWs('properties', mapProperty, propertyId, 'Property');
+            const widget_config = { ...p.widget_config, ...patch };
+            await this.updWs('properties', propertyId, { widget_config }, mapProperty, 'Property');
+            await this.auditRemote('widget.updated', 'property', propertyId, patch as Row);
+            return { data: widget_config };
+          },
+          () => base_widget.updateConfig(propertyId, patch),
+        ),
+    };
+
+    // ---- conversations --------------------------------------------------
+    const base_conversations = this.conversations;
+    this.conversations = {
+      ...base_conversations,
+      list: (
+        opts: { propertyId?: string; status?: ConvStatus; tag?: string; priority?: TicketPriority; assignee?: string; q?: string } & ListOpts = {},
+      ) =>
+        this.guard(
+          async () => {
+            const ws = await this.wsId();
+            let q: Query = this.sb()
+              .from('conversations')
+              .select('*')
+              .eq('workspace_id', ws)
+              .order('updated_at', { ascending: false });
+            if (opts.propertyId) q = q.eq('property_id', opts.propertyId);
+            if (opts.status) q = q.eq('status', opts.status);
+            if (opts.priority) q = q.eq('priority', opts.priority);
+            if (opts.tag) q = q.contains('tags', [opts.tag]);
+            if (opts.assignee) {
+              q = opts.assignee === 'unassigned' ? q.is('assignee_id', null) : q.eq('assignee_id', opts.assignee);
+            }
+            const { data, error } = await q;
+            if (error) throw supaError(error);
+            let convs = await this.hydrateConvs((data ?? []) as Row[]);
+            if (opts.q) {
+              const ql = opts.q.toLowerCase();
+              convs = convs.filter(
+                (c) =>
+                  c.visitor_name.toLowerCase().includes(ql) ||
+                  c.messages.some((m) => m.text.toLowerCase().includes(ql)),
+              );
+            }
+            return { data: paginate(convs, opts) };
+          },
+          () => base_conversations.list(opts),
+        ),
+      get: (id: string) =>
+        this.guard(
+          async () => ({ data: (await this.hydrateConvs([await this.oneWsRaw('conversations', id, 'Conversation')]))[0] }),
+          () => base_conversations.get(id),
+        ),
+      startSession: (propertyId: string, visitor: { name?: string; email?: string; page_url?: string; referrer?: string }) =>
+        this.guard(
+          async () => {
+            const ws = await this.wsId();
+            const prop = await this.oneWs('properties', mapProperty, propertyId, 'Property');
+            const convId = this.rid();
+            const department_id = await this.deptIdByName(propertyId, 'Support').catch(() => null);
+            await this.ins('conversations', {
+              id: convId,
+              workspace_id: ws,
+              property_id: propertyId,
+              visitor_name: visitor.name?.trim() || 'Guest',
+              visitor_email: visitor.email?.trim() || '',
+              page_url: visitor.page_url || '',
+              referrer: visitor.referrer || '',
+              status: 'open',
+              department_id,
+            }, (r: Row) => r);
+            const greeting = await this.ins('messages', {
+              id: this.rid(),
+              workspace_id: ws,
+              conversation_id: convId,
+              sender: 'agent',
+              kind: 'text',
+              text: prop.widget_config.greeting,
+              metadata: {},
+            }, mapMessage);
+            await this.auditRemote('conversation.started', 'conversation', convId, { visitor: visitor.name || 'Guest' });
+            const [conv] = await this.hydrateConvs([await this.oneWsRaw('conversations', convId, 'Conversation')]);
+            conv.messages = [greeting, ...conv.messages.filter((m) => m.id !== greeting.id)];
+            return { data: conv };
+          },
+          () => base_conversations.startSession(propertyId, visitor),
+        ),
+      sendMessage: (id: string, input: { sender: MsgSender; text: string; kind?: MsgKind; metadata?: Record<string, unknown> }) =>
+        this.guard(
+          async () => {
+            if (!input.text.trim()) throw new ApiError('validation', 'Message text is required.', 422);
+            const row = await this.oneWsRaw('conversations', id, 'Conversation');
+            const m = await this.ins('messages', {
+              id: this.rid(),
+              workspace_id: row.workspace_id,
+              conversation_id: id,
+              sender: input.sender,
+              kind: input.kind ?? 'text',
+              text: input.text.trim(),
+              metadata: input.metadata ?? {},
+            }, mapMessage);
+            const patch: Row = {};
+            if (input.sender === 'visitor') patch.unread = (row.unread ?? 0) + 1;
+            if (row.status !== 'open') {
+              patch.status = 'open';
+              patch.closed_at = null;
+            }
+            if (Object.keys(patch).length) await this.updWs('conversations', id, patch, (r: Row) => r, 'Conversation');
+            return { data: m };
+          },
+          () => base_conversations.sendMessage(id, input),
+        ),
+      assign: (id: string, input: { agent_id?: string | null; department?: string }) =>
+        this.guard(
+          async () => {
+            const row = await this.oneWsRaw('conversations', id, 'Conversation');
+            const patch: Row = {};
+            if (input.agent_id !== undefined) {
+              patch.assignee_id = input.agent_id;
+              if (input.agent_id) {
+                const mem = await this.oneWsRaw('members', input.agent_id, 'Member');
+                await this.auditRemote('conversation.assigned', 'conversation', id, {
+                  agent: mem.display_name,
+                  department: input.department,
+                });
+              }
+            }
+            if (input.department) {
+              patch.department_id = await this.deptIdByName(row.property_id, input.department);
+            }
+            const updated = await this.updWs('conversations', id, patch, (r: Row) => r, 'Conversation');
+            return { data: (await this.hydrateConvs([updated]))[0] };
+          },
+          () => base_conversations.assign(id, input),
+        ),
+      transfer: (id: string, target: { agent_id?: string | null; department_id?: string | null }, note: string) =>
+        this.guard(
+          async () => {
+            const ws = await this.wsId();
+            const [conv] = await this.hydrateConvs([await this.oneWsRaw('conversations', id, 'Conversation')]);
+            const fromAgent = conv.agent_name ?? 'Unassigned';
+            const fromDept = conv.department;
+            const patch: Row = {};
+            let toAgent = 'Unassigned';
+            if (target.agent_id !== undefined) {
+              patch.assignee_id = target.agent_id;
+              if (target.agent_id) {
+                const mem = await this.oneWsRaw('members', target.agent_id, 'Member');
+                toAgent = mem.display_name;
+              }
+            } else {
+              toAgent = fromAgent;
+            }
+            let toDept = fromDept;
+            if (target.department_id) {
+              const dep = await this.oneWsRaw('departments', target.department_id, 'Department');
+              patch.department_id = dep.id;
+              toDept = dep.name;
+            }
+            const summary = `Transferred from ${fromAgent} (${fromDept}) to ${toAgent} (${toDept})${note.trim() ? ` — ${note.trim()}` : ''}`;
+            await this.updWs('conversations', id, patch, (r: Row) => r, 'Conversation');
+            await this.ins('conversation_notes', {
+              id: this.rid(),
+              workspace_id: ws,
+              conversation_id: id,
+              author_name: this.actor,
+              text: summary,
+            }, (r: Row) => r);
+            await this.ins('messages', {
+              id: this.rid(),
+              workspace_id: ws,
+              conversation_id: id,
+              sender: 'system',
+              kind: 'text',
+              text: `🔀 ${summary}`,
+              metadata: { transfer: true },
+            }, mapMessage);
+            if (target.agent_id) {
+              await this.notify('chat.assigned', `Chat transferred to ${toAgent}`, `${conv.visitor_name} — ${summary}`, `/app?c=${id}`, target.agent_id);
+            }
+            await this.auditRemote('conversation.transferred', 'conversation', id, {
+              from: `${fromAgent} / ${fromDept}`,
+              to: `${toAgent} / ${toDept}`,
+              note: note.trim(),
+            });
+            return { data: (await this.hydrateConvs([await this.oneWsRaw('conversations', id, 'Conversation')]))[0] };
+          },
+          () => base_conversations.transfer(id, target, note),
+        ),
+      setStatus: (id: string, status: ConvStatus) =>
+        this.guard(
+          async () => {
+            const row = await this.oneWsRaw('conversations', id, 'Conversation');
+            const patch: Row = { status, closed_at: status === 'closed' ? new Date().toISOString() : null };
+            if (status !== 'open') patch.unread = 0;
+            const updated = await this.updWs('conversations', id, patch, (r: Row) => r, 'Conversation');
+            await this.auditRemote('conversation.status_changed', 'conversation', id, { from: row.status, to: status });
+            return { data: (await this.hydrateConvs([updated]))[0] };
+          },
+          () => base_conversations.setStatus(id, status),
+        ),
+      setTags: (id: string, tags: string[]) =>
+        this.guard(
+          async () => {
+            const clean = [...new Set(tags.map((t) => t.trim().toLowerCase()).filter(Boolean))];
+            const updated = await this.updWs('conversations', id, { tags: clean }, (r: Row) => r, 'Conversation');
+            return { data: (await this.hydrateConvs([updated]))[0] };
+          },
+          () => base_conversations.setTags(id, tags),
+        ),
+      addNote: (id: string, input: { author: string; text: string }) =>
+        this.guard(
+          async () => {
+            if (!input.text.trim()) throw new ApiError('validation', 'Note text is required.', 422);
+            const row = await this.oneWsRaw('conversations', id, 'Conversation');
+            const { data, error } = await this.sb()
+              .from('conversation_notes')
+              .insert({
+                id: this.rid(),
+                workspace_id: row.workspace_id,
+                conversation_id: id,
+                author_name: input.author,
+                text: input.text.trim(),
+              })
+              .select()
+              .single();
+            if (error) throw supaError(error);
+            const n: ConvNote = {
+              author: (data as Row).author_name ?? '',
+              text: (data as Row).text ?? '',
+              created_at: isoOf((data as Row).created_at),
+            };
+            return { data: n };
+          },
+          () => base_conversations.addNote(id, input),
+        ),
+      setRating: (id: string, rating: number) =>
+        this.guard(
+          async () => {
+            if (rating < 1 || rating > 5) throw new ApiError('validation', 'Rating must be 1–5.', 422);
+            const updated = await this.updWs('conversations', id, { rating }, (r: Row) => r, 'Conversation');
+            return { data: (await this.hydrateConvs([updated]))[0] };
+          },
+          () => base_conversations.setRating(id, rating),
+        ),
+      markRead: (id: string) =>
+        this.guard(
+          async () => {
+            await this.updWs('conversations', id, { unread: 0 }, (r: Row) => r, 'Conversation');
+            return { data: { unread: 0 } };
+          },
+          () => base_conversations.markRead(id),
+        ),
+    };
+
+    // ---- contacts ---------------------------------------------------------
+    const base_contacts = this.contacts;
+    this.contacts = {
+      ...base_contacts,
+      list: (opts: { q?: string; tag?: string } & ListOpts = {}) =>
+        this.guard(
+          async () => {
+            const ws = await this.wsId();
+            let q: Query = this.sb()
+              .from('contacts')
+              .select('*')
+              .eq('workspace_id', ws)
+              .order('last_seen_at', { ascending: false });
+            if (opts.q) {
+              const t = `%${escLike(opts.q.trim())}%`;
+              q = q.or(`name.ilike.${t},email.ilike.${t}`);
+            }
+            if (opts.tag) q = q.contains('tags', [opts.tag]);
+            const { data, error } = await q;
+            if (error) throw supaError(error);
+            return { data: paginate(((data ?? []) as Row[]).map(mapContact), opts) };
+          },
+          () => base_contacts.list(opts),
+        ),
+      get: (id: string) =>
+        this.guard(async () => ({ data: await this.oneWs('contacts', mapContact, id, 'Contact') }), () =>
+          base_contacts.get(id),
+        ),
+      create: (input: { name: string; email?: string; phone?: string; country?: string; tags?: string[]; notes?: string; source?: string }) =>
+        this.guard(
+          async () => {
+            if (!input.name.trim()) throw new ApiError('validation', 'Contact name is required.', 422);
+            const ws = await this.wsId();
+            const out = await this.ins('contacts', {
+              id: this.rid(),
+              workspace_id: ws,
+              name: input.name.trim(),
+              email: (input.email ?? '').trim(),
+              phone: (input.phone ?? '').trim(),
+              country: (input.country ?? '').trim(),
+              tags: input.tags ?? [],
+              notes: input.notes ?? '',
+              source: input.source ?? 'api',
+            }, mapContact);
+            await this.auditRemote('contact.created', 'contact', out.id, { name: out.name });
+            return { data: out };
+          },
+          () => base_contacts.create(input),
+        ),
+      update: (id: string, patch: Partial<Pick<ApiContact, 'name' | 'email' | 'phone' | 'country' | 'tags' | 'notes'>>) =>
+        this.guard(
+          async () => {
+            const row: Row = { ...patch, last_seen_at: new Date().toISOString() };
+            const out = await this.updWs('contacts', id, row, mapContact, 'Contact');
+            await this.auditRemote('contact.updated', 'contact', id, patch as Row);
+            return { data: out };
+          },
+          () => base_contacts.update(id, patch),
+        ),
+      remove: (id: string) =>
+        this.guard(
+          async () => {
+            await this.delWs('contacts', id, 'Contact');
+            await this.auditRemote('contact.deleted', 'contact', id, {});
+            return { data: { deleted: true as const } };
+          },
+          () => base_contacts.remove(id),
+        ),
+    };
+
+    // ---- agents / team (legacy surface → members table) --------------------
+    const base_agents = this.agents;
+    this.agents = {
+      ...base_agents,
+      list: () =>
+        this.guard(
+          async () => ({
+            data: await this.selWs('members', mapAgent, (q) => q.order('display_name', { ascending: true })),
+          }),
+          () => base_agents.list(),
+        ),
+      invite: (input: { display_name: string; role?: TeamRole }) =>
+        this.guard(
+          async () => {
+            const name = input.display_name.trim();
+            if (!name) throw new ApiError('validation', 'Display name is required.', 422);
+            const ws = await this.wsId();
+            const existing = await this.selWs('members', (r: Row) => r.display_name as string);
+            if (existing.some((n) => n.toLowerCase() === name.toLowerCase())) {
+              throw new ApiError('conflict', 'A team member with that name already exists.', 409);
+            }
+            const passcode = String(Math.floor(100000 + Math.random() * 900000));
+            const id = this.rid();
+            await this.ins('members', {
+              id,
+              workspace_id: ws,
+              display_name: name,
+              initials: memberInitials(name),
+              color: ['#4f46e5', '#0891b2', '#059669', '#f59e0b', '#8b5cf6'][existing.length % 5],
+              role: input.role ?? 'agent',
+              status: 'offline',
+            }, (r: Row) => r);
+            // Store the passcode hash server-side when the session allows it
+            // (member_set_passcode is authenticated-only; without a session
+            // the member exists but the passcode must be set from team
+            // settings once signed in).
+            try {
+              const { error } = await this.sb().rpc('member_set_passcode', { p_member_id: id, p_passcode: passcode });
+              if (error) throw supaError(error);
+            } catch (e) {
+              // eslint-disable-next-line no-console
+              console.warn('[brix-chat] invite: passcode could not be stored remotely:', e instanceof Error ? e.message : e);
+            }
+            await this.auditRemote('agent.invited', 'agent', id, { name, role: input.role ?? 'agent' });
+            const agent = await this.oneWs('members', mapAgent, id, 'Agent');
+            return { data: { agent: { ...agent, passcode }, passcode } };
+          },
+          () => base_agents.invite(input),
+        ),
+      update: (id: string, patch: Partial<Pick<ApiAgent, 'role' | 'online' | 'display_name'>>) =>
+        this.guard(
+          async () => {
+            const row: Row = {};
+            if (patch.role !== undefined) row.role = patch.role;
+            if (patch.display_name !== undefined) {
+              if (!patch.display_name.trim()) throw new ApiError('validation', 'Display name is required.', 422);
+              row.display_name = patch.display_name.trim();
+              row.initials = memberInitials(row.display_name);
+            }
+            if (patch.online !== undefined) row.status = patch.online ? 'online' : 'offline';
+            const out = await this.updWs('members', id, row, mapAgent, 'Agent');
+            await this.auditRemote('agent.updated', 'agent', id, patch as Row);
+            return { data: out };
+          },
+          () => base_agents.update(id, patch),
+        ),
+      remove: (id: string) =>
+        this.guard(
+          async () => {
+            await this.delWs('members', id, 'Agent');
+            await this.auditRemote('agent.removed', 'agent', id, {});
+            return { data: { deleted: true as const } };
+          },
+          () => base_agents.remove(id),
+        ),
+    };
+
+    // ---- tickets ------------------------------------------------------------
+    const base_tickets = this.tickets;
+    this.tickets = {
+      ...base_tickets,
+      list: (opts: { status?: TicketStatus; priority?: TicketPriority; assignee?: string; q?: string; category?: string } & ListOpts = {}) =>
+        this.guard(
+          async () => {
+            const ws = await this.wsId();
+            let q: Query = this.sb()
+              .from('tickets')
+              .select('*')
+              .eq('workspace_id', ws)
+              .order('created_at', { ascending: false });
+            if (opts.status) q = q.eq('status', opts.status);
+            if (opts.priority) q = q.eq('priority', opts.priority);
+            if (opts.category) q = q.eq('category_id', opts.category);
+            if (opts.assignee) {
+              q = opts.assignee === 'unassigned' ? q.is('assignee_id', null) : q.eq('assignee_id', opts.assignee);
+            }
+            const { data, error } = await q;
+            if (error) throw supaError(error);
+            let items = ((data ?? []) as Row[]).map(mapTicket);
+            if (opts.q) {
+              const ql = opts.q.toLowerCase();
+              items = items.filter(
+                (t) =>
+                  t.subject.toLowerCase().includes(ql) ||
+                  t.requester_name.toLowerCase().includes(ql) ||
+                  t.requester_email.toLowerCase().includes(ql) ||
+                  t.message.toLowerCase().includes(ql),
+              );
+            }
+            return { data: paginate(items, opts) };
+          },
+          () => base_tickets.list(opts),
+        ),
+      get: (id: string) =>
+        this.guard(async () => ({ data: await this.oneWs('tickets', mapTicket, id, 'Ticket') }), () =>
+          base_tickets.get(id),
+        ),
+      create: (input: {
+        subject: string; requester_name: string; requester_email?: string; message: string;
+        property_id?: string | null; priority?: TicketPriority; assignee_id?: string | null;
+        sla_due?: string | null; conversation_id?: string | null; tags?: string[]; category_id?: string | null;
+      }) =>
+        this.guard(
+          async () => {
+            if (!input.subject.trim() || !input.message.trim()) {
+              throw new ApiError('validation', 'Subject and message are required.', 422);
+            }
+            const ws = await this.wsId();
+            const out = await this.ins('tickets', {
+              id: this.rid(),
+              workspace_id: ws,
+              property_id: input.property_id ?? null,
+              subject: input.subject.trim(),
+              message: input.message.trim(),
+              requester_name: input.requester_name.trim() || 'Guest',
+              requester_email: (input.requester_email ?? '').trim(),
+              status: 'new',
+              priority: input.priority ?? 'medium',
+              assignee_id: input.assignee_id ?? null,
+              sla_due: input.sla_due ?? null,
+              conversation_id: input.conversation_id ?? null,
+              tags: input.tags ?? [],
+              category_id: input.category_id ?? null,
+            }, mapTicket);
+            await this.auditRemote('ticket.created', 'ticket', out.id, { subject: out.subject, priority: out.priority });
+            await this.notify('ticket.created', `New ticket: ${out.subject}`, `From ${out.requester_name} · priority ${out.priority}`, '/app/tickets');
+            return { data: out };
+          },
+          () => base_tickets.create(input),
+        ),
+      update: (id: string, patch: Partial<Pick<ApiTicket, 'subject' | 'message' | 'requester_name' | 'requester_email' | 'tags' | 'sla_due' | 'property_id' | 'status' | 'priority' | 'assignee_id' | 'category_id'>>) =>
+        this.guard(
+          async () => {
+            const out = await this.updWs('tickets', id, { ...patch }, mapTicket, 'Ticket');
+            await this.auditRemote('ticket.updated', 'ticket', id, patch as Row);
+            return { data: out };
+          },
+          () => base_tickets.update(id, patch),
+        ),
+      setStatus: (id: string, status: TicketStatus) =>
+        this.guard(
+          async () => {
+            const row = await this.oneWsRaw('tickets', id, 'Ticket');
+            const out = await this.updWs('tickets', id, { status }, mapTicket, 'Ticket');
+            await this.auditRemote('ticket.status_changed', 'ticket', id, { from: row.status, to: status });
+            return { data: out };
+          },
+          () => base_tickets.setStatus(id, status),
+        ),
+      assign: (id: string, agentId: string | null) =>
+        this.guard(
+          async () => {
+            const out = await this.updWs('tickets', id, { assignee_id: agentId }, mapTicket, 'Ticket');
+            let name: string | null = null;
+            if (agentId) {
+              const mem = await this.oneWsRaw('members', agentId, 'Member');
+              name = mem.display_name;
+            }
+            await this.auditRemote('ticket.assigned', 'ticket', id, { assignee: name });
+            if (agentId) {
+              await this.notify('chat.assigned', `Ticket assigned to ${name}`, out.subject, '/app/tickets', agentId);
+            }
+            return { data: out };
+          },
+          () => base_tickets.assign(id, agentId),
+        ),
+      setPriority: (id: string, p: TicketPriority) =>
+        this.guard(
+          async () => {
+            const row = await this.oneWsRaw('tickets', id, 'Ticket');
+            const out = await this.updWs('tickets', id, { priority: p }, mapTicket, 'Ticket');
+            await this.auditRemote('ticket.priority_changed', 'ticket', id, { from: row.priority, to: p });
+            return { data: out };
+          },
+          () => base_tickets.setPriority(id, p),
+        ),
+      bulk: (ids: string[], action: 'resolve' | 'assign' | 'spam', agentId?: string) =>
+        this.guard(
+          async () => {
+            if (!ids.length) throw new ApiError('validation', 'Select at least one ticket.', 422);
+            if (action === 'assign' && !agentId) throw new ApiError('validation', 'An assignee is required for bulk assign.', 422);
+            const ws = await this.wsId();
+            let updated = 0;
+            for (const tid of ids) {
+              const patch: Row = {};
+              if (action === 'resolve') patch.status = 'resolved';
+              if (action === 'assign') patch.assignee_id = agentId ?? null;
+              if (action === 'spam') {
+                patch.status = 'resolved';
+                const row = await this.oneWsRaw('tickets', tid, 'Ticket').catch(() => null);
+                if (!row) continue;
+                const tags = asArr<string>(row.tags);
+                if (!tags.includes('spam')) tags.push('spam');
+                patch.tags = tags;
+              }
+              const { data, error } = await this.sb()
+                .from('tickets')
+                .update(patch)
+                .eq('workspace_id', ws)
+                .eq('id', tid)
+                .select('id');
+              if (error) throw supaError(error);
+              if ((data ?? []).length) updated += 1;
+            }
+            await this.auditRemote(`ticket.bulk_${action}`, 'ticket', ids.join(','), { count: updated });
+            return { data: { updated } };
+          },
+          () => base_tickets.bulk(ids, action, agentId),
+        ),
+      fromConversation: (convId: string, input: { subject?: string; message?: string; priority?: TicketPriority; requester_name?: string; requester_email?: string }) =>
+        this.guard(
+          async () => {
+            const [conv] = await this.hydrateConvs([await this.oneWsRaw('conversations', convId, 'Conversation')]);
+            const name = input.requester_name ?? conv.visitor_name ?? 'Guest';
+            const email = input.requester_email ?? conv.visitor_email ?? '';
+            const transcript = conv.messages.map((m) => `${m.sender}: ${m.text}`).join('\n');
+            const subject = input.subject?.trim() || `Chat with ${name}${conv.page_url ? ` (${conv.page_url})` : ''}`;
+            const message = input.message?.trim() || transcript || 'Created from chat.';
+            return this.tickets.create({
+              subject,
+              requester_name: name,
+              requester_email: email,
+              message,
+              property_id: conv.property_id,
+              priority: input.priority ?? conv.priority ?? 'medium',
+              conversation_id: convId,
+              tags: conv.tags ?? [],
+            });
+          },
+          () => base_tickets.fromConversation(convId, input),
+        ),
+    };
+
+
+    // ---- notifications ----------------------------------------------------
+    const base_notifications = this.notifications;
+    this.notifications = {
+      ...base_notifications,
+      list: (opts: { unreadOnly?: boolean } & ListOpts = {}) =>
+        this.guard(
+          async () => {
+            let items = await this.selWs('notifications', mapNotification, (q) =>
+              q.order('created_at', { ascending: false }),
+            );
+            if (opts.unreadOnly) items = items.filter((n) => !n.read);
+            return { data: paginate(items, opts) };
+          },
+          () => base_notifications.list(opts),
+        ),
+      markRead: (id: string) =>
+        this.guard(
+          async () => ({ data: await this.updWs('notifications', id, { read: true }, mapNotification, 'Notification') }),
+          () => base_notifications.markRead(id),
+        ),
+      markAllRead: () =>
+        this.guard(
+          async () => {
+            const ws = await this.wsId();
+            const { data, error } = await this.sb()
+              .from('notifications')
+              .update({ read: true })
+              .eq('workspace_id', ws)
+              .eq('read', false)
+              .select('id');
+            if (error) throw supaError(error);
+            return { data: { read: ((data ?? []) as Row[]).length } };
+          },
+          () => base_notifications.markAllRead(),
+        ),
+      push: (type: ApiNotification['type'], title: string, body: string, link: string | null = null) =>
+        this.guard(
+          async () => {
+            const ws = await this.wsId();
+            const out = await this.ins('notifications', {
+              id: this.rid(),
+              workspace_id: ws,
+              member_id: null,
+              type,
+              title,
+              body,
+              link,
+              read: false,
+            }, mapNotification);
+            return { data: out };
+          },
+          () => base_notifications.push(type, title, body, link),
+        ),
+    };
+
+    // ---- ratings (CSAT + NPS) -------------------------------------------------
+    const base_ratings = this.ratings;
+    this.ratings = {
+      ...base_ratings,
+      create: (input: {
+        property_id: string; conversation_id?: string | null; agent_id?: string | null;
+        kind: 'csat' | 'nps'; score: number; comment?: string;
+      }) =>
+        this.guard(
+          async () => {
+            if (!input.property_id?.trim()) throw new ApiError('validation', 'property_id is required.', 422);
+            if (!Number.isFinite(input.score)) throw new ApiError('validation', 'Score must be a number.', 422);
+            if (input.kind === 'csat' && (input.score < 1 || input.score > 5)) {
+              throw new ApiError('validation', 'CSAT score must be between 1 and 5.', 422);
+            }
+            if (input.kind === 'nps' && (input.score < 0 || input.score > 10)) {
+              throw new ApiError('validation', 'NPS score must be between 0 and 10.', 422);
+            }
+            const ws = await this.wsId();
+            const out = await this.ins('ratings', {
+              id: this.rid(),
+              workspace_id: ws,
+              property_id: input.property_id,
+              conversation_id: input.conversation_id ?? null,
+              member_id: input.agent_id ?? null,
+              kind: input.kind,
+              score: input.score,
+              comment: (input.comment ?? '').trim(),
+            }, mapRating);
+            await this.auditRemote('rating.created', 'rating', out.id, { kind: out.kind, score: out.score });
+            const isLow = input.kind === 'csat' ? input.score <= 2 : input.score <= 6;
+            if (isLow) {
+              const scale = input.kind === 'csat' ? '5' : '10';
+              await this.notify(
+                'system',
+                'New low rating',
+                `${input.kind.toUpperCase()} ${input.score}/${scale}${out.comment ? ` — "${out.comment}"` : ''}`,
+                out.conversation_id ? `/app?c=${out.conversation_id}` : '/app/analytics',
+              );
+            }
+            return { data: out };
+          },
+          () => base_ratings.create(input),
+        ),
+      list: (opts: {
+        property_id?: string; agent_id?: string; kind?: 'csat' | 'nps'; from?: number; to?: number;
+      } & ListOpts = {}) =>
+        this.guard(
+          async () => {
+            const ws = await this.wsId();
+            let q: Query = this.sb()
+              .from('ratings')
+              .select('*')
+              .eq('workspace_id', ws)
+              .order('created_at', { ascending: false });
+            if (opts.property_id) q = q.eq('property_id', opts.property_id);
+            if (opts.agent_id) q = q.eq('member_id', opts.agent_id);
+            if (opts.kind) q = q.eq('kind', opts.kind);
+            if (opts.from !== undefined) q = q.gte('created_at', new Date(opts.from).toISOString());
+            if (opts.to !== undefined) q = q.lte('created_at', new Date(opts.to).toISOString());
+            const { data, error } = await q;
+            if (error) throw supaError(error);
+            return { data: paginate(((data ?? []) as Row[]).map(mapRating), opts) };
+          },
+          () => base_ratings.list(opts),
+        ),
+      summary: (propertyId: string, days = 30) =>
+        this.guard(
+          async () => {
+            const cutoff = Date.now() - days * 86400000;
+            const ws = await this.wsId();
+            const { data, error } = await this.sb()
+              .from('ratings')
+              .select('*')
+              .eq('workspace_id', ws)
+              .eq('property_id', propertyId)
+              .gte('created_at', new Date(cutoff).toISOString());
+            if (error) throw supaError(error);
+            const items = ((data ?? []) as Row[]).map(mapRating);
+            const csat = items.filter((r) => r.kind === 'csat');
+            const nps = items.filter((r) => r.kind === 'nps');
+            const round1 = (n: number) => Math.round(n * 10) / 10;
+            const avg = (xs: ApiRating[]) => (xs.length ? round1(xs.reduce((a, r) => a + r.score, 0) / xs.length) : null);
+            const promoters = nps.filter((r) => r.score >= 9).length;
+            const passives = nps.filter((r) => r.score === 7 || r.score === 8).length;
+            const detractors = nps.filter((r) => r.score <= 6).length;
+            const nps_score = nps.length
+              ? Math.round((promoters / nps.length) * 100 - (detractors / nps.length) * 100)
+              : null;
+            const dayKey = (ts: number) => new Date(ts).toISOString().slice(0, 10);
+            const trend: Array<{ day: string; csat_avg: number | null; nps_avg: number | null; count: number }> = [];
+            for (let i = days - 1; i >= 0; i--) {
+              const key = dayKey(Date.now() - i * 86400000);
+              const dayItems = items.filter((r) => dayKey(r.created_at) === key);
+              trend.push({
+                day: key,
+                csat_avg: avg(dayItems.filter((r) => r.kind === 'csat')),
+                nps_avg: avg(dayItems.filter((r) => r.kind === 'nps')),
+                count: dayItems.length,
+              });
+            }
+            return {
+              data: {
+                csat_avg: avg(csat),
+                csat_count: csat.length,
+                nps_score,
+                nps_count: nps.length,
+                promoters,
+                passives,
+                detractors,
+                trend,
+              },
+            };
+          },
+          () => base_ratings.summary(propertyId, days),
+        ),
+    };
+
+    // ---- departments --------------------------------------------------------
+    const base_departments = this.departments;
+    this.departments = {
+      ...base_departments,
+      list: (propertyId: string) =>
+        this.guard(
+          async () => ({
+            data: await this.hydrateDepts(
+              await this.selWs('departments', (r: Row) => r, (q) => q.eq('property_id', propertyId)),
+            ),
+          }),
+          () => base_departments.list(propertyId),
+        ),
+      create: (propertyId: string, input: {
+        name: string; description?: string; agent_ids?: string[];
+        routing_mode?: ApiDepartment['routing_mode'];
+        hours_override?: ApiDepartment['hours_override'];
+        offline_behavior?: ApiDepartment['offline_behavior'];
+      }) =>
+        this.guard(
+          async () => {
+            if (!input.name.trim()) throw new ApiError('validation', 'Department name is required.', 422);
+            const ws = await this.wsId();
+            const id = this.rid();
+            const row = await this.ins('departments', {
+              id,
+              workspace_id: ws,
+              property_id: propertyId,
+              name: input.name.trim(),
+              description: (input.description ?? '').trim(),
+              routing_mode: input.routing_mode ?? 'round-robin',
+              hours_override: input.hours_override ?? null,
+              offline_behavior: input.offline_behavior ?? 'message',
+            }, (r: Row) => r);
+            try {
+              await this.syncDeptMembers(id, input.agent_ids ?? []);
+            } catch (e) {
+              // Roll back the department so a half-created row never lingers.
+              await this.delWs('departments', id, 'Department').catch(() => undefined);
+              throw e;
+            }
+            await this.auditRemote('department.created', 'department', id, { name: row.name, property: propertyId });
+            return { data: (await this.hydrateDepts([row]))[0] };
+          },
+          () => base_departments.create(propertyId, input),
+        ),
+      update: (id: string, patch: Partial<Pick<ApiDepartment, 'name' | 'description' | 'agent_ids' | 'routing_mode' | 'hours_override' | 'offline_behavior'>>) =>
+        this.guard(
+          async () => {
+            const row: Row = {};
+            if (patch.name !== undefined) {
+              if (!patch.name.trim()) throw new ApiError('validation', 'Department name is required.', 422);
+              row.name = patch.name.trim();
+            }
+            if (patch.description !== undefined) row.description = patch.description;
+            if (patch.routing_mode !== undefined) row.routing_mode = patch.routing_mode;
+            if (patch.hours_override !== undefined) row.hours_override = patch.hours_override;
+            if (patch.offline_behavior !== undefined) row.offline_behavior = patch.offline_behavior;
+            const updated = await this.updWs('departments', id, row, (r: Row) => r, 'Department');
+            if (patch.agent_ids !== undefined) await this.syncDeptMembers(id, [...patch.agent_ids]);
+            await this.auditRemote('department.updated', 'department', id, patch as Row);
+            return { data: (await this.hydrateDepts([updated]))[0] };
+          },
+          () => base_departments.update(id, patch),
+        ),
+      delete: (id: string) =>
+        this.guard(
+          async () => {
+            await this.delWs('departments', id, 'Department');
+            await this.auditRemote('department.deleted', 'department', id, {});
+            return { data: { deleted: true as const } };
+          },
+          () => base_departments.delete(id),
+        ),
+    };
+
+    // ---- smart routing --------------------------------------------------------
+    // No routing_counters table in the migration: round-robin counters are
+    // kept in this browser's localStorage (per workspace+department).
+    const base_routing = this.routing;
+    this.routing = {
+      ...base_routing,
+      routeChat: (propertyId: string, departmentId?: string | null) =>
+        this.guard(
+          async () => {
+            const ws = await this.wsId();
+            const depts = await this.hydrateDepts(
+              await this.selWs('departments', (r: Row) => r, (q) => q.eq('property_id', propertyId)),
+            );
+            const dept = departmentId ? depts.find((d) => d.id === departmentId) : depts[0];
+            if (!dept) return { data: { agent_id: null, department_id: null } };
+            const members = await this.hydrateMembers(await this.selWs('members', (r: Row) => r));
+            const byId = new Map(members.map((m) => [m.id, m]));
+            let candidates = dept.agent_ids
+              .map((mid) => byId.get(mid))
+              .filter((m): m is ApiMember => !!m && m.status === 'online');
+            if (!candidates.length) candidates = [...members];
+            if (!candidates.length) return { data: { agent_id: null, department_id: dept.id } };
+            let agent: ApiMember;
+            if (dept.routing_mode === 'least-busy') {
+              const { data, error } = await this.sb()
+                .from('conversations')
+                .select('assignee_id')
+                .eq('workspace_id', ws)
+                .eq('status', 'open')
+                .not('assignee_id', 'is', null);
+              if (error) throw supaError(error);
+              const open = new Map<string, number>();
+              for (const c of (data ?? []) as Row[]) {
+                open.set(c.assignee_id, (open.get(c.assignee_id) ?? 0) + 1);
+              }
+              agent = candidates.slice().sort((a, b) => (open.get(a.id) ?? 0) - (open.get(b.id) ?? 0))[0];
+            } else if (dept.routing_mode === 'first-available') {
+              agent = candidates[0];
+            } else {
+              const key = `brix_rr_${this.workspace}_${dept.id}`;
+              const n = Number(localStorage.getItem(key) ?? 0) || 0;
+              agent = candidates[n % candidates.length];
+              try {
+                localStorage.setItem(key, String(n + 1));
+              } catch {
+                /* storage unavailable — routing still works this once */
+              }
+            }
+            return { data: { agent_id: agent.id, department_id: dept.id } };
+          },
+          () => base_routing.routeChat(propertyId, departmentId),
+        ),
+    };
+
+    // ---- categories (three tables: kb / canned / tickets) ----------------------
+    const base_categories = this.categories;
+    this.categories = {
+      ...base_categories,
+      list: (scope: ApiCategory['scope'], propertyId?: string) =>
+        this.guard(
+          async () => {
+            let items = await this.selWs(CATEGORY_TABLES[scope], mapCategory(scope));
+            if (propertyId) items = items.filter((c) => !c.property_id || c.property_id === propertyId);
+            return { data: items };
+          },
+          () => base_categories.list(scope, propertyId),
+        ),
+      create: (scope: ApiCategory['scope'], propertyId: string, name: string, color?: string) =>
+        this.guard(
+          async () => {
+            if (!name.trim()) throw new ApiError('validation', 'Category name is required.', 422);
+            const ws = await this.wsId();
+            const out = await this.ins(CATEGORY_TABLES[scope], {
+              id: this.rid(),
+              workspace_id: ws,
+              property_id: propertyId?.trim() || null,
+              name: name.trim(),
+              color: color?.trim() || '#4f46e5',
+            }, mapCategory(scope));
+            await this.auditRemote('category.created', 'category', out.id, { scope, name: out.name });
+            return { data: out };
+          },
+          () => base_categories.create(scope, propertyId, name, color),
+        ),
+      update: (id: string, patch: Partial<Pick<ApiCategory, 'name' | 'color'>>) =>
+        this.guard(
+          async () => {
+            if (patch.name !== undefined && !patch.name.trim()) {
+              throw new ApiError('validation', 'Category name is required.', 422);
+            }
+            // The scope is not in the id; find which table holds this row.
+            for (const scope of Object.keys(CATEGORY_TABLES) as ApiCategory['scope'][]) {
+              try {
+                const out = await this.updWs(CATEGORY_TABLES[scope], id, {
+                  ...(patch.name !== undefined ? { name: patch.name.trim() } : {}),
+                  ...(patch.color !== undefined ? { color: patch.color } : {}),
+                }, mapCategory(scope), 'Category');
+                await this.auditRemote('category.updated', 'category', id, patch as Row);
+                return { data: out };
+              } catch (e) {
+                if (e instanceof ApiError && e.code === 'not_found') continue;
+                throw e;
+              }
+            }
+            throw new ApiError('not_found', `Category ${id} not found.`, 404);
+          },
+          () => base_categories.update(id, patch),
+        ),
+      delete: (id: string) =>
+        this.guard(
+          async () => {
+            // FKs are ON DELETE SET NULL, so references clear themselves.
+            for (const scope of Object.keys(CATEGORY_TABLES) as ApiCategory['scope'][]) {
+              try {
+                await this.delWs(CATEGORY_TABLES[scope], id, 'Category');
+                await this.auditRemote('category.deleted', 'category', id, {});
+                return { data: { deleted: true as const } };
+              } catch (e) {
+                if (e instanceof ApiError && e.code === 'not_found') continue;
+                throw e;
+              }
+            }
+            throw new ApiError('not_found', `Category ${id} not found.`, 404);
+          },
+          () => base_categories.delete(id),
+        ),
+    };
+
+    // ---- saved views ------------------------------------------------------------
+    const base_views = this.views;
+    this.views = {
+      ...base_views,
+      list: () =>
+        this.guard(
+          async () => ({ data: await this.selWs('saved_views', mapView) }),
+          () => base_views.list(),
+        ),
+      create: (name: string, filters: ApiSavedView['filters']) =>
+        this.guard(
+          async () => {
+            if (!name.trim()) throw new ApiError('validation', 'View name is required.', 422);
+            const ws = await this.wsId();
+            const out = await this.ins('saved_views', {
+              id: this.rid(),
+              workspace_id: ws,
+              member_id: null,
+              name: name.trim(),
+              filters,
+            }, mapView);
+            await this.auditRemote('view.created', 'view', out.id, { name: out.name });
+            return { data: out };
+          },
+          () => base_views.create(name, filters),
+        ),
+      delete: (id: string) =>
+        this.guard(
+          async () => {
+            await this.delWs('saved_views', id, 'View');
+            await this.auditRemote('view.deleted', 'view', id, {});
+            return { data: { deleted: true as const } };
+          },
+          () => base_views.delete(id),
+        ),
+    };
+
+    // ---- plays --------------------------------------------------------------------
+    const base_plays = this.plays;
+    this.plays = {
+      ...base_plays,
+      list: () =>
+        this.guard(
+          async () => ({ data: await this.selWs('plays', mapPlay) }),
+          () => base_plays.list(),
+        ),
+      create: (name: string, steps: ApiPlayStep[]) =>
+        this.guard(
+          async () => {
+            if (!name.trim()) throw new ApiError('validation', 'Play name is required.', 422);
+            if (!steps.length) throw new ApiError('validation', 'A play needs at least one step.', 422);
+            const ws = await this.wsId();
+            const out = await this.ins('plays', {
+              id: this.rid(),
+              workspace_id: ws,
+              name: name.trim(),
+              steps,
+            }, mapPlay);
+            await this.auditRemote('play.created', 'play', out.id, { name: out.name, steps: steps.length });
+            return { data: out };
+          },
+          () => base_plays.create(name, steps),
+        ),
+      delete: (id: string) =>
+        this.guard(
+          async () => {
+            await this.delWs('plays', id, 'Play');
+            await this.auditRemote('play.deleted', 'play', id, {});
+            return { data: { deleted: true as const } };
+          },
+          () => base_plays.delete(id),
+        ),
+      run: (conversationId: string, playId: string) =>
+        this.guard(
+          async () => {
+            const ws = await this.wsId();
+            const play = await this.oneWs('plays', mapPlay, playId, 'Play');
+            const [conv] = await this.hydrateConvs([await this.oneWsRaw('conversations', conversationId, 'Conversation')]);
+            const applied: string[] = [];
+            for (const step of play.steps) {
+              if (step.kind === 'reply' && step.value.trim()) {
+                await this.ins('messages', {
+                  id: this.rid(),
+                  workspace_id: ws,
+                  conversation_id: conv.id,
+                  sender: 'agent',
+                  kind: 'text',
+                  text: step.value.trim(),
+                  metadata: { play: play.name },
+                }, mapMessage);
+                applied.push(`reply sent (${step.value.trim().slice(0, 40)}…)`);
+              } else if (step.kind === 'tag' && step.value.trim()) {
+                const tag = step.value.trim().toLowerCase();
+                const tags = [...new Set([...conv.tags, tag])];
+                await this.updWs('conversations', conv.id, { tags }, (r: Row) => r, 'Conversation');
+                conv.tags = tags;
+                applied.push(`tag added: ${tag}`);
+              } else if (step.kind === 'assign') {
+                const depts = await this.selWs('departments', (r: Row) => r, (q) =>
+                  q.eq('property_id', conv.property_id),
+                );
+                const dept = depts.find((d) => d.name.toLowerCase() === step.value.trim().toLowerCase());
+                if (dept) {
+                  await this.updWs('conversations', conv.id, { department_id: dept.id }, (r: Row) => r, 'Conversation');
+                  applied.push(`routed to ${dept.name}`);
+                } else {
+                  const { data, error } = await this.sb()
+                    .from('members')
+                    .select('id,display_name')
+                    .eq('workspace_id', ws)
+                    .ilike('display_name', step.value.trim())
+                    .maybeSingle();
+                  if (error) throw supaError(error);
+                  const mem = data as Row | null;
+                  if (mem) {
+                    await this.updWs('conversations', conv.id, { assignee_id: mem.id }, (r: Row) => r, 'Conversation');
+                    applied.push(`assigned to ${mem.display_name}`);
+                  } else {
+                    applied.push(`assigned to ${step.value.trim()}`);
+                  }
+                }
+              } else if (step.kind === 'priority' && ['low', 'medium', 'high', 'urgent'].includes(step.value)) {
+                await this.updWs('conversations', conv.id, { priority: step.value }, (r: Row) => r, 'Conversation');
+                applied.push(`priority set to ${step.value}`);
+              } else if (step.kind === 'note' && step.value.trim()) {
+                await this.ins('conversation_notes', {
+                  id: this.rid(),
+                  workspace_id: ws,
+                  conversation_id: conv.id,
+                  author_name: this.actor,
+                  text: step.value.trim(),
+                }, (r: Row) => r);
+                applied.push('note added');
+              }
+            }
+            await this.auditRemote('play.run', 'play', playId, { conversation: conversationId, applied: applied.length });
+            return { data: { applied } };
+          },
+          () => base_plays.run(conversationId, playId),
+        ),
+    };
+
+    // ---- goals & attribution -------------------------------------------------------
+    const base_goals = this.goals;
+    this.goals = {
+      ...base_goals,
+      list: () =>
+        this.guard(
+          async () => ({ data: await this.selWs('goals', mapGoal) }),
+          () => base_goals.list(),
+        ),
+      create: (name: string, event: string, revenue = 0) =>
+        this.guard(
+          async () => {
+            if (!name.trim() || !event.trim()) throw new ApiError('validation', 'Name and event key are required.', 422);
+            const ws = await this.wsId();
+            const out = await this.ins('goals', {
+              id: this.rid(),
+              workspace_id: ws,
+              property_id: null,
+              name: name.trim(),
+              event: event.trim(),
+              revenue: Number(revenue) || 0,
+            }, mapGoal);
+            await this.auditRemote('goal.created', 'goal', out.id, { name: out.name, event: out.event });
+            return { data: out };
+          },
+          () => base_goals.create(name, event, revenue),
+        ),
+      delete: (id: string) =>
+        this.guard(
+          async () => {
+            await this.delWs('goals', id, 'Goal');
+            await this.auditRemote('goal.deleted', 'goal', id, {});
+            return { data: { deleted: true as const } };
+          },
+          () => base_goals.delete(id),
+        ),
+      track: (goalId: string, conversationId: string | null = null, value?: number) =>
+        this.guard(
+          async () => {
+            const ws = await this.wsId();
+            const goal = await this.oneWs('goals', mapGoal, goalId, 'Goal');
+            const out = await this.ins('goal_events', {
+              id: this.rid(),
+              workspace_id: ws,
+              goal_id: goalId,
+              conversation_id: conversationId,
+              value: value ?? goal.revenue,
+            }, mapGoalEvent);
+            await this.auditRemote('goal.completed', 'goal', goalId, { conversation: conversationId, value: out.value });
+            await this.notify(
+              'system',
+              `Goal completed: ${goal.name}`,
+              `Event "${goal.event}"${conversationId ? ' from a chat' : ''} · value ${out.value}`,
+              '/app/analytics',
+            );
+            return { data: out };
+          },
+          () => base_goals.track(goalId, conversationId, value),
+        ),
+      funnel: (days = 30) =>
+        this.guard(
+          async () => {
+            const ws = await this.wsId();
+            const since = new Date(Date.now() - Math.min(Math.max(days, 1), 365) * 86400000).toISOString();
+            const { data: convRows, error: cErr } = await this.sb()
+              .from('conversations')
+              .select('id,visitor_name,visitor_email,created_at')
+              .eq('workspace_id', ws)
+              .gte('created_at', since);
+            if (cErr) throw supaError(cErr);
+            const convs = (convRows ?? []) as Row[];
+            const { data: evtRows, error: eErr } = await this.sb()
+              .from('goal_events')
+              .select('*')
+              .eq('workspace_id', ws)
+              .gte('created_at', since);
+            if (eErr) throw supaError(eErr);
+            const events = ((evtRows ?? []) as Row[]).map(mapGoalEvent);
+            const goals = await this.selWs('goals', mapGoal);
+            const visitors = new Set(convs.map((c) => `${c.visitor_name}|${c.visitor_email}`)).size;
+            return {
+              data: {
+                visitors,
+                chats: convs.length,
+                goals: goals.map((goal) => {
+                  const evts = events.filter((e) => e.goal_id === goal.id);
+                  return { goal, count: evts.length, revenue: evts.reduce((s, e) => s + (e.value || 0), 0) };
+                }),
+              },
+            };
+          },
+          () => base_goals.funnel(days),
+        ),
+    };
+
+
+    // ---- members ------------------------------------------------------------------
+    const base_members = this.members;
+    this.members = {
+      ...base_members,
+      list: () =>
+        this.guard(
+          async () => ({
+            data: await this.hydrateMembers(
+              await this.selWs('members', (r: Row) => r, (q) => q.order('display_name', { ascending: true })),
+            ),
+          }),
+          () => base_members.list(),
+        ),
+      get: (id: string) =>
+        this.guard(
+          async () => ({ data: (await this.hydrateMembers([await this.oneWsRaw('members', id, 'Member')]))[0] }),
+          () => base_members.get(id),
+        ),
+      create: (displayName: string, role: TeamRole, passcode: string, extras?: {
+        job_title?: string; avatar_data_url?: string | null; department_ids?: string[];
+      }) =>
+        this.guard(
+          async () => {
+            const name = displayName.trim();
+            if (!name) throw new ApiError('validation', 'Display name is required.', 422);
+            if (passcode.length < 4) throw new ApiError('validation', 'Passcode must be at least 4 characters.', 422);
+            const ws = await this.wsId();
+            const existing = await this.selWs('members', (r: Row) => r.display_name as string);
+            if (existing.some((n) => n.toLowerCase() === name.toLowerCase())) {
+              throw new ApiError('conflict', 'A member with that name already exists.', 409);
+            }
+            const id = this.rid();
+            await this.ins('members', {
+              id,
+              workspace_id: ws,
+              display_name: name,
+              initials: memberInitials(name),
+              color: ['#4f46e5', '#0891b2', '#059669', '#f59e0b', '#8b5cf6'][existing.length % 5],
+              role,
+              email: '',
+              job_title: (extras?.job_title ?? '').trim(),
+              avatar_url: extras?.avatar_data_url ?? null,
+              status: 'offline',
+            }, (r: Row) => r);
+            // bcrypt-hash the passcode server-side when the session allows it
+            // (authenticated-only RPC; without a session the member exists but
+            // the passcode must be set from team settings once signed in).
+            try {
+              const { error } = await this.sb().rpc('member_set_passcode', { p_member_id: id, p_passcode: passcode });
+              if (error) throw supaError(error);
+            } catch (e) {
+              // eslint-disable-next-line no-console
+              console.warn('[brix-chat] member create: passcode could not be stored remotely:', e instanceof Error ? e.message : e);
+            }
+            for (const depId of extras?.department_ids ?? []) {
+              const { error } = await this.sb()
+                .from('department_members')
+                .insert({ department_id: depId, member_id: id });
+              if (error) throw supaError(error);
+            }
+            await this.auditRemote('member.created', 'member', id, { name, role });
+            return { data: (await this.hydrateMembers([await this.oneWsRaw('members', id, 'Member')]))[0] };
+          },
+          () => base_members.create(displayName, role, passcode, extras),
+        ),
+      update: (id: string, patch: Partial<Pick<ApiMember, 'display_name' | 'color' | 'role' | 'status' | 'job_title' | 'avatar_data_url' | 'department_ids'>>) =>
+        this.guard(
+          async () => {
+            const row: Row = {};
+            if (patch.display_name !== undefined) {
+              if (!patch.display_name.trim()) throw new ApiError('validation', 'Display name is required.', 422);
+              row.display_name = patch.display_name.trim();
+              row.initials = memberInitials(row.display_name);
+            }
+            if (patch.color !== undefined) row.color = patch.color;
+            if (patch.role !== undefined) row.role = patch.role;
+            if (patch.status !== undefined) row.status = patch.status;
+            if (patch.job_title !== undefined) row.job_title = patch.job_title.trim();
+            if (patch.avatar_data_url !== undefined) row.avatar_url = patch.avatar_data_url;
+            const updated = await this.updWs('members', id, row, (r: Row) => r, 'Member');
+            if (patch.department_ids !== undefined) {
+              await this.sb().from('department_members').delete().eq('member_id', id).then(({ error }) => {
+                if (error) throw supaError(error);
+              });
+              if (patch.department_ids.length) {
+                const { error } = await this.sb()
+                  .from('department_members')
+                  .insert(patch.department_ids.map((department_id) => ({ department_id, member_id: id })));
+                if (error) throw supaError(error);
+              }
+            }
+            await this.auditRemote('member.updated', 'member', id, patch as Row);
+            return { data: (await this.hydrateMembers([updated]))[0] };
+          },
+          () => base_members.update(id, patch),
+        ),
+      remove: (id: string) =>
+        this.guard(
+          async () => {
+            const all = await this.selWs('members', (r: Row) => r.id as string);
+            if (all.length <= 1) throw new ApiError('validation', 'A workspace needs at least one member.', 422);
+            const row = await this.oneWsRaw('members', id, 'Member');
+            await this.delWs('members', id, 'Member');
+            await this.auditRemote('member.removed', 'member', id, { name: row.display_name });
+            return { data: { deleted: true as const } };
+          },
+          () => base_members.remove(id),
+        ),
+      /**
+       * Remote login via the member_login() RPC — the one auth surface the
+       * anon key may call. Bad credentials, an un-provisioned workspace and
+       * network failure are indistinguishable here, so any RPC failure falls
+       * through to the local transport (demo seeds keep working); the local
+       * login throws the proper unauthorized error when truly invalid.
+       */
+      login: (displayName: string, passcode: string) =>
+        (async () => {
+          const name = displayName.trim();
+          if (name && isSupabaseEnabled()) {
+            try {
+              const { data, error } = await this.sb().rpc('member_login', {
+                p_workspace_slug: this.workspace,
+                p_display_name: name,
+                p_passcode: passcode,
+              });
+              if (!error && data) {
+                const r = data as Row;
+                const m: ApiMember = {
+                  id: r.id,
+                  display_name: r.display_name,
+                  initials: r.initials || memberInitials(r.display_name),
+                  color: r.color || '#4f46e5',
+                  role: r.role || 'agent',
+                  passcode: '',
+                  last_login: isoNow(),
+                  status: 'online',
+                  job_title: '',
+                  avatar_data_url: null,
+                  department_ids: [],
+                  created_at: isoNow(),
+                };
+                return { data: m };
+              }
+            } catch {
+              /* fall through to local */
+            }
+          }
+          return base_members.login(displayName, passcode);
+        })(),
+      setPasscode: (id: string, passcode: string) =>
+        this.guard(
+          async () => {
+            if (passcode.length < 4) throw new ApiError('validation', 'Passcode must be at least 4 characters.', 422);
+            // member_set_passcode is authenticated-only (admins may reset
+            // anyone's; members may change their own). Without a session this
+            // throws and guard() falls back to the local transport.
+            const { error } = await this.sb().rpc('member_set_passcode', { p_member_id: id, p_passcode: passcode });
+            if (error) throw supaError(error);
+            await this.auditRemote('member.passcode_changed', 'member', id, {});
+            return { data: { updated: true as const } };
+          },
+          () => base_members.setPasscode(id, passcode),
+        ),
+      touchLogin: (id: string) =>
+        this.guard(
+          async () => {
+            const updated = await this.updWs(
+              'members',
+              id,
+              { last_login_at: new Date().toISOString(), status: 'online' },
+              (r: Row) => r,
+              'Member',
+            );
+            return { data: (await this.hydrateMembers([updated]))[0] };
+          },
+          () => base_members.touchLogin(id),
+        ),
+      setStatus: (id: string, status: ApiMember['status']) =>
+        this.guard(
+          async () => {
+            // Self-service path: member_set_status() only ever touches the
+            // caller's own row, so use it only when the target IS the caller
+            // (checked via current_member_id()); otherwise admins write the
+            // members row directly.
+            let self = false;
+            try {
+              const { data, error } = await this.sb().rpc('current_member_id');
+              if (!error && data) self = data === id;
+            } catch {
+              /* ignore — fall through to the direct write */
+            }
+            let row: Row;
+            if (self) {
+              const { error } = await this.sb().rpc('member_set_status', { p_status: status });
+              if (error) throw supaError(error);
+              row = await this.oneWsRaw('members', id, 'Member');
+            } else {
+              row = await this.updWs('members', id, { status }, (r: Row) => r, 'Member');
+            }
+            await this.auditRemote('member.status_changed', 'member', id, { status });
+            return { data: (await this.hydrateMembers([row]))[0] };
+          },
+          () => base_members.setStatus(id, status),
+        ),
+    };
+
+    // ---- property settings (property_settings + branding merge) -------------------
+    const base_propertySettings = this.propertySettings;
+    const BRAND_KEYS = new Set([
+      'brand_name', 'tagline', 'logo_data_url', 'theme', 'accent_color',
+      'widget_color', 'widget_position', 'launcher_style', 'language',
+    ]);
+    this.propertySettings = {
+      ...base_propertySettings,
+      get: (propertyId: string) =>
+        this.guard(
+          async () => {
+            const ws = await this.wsId();
+            const [{ data: ps, error: psErr }, { data: br, error: brErr }] = await Promise.all([
+              this.sb()
+                .from('property_settings')
+                .select('*')
+                .eq('workspace_id', ws)
+                .eq('property_id', propertyId)
+                .maybeSingle(),
+              this.sb()
+                .from('branding')
+                .select('*')
+                .eq('workspace_id', ws)
+                .eq('property_id', propertyId)
+                .maybeSingle(),
+            ]);
+            if (psErr) throw supaError(psErr);
+            if (brErr) throw supaError(brErr);
+            const merged: PropertySettings = {
+              ...defaultPropertySettings(),
+              ...(((ps as Row | null)?.settings ?? {}) as Partial<PropertySettings>),
+            };
+            const b = (br as Row | null) ?? null;
+            if (b) {
+              if (b.brand_name) merged.brand_name = b.brand_name;
+              if (b.tagline) merged.tagline = b.tagline;
+              if (b.logo_url !== undefined) merged.logo_data_url = b.logo_url;
+              if (b.theme) merged.theme = b.theme;
+              if (b.accent_color) merged.accent_color = b.accent_color;
+              if (b.widget_color) merged.widget_color = b.widget_color;
+              if (b.widget_position) merged.widget_position = b.widget_position;
+              if (b.launcher_style) merged.launcher_style = b.launcher_style;
+              if (b.language) merged.language = b.language;
+            }
+            const depts = await this.selWs('departments', (r: Row) => r, (q) => q.eq('property_id', propertyId));
+            merged.departments = depts.map((d) => ({ id: d.id, name: d.name }));
+            return { data: merged };
+          },
+          () => base_propertySettings.get(propertyId),
+        ),
+      patch: (propertyId: string, patch: Partial<PropertySettings>) =>
+        this.guard(
+          async () => {
+            const ws = await this.wsId();
+            const brandPatch: Row = {};
+            const settingsPatch: Row = {};
+            for (const [k, v] of Object.entries(patch)) {
+              if (k === 'departments') continue; // managed via the departments namespace
+              if (BRAND_KEYS.has(k)) brandPatch[k === 'logo_data_url' ? 'logo_url' : k] = v;
+              else settingsPatch[k] = v;
+            }
+            if (Object.keys(brandPatch).length) {
+              const { error } = await this.sb()
+                .from('branding')
+                .upsert({ workspace_id: ws, property_id: propertyId, ...brandPatch }, { onConflict: 'property_id' });
+              if (error) throw supaError(error);
+            }
+            if (Object.keys(settingsPatch).length) {
+              const { data: cur, error: curErr } = await this.sb()
+                .from('property_settings')
+                .select('settings')
+                .eq('workspace_id', ws)
+                .eq('property_id', propertyId)
+                .maybeSingle();
+              if (curErr) throw supaError(curErr);
+              const settings = { ...(((cur as Row | null)?.settings ?? {}) as Row), ...settingsPatch };
+              const { error } = await this.sb()
+                .from('property_settings')
+                .upsert({ workspace_id: ws, property_id: propertyId, settings }, { onConflict: 'property_id' });
+              if (error) throw supaError(error);
+            }
+            await this.auditRemote('property_settings.updated', 'property', propertyId, patch as Row);
+            return this.propertySettings.get(propertyId);
+          },
+          () => base_propertySettings.patch(propertyId, patch),
+        ),
+    };
+
+    // ---- integrations (provider registry state) -----------------------------------
+    // Remote rows are keyed by provider; name/description/fields/phase come
+    // from the local INTEGRATION_REGISTRY, values/enabled from the row's
+    // config. Secrets in config are app-layer encrypted server-side per the
+    // migration contract — the browser only ever sends what the admin typed.
+    const base_integrations = this.integrations;
+    const toApiIntegration = (def: (typeof INTEGRATION_REGISTRY)[number], row: Row | null): ApiIntegration => ({
+      id: def.id,
+      name: row?.name ?? def.name,
+      description: def.description,
+      fields: def.keyFields.map((f) => ({ name: f.name, label: f.label, secret: f.secret })),
+      values: (row?.config ?? {}) as Record<string, string>,
+      enabled: !!row?.enabled,
+      phase: def.status,
+    });
+    this.integrations = {
+      ...base_integrations,
+      list: () =>
+        this.guard(
+          async () => {
+            const ws = await this.wsId();
+            const { data, error } = await this.sb()
+              .from('integrations')
+              .select('*')
+              .eq('workspace_id', ws);
+            if (error) throw supaError(error);
+            const byProvider = new Map(((data ?? []) as Row[]).map((r) => [r.provider as string, r]));
+            return { data: INTEGRATION_REGISTRY.map((def) => toApiIntegration(def, byProvider.get(def.id) ?? null)) };
+          },
+          () => base_integrations.list(),
+        ),
+      patch: (id: string, patch: Partial<Pick<ApiIntegration, 'values' | 'enabled'>>) =>
+        this.guard(
+          async () => {
+            const def = INTEGRATION_REGISTRY.find((d) => d.id === id);
+            if (!def) throw new ApiError('not_found', `Integration ${id} not found.`, 404);
+            const ws = await this.wsId();
+            const { data: cur, error: curErr } = await this.sb()
+              .from('integrations')
+              .select('*')
+              .eq('workspace_id', ws)
+              .eq('provider', id)
+              .maybeSingle();
+            if (curErr) throw supaError(curErr);
+            const row = (cur as Row | null) ?? null;
+            const values = patch.values !== undefined ? { ...patch.values } : ((row?.config ?? {}) as Record<string, string>);
+            const enabled = patch.enabled !== undefined ? patch.enabled : !!row?.enabled;
+            const { data, error } = await this.sb()
+              .from('integrations')
+              .upsert(
+                { workspace_id: ws, provider: id, name: def.name, config: values, enabled },
+                { onConflict: 'workspace_id,provider' },
+              )
+              .select()
+              .single();
+            if (error) throw supaError(error);
+            await this.auditRemote('integration.updated', 'integration', id, {
+              enabled,
+              fields: Object.keys(values),
+            });
+            return { data: toApiIntegration(def, data as Row) };
+          },
+          () => base_integrations.patch(id, patch),
+        ),
+    };
+
+    // ---- unanswered questions -------------------------------------------------------
+    const base_unanswered = this.unanswered;
+    this.unanswered = {
+      ...base_unanswered,
+      list: (opts: { includeDismissed?: boolean } & ListOpts = {}) =>
+        this.guard(
+          async () => {
+            let items = await this.selWs('unanswered_questions', mapUnanswered, (q) =>
+              q.order('count', { ascending: false }).order('created_at', { ascending: false }),
+            );
+            if (!opts.includeDismissed) items = items.filter((u) => !u.dismissed);
+            return { data: paginate(items, opts) };
+          },
+          () => base_unanswered.list(opts),
+        ),
+      add: (question: string, conversationId: string | null = null) =>
+        this.guard(
+          async () => {
+            const q = question.trim();
+            if (!q) throw new ApiError('validation', 'Question is required.', 422);
+            const ws = await this.wsId();
+            // property_id is NOT NULL remotely — resolve it from the conversation.
+            let property_id: string | null = null;
+            if (conversationId) {
+              const conv = await this.oneWsRaw('conversations', conversationId, 'Conversation');
+              property_id = conv.property_id;
+            }
+            if (!property_id) {
+              throw new ApiError(
+                'not_supported',
+                'Unanswered questions need a conversation link in Supabase mode (property_id is required).',
+                501,
+              );
+            }
+            const existing = await this.selWs('unanswered_questions', (r: Row) => r, (qq) =>
+              qq.eq('dismissed', false).ilike('question', q),
+            );
+            if (existing.length) {
+              const row = existing[0];
+              const out = await this.updWs(
+                'unanswered_questions',
+                row.id,
+                { count: (row.count ?? 1) + 1 },
+                mapUnanswered,
+                'Unanswered question',
+              );
+              return { data: out };
+            }
+            const out = await this.ins('unanswered_questions', {
+              id: this.rid(),
+              workspace_id: ws,
+              property_id,
+              question: q,
+              conversation_id: conversationId,
+              count: 1,
+            }, mapUnanswered);
+            await this.auditRemote('unanswered.added', 'unanswered', out.id, { question: q.slice(0, 80) });
+            return { data: out };
+          },
+          () => base_unanswered.add(question, conversationId),
+        ),
+      dismiss: (id: string) =>
+        this.guard(
+          async () => {
+            const out = await this.updWs('unanswered_questions', id, { dismissed: true }, mapUnanswered, 'Unanswered question');
+            await this.auditRemote('unanswered.dismissed', 'unanswered', id, {});
+            return { data: out };
+          },
+          () => base_unanswered.dismiss(id),
+        ),
+      promote: (id: string) =>
+        this.guard(
+          async () => {
+            const u = await this.oneWs('unanswered_questions', mapUnanswered, id, 'Unanswered question');
+            const { data: article } = await this.kb.create({
+              title: u.question,
+              body: `Draft from the unanswered-questions log (asked ${u.count}×). Write the answer here.`,
+              category: 'Unanswered',
+              status: 'draft',
+            });
+            await this.updWs('unanswered_questions', id, { dismissed: true }, mapUnanswered, 'Unanswered question');
+            await this.auditRemote('unanswered.promoted', 'unanswered', id, { article: article.id });
+            return { data: article };
+          },
+          () => base_unanswered.promote(id),
+        ),
+    };
+
+    // ---- audit search -----------------------------------------------------------------
+    const base_audit = this.audit;
+    this.audit = {
+      ...base_audit,
+      search: (opts: { actor?: string; action?: string; from?: string; to?: string } & ListOpts = {}) =>
+        this.guard(
+          async () => {
+            let items = await this.selWs('audit_log', mapAudit, (q) => q.order('created_at', { ascending: false }));
+            if (opts.actor) items = items.filter((e) => e.actor.toLowerCase().includes(opts.actor!.toLowerCase()));
+            if (opts.action) items = items.filter((e) => e.action.toLowerCase().includes(opts.action!.toLowerCase()));
+            if (opts.from) items = items.filter((e) => e.created_at >= opts.from!);
+            if (opts.to) items = items.filter((e) => e.created_at <= opts.to!);
+            return { data: paginate(items, opts) };
+          },
+          () => base_audit.search(opts),
+        ),
+    };
+
+    // ---- knowledge base ---------------------------------------------------------------
+    const base_kb = this.kb;
+    this.kb = {
+      ...base_kb,
+      list: (opts: { status?: 'draft' | 'published'; category?: string } & ListOpts = {}) =>
+        this.guard(
+          async () => {
+            const ws = await this.wsId();
+            let q: Query = this.sb()
+              .from('kb_articles')
+              .select('*')
+              .eq('workspace_id', ws)
+              .order('updated_at', { ascending: false });
+            if (opts.status) q = q.eq('status', opts.status);
+            if (opts.category) q = q.eq('category_id', opts.category);
+            const { data, error } = await q;
+            if (error) throw supaError(error);
+            return { data: paginate(await this.hydrateArticles((data ?? []) as Row[]), opts) };
+          },
+          () => base_kb.list(opts),
+        ),
+      search: (q: string) =>
+        this.guard(
+          async () => {
+            const ws = await this.wsId();
+            const t = escLike(q.trim());
+            if (!t) return { data: [] };
+            const { data, error } = await this.sb()
+              .from('kb_articles')
+              .select('*')
+              .eq('workspace_id', ws)
+              .eq('status', 'published')
+              .or(`title.ilike.%${t}%,body.ilike.%${t}%`);
+            if (error) throw supaError(error);
+            return { data: await this.hydrateArticles((data ?? []) as Row[]) };
+          },
+          () => base_kb.search(q),
+        ),
+      get: (id: string) =>
+        this.guard(
+          async () => ({ data: (await this.hydrateArticles([await this.oneWsRaw('kb_articles', id, 'Article')]))[0] }),
+          () => base_kb.get(id),
+        ),
+      create: (input: { title: string; body?: string; category?: string; category_id?: string | null; status?: 'draft' | 'published' }) =>
+        this.guard(
+          async () => {
+            if (!input.title.trim()) throw new ApiError('validation', 'Title is required.', 422);
+            const ws = await this.wsId();
+            let category_id = input.category_id ?? null;
+            if (!category_id && input.category) {
+              const { data, error } = await this.sb()
+                .from('kb_categories')
+                .select('id')
+                .eq('workspace_id', ws)
+                .ilike('name', input.category.trim())
+                .maybeSingle();
+              if (error) throw supaError(error);
+              category_id = (data as Row | null)?.id ?? null;
+            }
+            // slug is unique per workspace — dedupe with a numeric suffix.
+            const baseSlug =
+              input.title.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || this.rid();
+            const { data: slugRows, error: slugErr } = await this.sb()
+              .from('kb_articles')
+              .select('slug')
+              .eq('workspace_id', ws)
+              .like('slug', `${escLike(baseSlug)}%`);
+            if (slugErr) throw supaError(slugErr);
+            const taken = new Set(((slugRows ?? []) as Row[]).map((r) => r.slug as string));
+            let slug = baseSlug;
+            for (let n = 2; taken.has(slug); n++) slug = `${baseSlug}-${n}`;
+            const out = await this.ins('kb_articles', {
+              id: this.rid(),
+              workspace_id: ws,
+              property_id: null,
+              category_id,
+              title: input.title.trim(),
+              slug,
+              body: input.body ?? '',
+              status: input.status ?? 'draft',
+            }, (r: Row) => r);
+            await this.auditRemote('article.created', 'article', out.id, { title: out.title });
+            return { data: (await this.hydrateArticles([out]))[0] };
+          },
+          () => base_kb.create(input),
+        ),
+      update: (id: string, patch: Partial<Pick<ApiArticle, 'title' | 'body' | 'category' | 'category_id' | 'status'>>) =>
+        this.guard(
+          async () => {
+            const row: Row = {};
+            if (patch.title !== undefined) row.title = patch.title;
+            if (patch.body !== undefined) row.body = patch.body;
+            if (patch.category_id !== undefined) row.category_id = patch.category_id;
+            if (patch.status !== undefined) row.status = patch.status;
+            if (patch.category !== undefined && patch.category_id === undefined) {
+              const ws = await this.wsId();
+              const { data, error } = await this.sb()
+                .from('kb_categories')
+                .select('id')
+                .eq('workspace_id', ws)
+                .ilike('name', patch.category.trim())
+                .maybeSingle();
+              if (error) throw supaError(error);
+              row.category_id = (data as Row | null)?.id ?? null;
+            }
+            const updated = await this.updWs('kb_articles', id, row, (r: Row) => r, 'Article');
+            await this.auditRemote('article.updated', 'article', id, patch as Row);
+            return { data: (await this.hydrateArticles([updated]))[0] };
+          },
+          () => base_kb.update(id, patch),
+        ),
+      remove: (id: string) =>
+        this.guard(
+          async () => {
+            await this.delWs('kb_articles', id, 'Article');
+            await this.auditRemote('article.deleted', 'article', id, {});
+            return { data: { deleted: true as const } };
+          },
+          () => base_kb.remove(id),
+        ),
+    };
+
+    // ---- canned responses ---------------------------------------------------------------
+    const base_canned = this.canned;
+    this.canned = {
+      ...base_canned,
+      list: (opts: { category?: string } = {}) =>
+        this.guard(
+          async () => {
+            const ws = await this.wsId();
+            let q: Query = this.sb().from('canned_responses').select('*').eq('workspace_id', ws);
+            if (opts.category) q = q.eq('category_id', opts.category);
+            const { data, error } = await q;
+            if (error) throw supaError(error);
+            return { data: ((data ?? []) as Row[]).map(mapCanned) };
+          },
+          () => base_canned.list(opts),
+        ),
+      create: (input: { shortcut: string; title: string; body: string; category_id?: string | null }) =>
+        this.guard(
+          async () => {
+            if (!input.title.trim() || !input.body.trim()) {
+              throw new ApiError('validation', 'Title and body are required.', 422);
+            }
+            const ws = await this.wsId();
+            const out = await this.ins('canned_responses', {
+              id: this.rid(),
+              workspace_id: ws,
+              property_id: null,
+              category_id: input.category_id ?? null,
+              shortcut: input.shortcut.trim(),
+              title: input.title.trim(),
+              body: input.body.trim(),
+            }, mapCanned);
+            await this.auditRemote('canned.created', 'canned', out.id, { title: out.title });
+            return { data: out };
+          },
+          () => base_canned.create(input),
+        ),
+      update: (id: string, patch: Partial<Pick<ApiCanned, 'shortcut' | 'title' | 'body' | 'category_id'>>) =>
+        this.guard(
+          async () => {
+            const out = await this.updWs('canned_responses', id, { ...patch }, mapCanned, 'Canned response');
+            await this.auditRemote('canned.updated', 'canned', id, patch as Row);
+            return { data: out };
+          },
+          () => base_canned.update(id, patch),
+        ),
+      remove: (id: string) =>
+        this.guard(
+          async () => {
+            await this.delWs('canned_responses', id, 'Canned response');
+            await this.auditRemote('canned.deleted', 'canned', id, {});
+            return { data: { deleted: true as const } };
+          },
+          () => base_canned.remove(id),
+        ),
+    };
+
+    // NOTE: webhooks + deliveries intentionally keep the localStorage
+    // implementation (base class). The migration excludes signing secrets
+    // from member SELECT grants and expects app-layer encryption before
+    // insert — a browser cannot mint a server-signable remote webhook, and
+    // test-fire signing needs the secret. Local mode keeps secrets in this
+    // browser only, exactly as before.
+
+    // ---- api keys -------------------------------------------------------------------------
+    // Only SHA-256 hashes + prefixes are stored remotely (per the migration
+    // contract). The raw key is returned once at creation/rotation and never
+    // persisted. usage_count/last_used_at are maintained by server-side
+    // workers (no member write grants), so they are read-only here.
+    const base_apiKeys = this.apiKeys;
+    this.apiKeys = {
+      ...base_apiKeys,
+      list: () =>
+        this.guard(
+          async () => ({ data: await this.selWs('api_keys', mapApiKey, (q) => q.order('created_at', { ascending: false })) }),
+          () => base_apiKeys.list(),
+        ),
+      create: (input: { name: string; scopes: string[] }) =>
+        this.guard(
+          async () => {
+            if (!input.name.trim()) throw new ApiError('validation', 'Key name is required.', 422);
+            if (!input.scopes.length) throw new ApiError('validation', 'Select at least one scope.', 422);
+            const ws = await this.wsId();
+            const raw = `bk_live_${randomHex(24)}`;
+            const out = await this.ins('api_keys', {
+              id: this.rid(),
+              workspace_id: ws,
+              name: input.name.trim(),
+              prefix: raw.slice(0, 14),
+              key_hash: await sha256Hex(raw),
+              scopes: [...new Set(input.scopes)],
+            }, mapApiKey);
+            await this.auditRemote('api_key.created', 'api_key', out.id, { name: out.name, scopes: out.scopes });
+            return { data: { record: out, key: raw } };
+          },
+          () => base_apiKeys.create(input),
+        ),
+      revealOnce: (_id: string) =>
+        // Raw keys are never persisted server-side — there is nothing to reveal.
+        Promise.resolve({ data: { key: null as string | null } }),
+      rotate: (id: string) =>
+        this.guard(
+          async () => {
+            const cur = await this.oneWsRaw('api_keys', id, 'API key');
+            const raw = `bk_live_${randomHex(24)}`;
+            // key_hash is not in the member UPDATE grant, so rotation is a
+            // delete + re-insert preserving the id and original created_at.
+            await this.delWs('api_keys', id, 'API key');
+            const out = await this.ins('api_keys', {
+              id,
+              workspace_id: cur.workspace_id,
+              name: cur.name,
+              prefix: raw.slice(0, 14),
+              key_hash: await sha256Hex(raw),
+              scopes: cur.scopes ?? [],
+              revoked: false,
+              created_at: cur.created_at,
+            }, mapApiKey);
+            await this.auditRemote('api_key.rotated', 'api_key', id, { name: cur.name });
+            return { data: { record: out, key: raw } };
+          },
+          () => base_apiKeys.rotate(id),
+        ),
+      revoke: (id: string) =>
+        this.guard(
+          async () => {
+            const out = await this.updWs('api_keys', id, { revoked: true }, mapApiKey, 'API key');
+            await this.auditRemote('api_key.revoked', 'api_key', id, { name: out.name });
+            return { data: out };
+          },
+          () => base_apiKeys.revoke(id),
+        ),
+      remove: (id: string) =>
+        this.guard(
+          async () => {
+            await this.delWs('api_keys', id, 'API key');
+            await this.auditRemote('api_key.deleted', 'api_key', id, {});
+            return { data: { deleted: true as const } };
+          },
+          () => base_apiKeys.remove(id),
+        ),
+    };
+
+    // ---- metrics ------------------------------------------------------------------------------
+    const base_metrics = this.metrics;
+    this.metrics = {
+      ...base_metrics,
+      chats: (opts: { days?: number } = {}) =>
+        this.guard(
+          async () => {
+            const days = Math.min(Math.max(opts.days ?? 14, 1), 90);
+            const ws = await this.wsId();
+            const { data, error } = await this.sb()
+              .from('conversations')
+              .select('created_at,status')
+              .eq('workspace_id', ws)
+              .gte('created_at', new Date(Date.now() - days * 86400000).toISOString());
+            if (error) throw supaError(error);
+            const convs = (data ?? []) as Row[];
+            const out: { date: string; total: number; missed: number }[] = [];
+            for (let i = days - 1; i >= 0; i--) {
+              const d = new Date();
+              d.setDate(d.getDate() - i);
+              const key = d.toISOString().slice(0, 10);
+              const day = convs.filter((c) => isoOf(c.created_at).slice(0, 10) === key);
+              out.push({ date: key, total: day.length, missed: day.filter((c) => c.status === 'missed').length });
+            }
+            return { data: out };
+          },
+          () => base_metrics.chats(opts),
+        ),
+      responseTimes: () =>
+        this.guard(
+          async () => {
+            const ws = await this.wsId();
+            const { data, error } = await this.sb()
+              .from('messages')
+              .select('conversation_id,sender,created_at')
+              .eq('workspace_id', ws)
+              .order('created_at', { ascending: true });
+            if (error) throw supaError(error);
+            const firstByConv = new Map<string, { visitor?: number; agent?: number }>();
+            for (const m of (data ?? []) as Row[]) {
+              const e = firstByConv.get(m.conversation_id) ?? {};
+              const t = Date.parse(m.created_at);
+              if (m.sender === 'visitor' && e.visitor === undefined) e.visitor = t;
+              if ((m.sender === 'agent' || m.sender === 'ai') && e.agent === undefined) e.agent = t;
+              firstByConv.set(m.conversation_id, e);
+            }
+            const samples: number[] = [];
+            for (const e of firstByConv.values()) {
+              if (e.visitor !== undefined && e.agent !== undefined) {
+                const s = (e.agent - e.visitor) / 1000;
+                if (s >= 0 && s < 86400) samples.push(s);
+              }
+            }
+            samples.sort((a, b) => a - b);
+            const avg = samples.length ? samples.reduce((a, b) => a + b, 0) / samples.length : 0;
+            const p95 = samples.length ? samples[Math.min(samples.length - 1, Math.floor(samples.length * 0.95))] : 0;
+            return {
+              data: {
+                avg_first_response_sec: Math.round(avg),
+                p95_first_response_sec: Math.round(p95),
+                samples: samples.length,
+              },
+            };
+          },
+          () => base_metrics.responseTimes(),
+        ),
+      satisfaction: () =>
+        this.guard(
+          async () => {
+            const ws = await this.wsId();
+            const { data, error } = await this.sb()
+              .from('conversations')
+              .select('rating')
+              .eq('workspace_id', ws)
+              .not('rating', 'is', null);
+            if (error) throw supaError(error);
+            const rated = ((data ?? []) as Row[]).map((r) => r.rating as number);
+            const distribution: Record<string, number> = { '1': 0, '2': 0, '3': 0, '4': 0, '5': 0 };
+            rated.forEach((r) => {
+              distribution[String(r)] = (distribution[String(r)] ?? 0) + 1;
+            });
+            const happy = rated.filter((r) => r >= 4).length;
+            return {
+              data: {
+                rated: rated.length,
+                distribution,
+                csat_pct: rated.length ? Math.round((happy / rated.length) * 100) : 0,
+              },
+            };
+          },
+          () => base_metrics.satisfaction(),
+        ),
+      tickets: () =>
+        this.guard(
+          async () => {
+            const ws = await this.wsId();
+            const { data, error } = await this.sb()
+              .from('tickets')
+              .select('status')
+              .eq('workspace_id', ws);
+            if (error) throw supaError(error);
+            const counts: Record<TicketStatus, number> = { new: 0, open: 0, resolved: 0 };
+            for (const t of (data ?? []) as Row[]) {
+              if (t.status in counts) counts[t.status as TicketStatus] += 1;
+            }
+            return { data: counts };
+          },
+          () => base_metrics.tickets(),
+        ),
+    };
+
+    // ---- audit log ------------------------------------------------------------------------------
+    const base_auditLog = this.auditLog;
+    this.auditLog = {
+      ...base_auditLog,
+      list: (opts: ListOpts = {}) =>
+        this.guard(
+          async () => ({
+            data: paginate(
+              await this.selWs('audit_log', mapAudit, (q) => q.order('created_at', { ascending: false })),
+              opts,
+            ),
+          }),
+          () => base_auditLog.list(opts),
+        ),
+    };
+
+    // NOTE: blog, helpDocs, contactMessages, statusEntries, copilotSettings,
+    // securitySettings, dataSettings, webhooks, deliveries and
+    // dataExport/dataImport/dataReset have no remote tables in the migration
+    // and intentionally keep the localStorage implementation (base class).
+  }
+}
+
+/** The localStorage-backed transport (default; works offline, no env vars). */
+export { BrixApi as localTransport };
+/** The Supabase/PostgREST-backed transport (active when env vars are set). */
+export { SupabaseBrixApi as supabaseTransport };
+
+/**
+ * Pick the active transport: Supabase when VITE_SUPABASE_URL and
+ * VITE_SUPABASE_ANON_KEY are both configured, otherwise localStorage.
+ * Signatures and return shapes are identical either way.
+ */
+export function getTransport(workspace: string, actor = 'system'): BrixApi {
+  return isSupabaseEnabled() ? new SupabaseBrixApi(workspace, actor) : new BrixApi(workspace, actor);
+}
+
+/* eslint-enable @typescript-eslint/no-explicit-any */
