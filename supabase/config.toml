@@ -1,0 +1,60 @@
+# Brix Chat — Supabase project config (backend phase)
+#
+# Install the CLI:  npm i -g supabase   (or: brew install supabase/tap/supabase)
+# Then run `supabase init` equivalents are already covered by this file —
+# link it to your project with:  supabase link --project-ref <your-project-ref>
+
+project_id = "brix-chat"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "storage", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+major_version = 15
+
+[studio]
+enabled = true
+port = 54323
+
+# ---------------------------------------------------------------------------
+# Edge Functions
+# ---------------------------------------------------------------------------
+# verify_jwt defaults to true. Functions below set verify_jwt = false because
+# they are called by DB webhooks / cron / other functions with the service_role
+# key — they authenticate via requireServiceRole() instead.
+
+[functions.webhook-dispatcher]
+enabled = true
+verify_jwt = false # service_role only (DB webhooks, cron sweeper, sla-checker)
+
+[functions.sla-checker]
+enabled = true
+verify_jwt = false # service_role only; fired by the cron schedule below
+
+[functions.invites]
+enabled = true
+verify_jwt = false # /accept is public (the invite token is the credential);
+                   # /create still requires the service_role key
+
+[functions.ai-copilot]
+enabled = true # verify_jwt = true (dashboard calls with the user JWT)
+
+[functions.send-email]
+enabled = true # verify_jwt = true; internal callers use the service_role key
+
+# ---------------------------------------------------------------------------
+# Scheduled runs (cron)
+# ---------------------------------------------------------------------------
+# Cron triggers for Edge Functions are created in the Supabase dashboard:
+#   Dashboard → Edge Functions → select function → Cron triggers → Add.
+# Alternatively run the pg_cron SQL from supabase/README.md ("Cron setup").
+#
+#   sla-checker            → every 15 minutes   →  */15 * * * *
+#   webhook retry sweeper  → every 5 minutes    →  */5 * * * *
+#     (POST https://<ref>.supabase.co/functions/v1/webhook-dispatcher
+#      with header Authorization: Bearer <service_role key> and body { "retry": true })
