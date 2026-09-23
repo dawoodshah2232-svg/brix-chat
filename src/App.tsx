@@ -42,6 +42,7 @@ import Departments from './app/Departments';
 import Categories from './app/Categories';
 import Developers from './app/Developers';
 import Ratings from './app/Ratings';
+import Quality from './app/Quality';
 // Worker A creates src/app/Feedback.tsx; the ./app/Feedback path below is
 // correct from src/App.tsx (the "../app/Feedback" in the work order assumed a pages/ file).
 import Feedback from './app/Feedback';
@@ -101,6 +102,7 @@ export default function App() {
             <Route path="contacts" element={<Titled title="Contacts"><Contacts /></Titled>} />
             <Route path="analytics" element={<Titled title="Analytics"><Analytics /></Titled>} />
             <Route path="ratings" element={<Titled title="Ratings"><Ratings /></Titled>} />
+            <Route path="quality" element={<Titled title="Quality"><Quality /></Titled>} />
             <Route path="knowledge" element={<Titled title="Knowledge base"><KnowledgeBase /></Titled>} />
             <Route path="canned" element={<Titled title="Canned responses"><Canned /></Titled>} />
             <Route path="triggers" element={<Titled title="Triggers"><Triggers /></Titled>} />

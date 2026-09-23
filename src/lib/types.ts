@@ -1,5 +1,7 @@
 // Brix Chat — shared domain types (demo mode: localStorage-backed, no backend)
 
+import type { QualityWeights } from './quality';
+
 export type MsgFrom = 'visitor' | 'agent' | 'ai' | 'system';
 // phase 4 (P4-17): 'audio' = widget/dashboard voice-note message (HTML5 player,
 // blob persisted in localStorage size-capped; ChatThread renders its side).
@@ -213,6 +215,8 @@ export interface Settings {
   notifyPrefs?: NotifyPrefs; // phase 2
   /** Distress alerts (P4-6): heuristic visitor-distress detection on new messages. */
   distress?: DistressSettings;
+  /** Admin-editable quality rubric weights (P4-7). Falls back to DEFAULT_QUALITY_WEIGHTS. */
+  qualityRubric?: QualityWeights;
 }
 
 export interface DistressSettings {

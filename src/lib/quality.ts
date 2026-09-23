@@ -108,85 +108,103 @@ export interface ScorableConversation {
   updatedAt: number;
 }
 
-/** Weighted 0–100 heuristic quality score with an explainable breakdown. */
-export function scoreConversationQuality(conv: ScorableConversation): QualityScore {
+/** Weighted 0–100 heuristic quality score with an explainable breakdown.
+ * Weights are editable via the admin rubric (Settings → Quality page). */
+export interface QualityWeights {
+  firstResponse: number;
+  sentiment: number;
+  resolution: number;
+  efficiency: number;
+  engagement: number;
+  freshness: number;
+}
+
+export const DEFAULT_QUALITY_WEIGHTS: QualityWeights = {
+  firstResponse: 25,
+  sentiment: 20,
+  resolution: 20,
+  efficiency: 15,
+  engagement: 10,
+  freshness: 10,
+};
+
+export function scoreConversationQuality(conv: ScorableConversation, weights: QualityWeights = DEFAULT_QUALITY_WEIGHTS): QualityScore {
   const breakdown: QualityBreakdown[] = [];
   const visitorMsgs = conv.messages.filter((m) => m.from === 'visitor');
   const agentMsgs = conv.messages.filter((m) => m.from === 'agent' || m.from === 'ai');
+  const wPts = (frac: number, weight: number) => Math.round(Math.max(0, Math.min(1, frac)) * weight);
 
-  // 1. First response time (0–25): full marks under 1 min, zero after 15 min.
+  // 1. First response time: full marks under 1 min, zero after 15 min.
   let firstRespSec: number | null = null;
   const firstVisitor = visitorMsgs[0];
   const firstReply = conv.messages.find(
     (m) => (m.from === 'agent' || m.from === 'ai') && firstVisitor && m.ts >= firstVisitor.ts,
   );
   if (firstVisitor && firstReply) firstRespSec = Math.max(0, (firstReply.ts - firstVisitor.ts) / 1000);
-  const respPts = firstRespSec === null ? 10 : Math.max(0, Math.round(25 * (1 - Math.min(1, firstRespSec / 900))));
+  const respFrac = firstRespSec === null ? 0.4 : Math.max(0, 1 - Math.min(1, firstRespSec / 900));
   breakdown.push({
     label: 'First response',
-    points: respPts,
-    max: 25,
+    points: wPts(respFrac, weights.firstResponse),
+    max: weights.firstResponse,
     note: firstRespSec === null ? 'no agent reply yet' : `${Math.round(firstRespSec)}s to first reply`,
   });
 
-  // 2. Visitor sentiment across the thread (0–20).
+  // 2. Visitor sentiment across the thread.
   const sent = analyzeSentiment(visitorMsgs.map((m) => m.text));
-  const sentPts = Math.round(((sent.score + 100) / 200) * 20);
   breakdown.push({
     label: 'Visitor sentiment',
-    points: sentPts,
-    max: 20,
+    points: wPts((sent.score + 100) / 200, weights.sentiment),
+    max: weights.sentiment,
     note: `${sent.label} (${sent.score > 0 ? '+' : ''}${sent.score})`,
   });
 
-  // 3. Resolution outcome (0–20).
-  let resPts = 0;
+  // 3. Resolution outcome.
+  let resFrac = 0;
   let resNote = 'still open';
   if (conv.status === 'closed') {
-    resPts = 12;
+    resFrac = 0.6;
     resNote = 'resolved';
   } else if (conv.status === 'spam' || conv.status === 'missed') {
-    resPts = 0;
+    resFrac = 0;
     resNote = conv.status;
   } else {
-    resPts = 5;
+    resFrac = 0.25;
   }
   if (conv.rating !== undefined) {
-    resPts += Math.round((conv.rating / 5) * 8);
+    resFrac += (conv.rating / 5) * 0.4;
     resNote += `, rated ${conv.rating}/5`;
   }
-  resPts = Math.min(20, resPts);
-  breakdown.push({ label: 'Resolution', points: resPts, max: 20, note: resNote });
+  breakdown.push({ label: 'Resolution', points: wPts(resFrac, weights.resolution), max: weights.resolution, note: resNote });
 
-  // 4. Conversation efficiency (0–15): fewer agent touches for the message count is better.
+  // 4. Conversation efficiency: fewer agent touches for the message count is better.
   const total = conv.messages.length;
-  const effPts = total === 0 ? 0 : Math.max(0, Math.round(15 * (1 - Math.min(1, agentMsgs.length / Math.max(6, total)))));
+  const effFrac = total === 0 ? 0 : 1 - Math.min(1, agentMsgs.length / Math.max(6, total));
   breakdown.push({
     label: 'Efficiency',
-    points: effPts,
-    max: 15,
+    points: wPts(effFrac, weights.efficiency),
+    max: weights.efficiency,
     note: `${agentMsgs.length} agent replies in ${total} messages`,
   });
 
-  // 5. Engagement depth (0–10): substantive back-and-forth beats one-liners.
+  // 5. Engagement depth: substantive back-and-forth beats one-liners.
   const avgLen = visitorMsgs.length
-    ? visitorMsgs.reduce((a, m) => a + m.text.length, 0) / visitorMsgs.length
+    ? visitorMsgs.reduce((acc, m) => acc + m.text.length, 0) / visitorMsgs.length
     : 0;
-  const engPts = Math.min(10, Math.round(Math.min(1, avgLen / 120) * 6 + Math.min(1, visitorMsgs.length / 6) * 4));
+  const engFrac = (Math.min(1, avgLen / 120) * 6 + Math.min(1, visitorMsgs.length / 6) * 4) / 10;
   breakdown.push({
     label: 'Engagement',
-    points: engPts,
-    max: 10,
+    points: wPts(engFrac, weights.engagement),
+    max: weights.engagement,
     note: `${visitorMsgs.length} visitor messages, avg ${Math.round(avgLen)} chars`,
   });
 
-  // 6. Recency/follow-through (0–10): penalize long-open stale chats.
+  // 6. Recency/follow-through: penalize long-open stale chats.
   const ageHrs = (Date.now() - conv.createdAt) / 3600000;
-  const stalePts = conv.status === 'open' && ageHrs > 48 ? 2 : conv.status === 'open' && ageHrs > 12 ? 6 : 10;
+  const staleFrac = conv.status === 'open' && ageHrs > 48 ? 0.2 : conv.status === 'open' && ageHrs > 12 ? 0.6 : 1;
   breakdown.push({
     label: 'Freshness',
-    points: stalePts,
-    max: 10,
+    points: wPts(staleFrac, weights.freshness),
+    max: weights.freshness,
     note: conv.status === 'open' ? `open for ${Math.round(ageHrs)}h` : 'closed',
   });
 
