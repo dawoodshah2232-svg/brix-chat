@@ -6,11 +6,40 @@ import { useStore } from '../lib/store';
 import type { Contact } from '../lib/types';
 import { cx, timeAgo, uid } from '../lib/utils';
 import { Avatar, Badge, Button, Card, EmptyState, Input, Label, Modal, SearchInput, Select, Textarea, useConfirm } from '../components/ui';
+import { toast } from '../components/dashboard/Toasts';
+import { getApi } from '../lib/api';
 
 const FLAGS: Record<string, string> = {
   'UAE': '🇦🇪', 'Saudi Arabia': '🇸🇦', 'Germany': '🇩🇪', 'Italy': '🇮🇹',
   'India': '🇮🇳', 'UK': '🇬🇧', 'US': '🇺🇸', 'United Kingdom': '🇬🇧', 'United States': '🇺🇸',
 };
+
+/** Display-only PII masking — data underneath is never touched. */
+function maskEmail(e: string): string {
+  const [u, d] = e.split('@');
+  if (!d) return '•••';
+  return `${u.charAt(0) || '•'}•••@${d}`;
+}
+function maskPhone(p: string): string {
+  const digits = p.replace(/\D/g, '');
+  if (digits.length <= 2) return '••••';
+  let seen = 0;
+  return p.replace(/\d/g, (d) => {
+    seen += 1;
+    return seen > digits.length - 2 ? d : '•';
+  });
+}
+function downloadJson(filename: string, data: unknown) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
 
 function blankContact(): Contact {
   return {
@@ -47,6 +76,13 @@ export default function Contacts() {
   const [detail, setDetail] = useState<Contact | null>(null);
   const [mergeIds, setMergeIds] = useState<Set<string>>(new Set());
   const [mergePrimary, setMergePrimary] = useState('');
+  const [maskPII, setMaskPII] = useState(() => {
+    try { return localStorage.getItem('brix.maskPII') === '1'; } catch { return false; }
+  });
+  const toggleMask = () => setMaskPII((v) => {
+    try { localStorage.setItem('brix.maskPII', v ? '0' : '1'); } catch { /* ignore */ }
+    return !v;
+  });
 
   // Deep link from a chat thread (timeline view).
   useEffect(() => {
@@ -111,6 +147,24 @@ export default function Contacts() {
     setMergePrimary('');
   };
 
+  const erase = (c: Contact) => {
+    confirm({
+      title: 'Erase contact data',
+      body: `Permanently erase ${c.name}? This deletes the contact record and anonymizes their conversations (name, email and notes removed). This can't be undone.`,
+      action: () => {
+        store.eraseContact(c.id);
+        setDetail(null);
+        toast.success('Contact erased', `${c.name}'s record and linked PII were anonymized`);
+        const sess = store.session;
+        if (sess) {
+          getApi(store.effectiveWorkspaceId(), sess.displayName).audit
+            .log('contact.erased', 'contact', c.id, { name: c.name })
+            .catch(() => {});
+        }
+      },
+    });
+  };
+
   const detailContact = detail ? store.data.contacts.find((c) => c.id === detail.id) ?? detail : null;
   const timeline = useMemo(
     () => (detailContact ? contactTimeline(detailContact, store.data.conversations) : []),
@@ -124,7 +178,13 @@ export default function Contacts() {
           <h1 className="text-xl font-display font-extrabold text-slate-900">Contacts</h1>
           <p className="text-sm text-slate-500 mt-0.5">Your visitor CRM — {store.data.contacts.length} contacts</p>
         </div>
-        <Button onClick={() => setEditor({ contact: blankContact(), tagsText: '' })}>+ Add contact</Button>
+        <div className="flex gap-2">
+          <Button variant="secondary" onClick={() => {
+            downloadJson(`brix-contacts-${new Date().toISOString().slice(0, 10)}.json`, filtered);
+            toast.success('Contacts exported', `${filtered.length} contact${filtered.length === 1 ? '' : 's'} downloaded as JSON`);
+          }}>⤓ Export JSON</Button>
+          <Button onClick={() => setEditor({ contact: blankContact(), tagsText: '' })}>+ Add contact</Button>
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
@@ -145,6 +205,14 @@ export default function Contacts() {
             </button>
           ))}
         </div>
+        <button
+          onClick={toggleMask}
+          className={cx('ml-auto px-3 py-1.5 rounded-lg border text-xs font-semibold transition',
+            maskPII ? 'bg-ink-950 text-white border-ink-950' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300')}
+          title="Display-only: mask emails and phone numbers. Data is untouched."
+        >
+          {maskPII ? '🙈 PII masked' : '👁 Show PII'}
+        </button>
       </div>
 
       {mergeIds.size > 0 && (
@@ -202,8 +270,8 @@ export default function Contacts() {
                         <span className="font-semibold text-slate-900">{c.name}</span>
                       </div>
                     </td>
-                    <td className="px-5 py-3.5 text-slate-600">{c.email || '—'}</td>
-                    <td className="px-5 py-3.5 text-slate-600 whitespace-nowrap">{c.phone || '—'}</td>
+                    <td className="px-5 py-3.5 text-slate-600">{c.email ? (maskPII ? maskEmail(c.email) : c.email) : '—'}</td>
+                    <td className="px-5 py-3.5 text-slate-600 whitespace-nowrap">{c.phone ? (maskPII ? maskPhone(c.phone) : c.phone) : '—'}</td>
                     <td className="px-5 py-3.5 text-slate-600 whitespace-nowrap">
                       {c.country ? <span><span className="mr-1.5">{FLAGS[c.country] ?? '🌍'}</span>{c.country}</span> : '—'}
                     </td>
@@ -264,11 +332,16 @@ export default function Contacts() {
             <div className="flex items-center gap-3">
               <Avatar name={detailContact.name} size="lg" />
               <div>
-                <div className="font-semibold text-slate-900">{detailContact.email || 'No email'}</div>
-                <div className="text-xs text-slate-500">{detailContact.phone || 'No phone'} · {detailContact.country || 'No country'}</div>
+                <div className="font-semibold text-slate-900">{detailContact.email ? (maskPII ? maskEmail(detailContact.email) : detailContact.email) : 'No email'}</div>
+                <div className="text-xs text-slate-500">{detailContact.phone ? (maskPII ? maskPhone(detailContact.phone) : detailContact.phone) : 'No phone'} · {detailContact.country || 'No country'}</div>
               </div>
               <div className="ml-auto flex gap-2">
+                <Button variant="secondary" size="sm" onClick={() => {
+                  downloadJson(`brix-contact-${detailContact.id}.json`, { ...detailContact, timeline });
+                  toast.success('Contact exported', 'Downloaded as JSON');
+                }}>⤓ JSON</Button>
                 <Button variant="secondary" size="sm" onClick={() => { setEditor({ contact: { ...detailContact }, tagsText: detailContact.tags.join(', ') }); setDetail(null); }}>Edit</Button>
+                <Button variant="ghost" size="sm" className="text-rose-600 hover:bg-rose-50" onClick={() => erase(detailContact)}>Erase…</Button>
               </div>
             </div>
             <div className="grid grid-cols-3 gap-3">

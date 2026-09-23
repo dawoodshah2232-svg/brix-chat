@@ -151,6 +151,8 @@ interface Store {
   // contacts / articles / canned / triggers / campaigns
   saveContact: (c: Contact) => void;
   deleteContact: (id: string) => void;
+  /** GDPR-style erasure: delete the contact and anonymize linked conversations. */
+  eraseContact: (id: string) => void;
   saveArticle: (a: Article) => void;
   deleteArticle: (id: string) => void;
   saveCanned: (c: Canned) => void;
@@ -471,6 +473,29 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
     const saveContact: Store['saveContact'] = (c) => patchData((d) => ({ ...d, contacts: upsert(d.contacts, c) }));
     const deleteContact: Store['deleteContact'] = (id) => patchData((d) => ({ ...d, contacts: d.contacts.filter((c) => c.id !== id) }));
+    const eraseContact: Store['eraseContact'] = (id) =>
+      patchData((d) => {
+        const contact = d.contacts.find((c) => c.id === id);
+        if (!contact) return d;
+        const name = contact.name.toLowerCase();
+        const email = contact.email.toLowerCase();
+        return {
+          ...d,
+          contacts: d.contacts.filter((c) => c.id !== id),
+          conversations: d.conversations.map((c) =>
+            c.visitor.toLowerCase() === name || (email !== '' && c.email?.toLowerCase() === email)
+              ? {
+                  ...c,
+                  visitor: 'Erased visitor',
+                  email: undefined,
+                  notes: [],
+                  tags: c.tags.includes('erased') ? c.tags : [...c.tags, 'erased'],
+                  updatedAt: Date.now(),
+                }
+              : c,
+          ),
+        };
+      });
     const saveArticle: Store['saveArticle'] = (a) => patchData((d) => ({ ...d, articles: upsert(d.articles, a) }));
     const deleteArticle: Store['deleteArticle'] = (id) => patchData((d) => ({ ...d, articles: d.articles.filter((a) => a.id !== id) }));
     const saveCanned: Store['saveCanned'] = (c) => patchData((d) => ({ ...d, canned: upsert(d.canned, c) }));
@@ -516,7 +541,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       updateProfile, setStatus, changePasscode,
       getConversation, getVisitor,
       addMessage, updateConversation, markRead, addNote, toggleTag, resolveConversation, newProactiveChat,
-      saveContact, deleteContact, saveArticle, deleteArticle,
+      saveContact, deleteContact, eraseContact, saveArticle, deleteArticle,
       saveCanned, deleteCanned, trackCannedUsage, saveTrigger, deleteTrigger, toggleTrigger,
       saveCampaign, deleteCampaign, updateSettings, searchAll,
     };
