@@ -83,12 +83,13 @@ export function Modal({ open, onClose, title, children, wide }: { open: boolean;
   );
 }
 
-export function EmptyState({ icon, title, hint }: { icon: string; title: string; hint?: string }) {
+export function EmptyState({ icon, title, hint, action }: { icon: string; title: string; hint?: string; action?: ReactNode }) {
   return (
     <div className="text-center py-12 px-6">
       <div className="text-4xl mb-3">{icon}</div>
       <div className="font-semibold text-slate-800">{title}</div>
       {hint && <div className="text-sm text-slate-500 mt-1 max-w-sm mx-auto">{hint}</div>}
+      {action && <div className="mt-4 flex justify-center">{action}</div>}
     </div>
   );
 }
