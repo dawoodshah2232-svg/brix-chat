@@ -6,7 +6,7 @@ import { getApi } from '../lib/api';
 import type { ApiGoal, ApiTicket } from '../lib/api';
 import type { SavedReport } from '../lib/types';
 import { downloadCsv, fmtDuration, timeAgo, uid } from '../lib/utils';
-import { Button, Card, Input, Label, Modal, Select, StatCard } from '../components/ui';
+import { Button, Card, EmptyState, Input, Label, Modal, Select, StatCard } from '../components/ui';
 import { cx } from '../lib/utils';
 
 const DAY_MS = 86400000;
@@ -428,7 +428,8 @@ export default function Analytics() {
         <Card className="p-5">
           <SectionHead title="Agent leaderboard" hint="Chats, resolution rate, CSAT, response" onCsv={csv.leaderboard} />
           {leaderboard.length === 0 ? (
-            <div className="text-sm text-slate-400 py-8 text-center">No data yet.</div>
+            <EmptyState icon="🏆" title="No agent data in this period"
+              hint="The leaderboard fills up once your team closes chats in the selected range." />
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -487,7 +488,8 @@ export default function Analytics() {
         <Card className="p-5">
           <SectionHead title="CSAT breakdown" hint="Post-chat satisfaction ratings" onCsv={csv.csat} />
           {csat.rated === 0 ? (
-            <div className="text-sm text-slate-400 py-8 text-center">No ratings yet.</div>
+            <EmptyState icon="⭐" title="No ratings in this period"
+              hint="CSAT, NPS and CES responses from your post-chat surveys will appear here." />
           ) : (
             <div className="space-y-2.5">
               {csat.dist.map((d) => (
@@ -553,7 +555,8 @@ export default function Analytics() {
         {visible('dept') && (
         <Card className="p-5">
           <SectionHead title="Conversations by department" hint={presetLabel} onCsv={csv.conversations} />
-          {byDept.length ? <BarChart entries={byDept} /> : <div className="text-sm text-slate-400 py-8 text-center">No data yet.</div>}
+          {byDept.length ? <BarChart entries={byDept} /> : <EmptyState icon="📊" title="No chats by department yet"
+            hint="Department volumes appear once chats are tagged with a department." />}
         </Card>)}
       {/* P4-15: report builder + saved reports */}
       <Modal open={builderOpen} onClose={() => setBuilderOpen(false)} title="Analytics reports" wide>
