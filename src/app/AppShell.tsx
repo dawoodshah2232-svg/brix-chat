@@ -26,6 +26,7 @@ const TITLES: Record<string, string> = {
   '/app/triggers': 'Triggers',
   '/app/campaigns': 'Campaigns',
   '/app/settings': 'Settings',
+  '/admin': 'Admin',
 };
 
 function Logo() {
@@ -52,6 +53,8 @@ export default function AppShell() {
   const results = q.trim() ? searchAll(q.trim()) : null;
   const unread = data.conversations.reduce((n, c) => n + (c.status === 'open' ? c.unread : 0), 0);
   const title = TITLES[location.pathname] ?? 'Brix Chat';
+  const canAdmin = session?.role === 'admin' || session?.role === 'developer';
+  const nav = canAdmin ? [...NAV, { to: '/admin', label: 'Admin', icon: '🛡️' }] : NAV;
 
   useEffect(() => {
     setMobileOpen(false);
@@ -61,7 +64,7 @@ export default function AppShell() {
 
   const navList = (
     <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto slim-scroll">
-      {NAV.map((n) => (
+      {nav.map((n) => (
         <NavLink
           key={n.to}
           to={n.to}

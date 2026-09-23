@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { StoreProvider } from './lib/store';
 import { MarketingLayout } from './components/marketing';
 import AuthGuard from './auth/AuthGuard';
+import RoleGuard from './auth/RoleGuard';
 import Landing from './pages/Landing';
 import Features from './pages/Features';
 import Pricing from './pages/Pricing';
@@ -18,6 +19,7 @@ import Canned from './app/Canned';
 import Triggers from './app/Triggers';
 import Campaigns from './app/Campaigns';
 import Settings from './app/Settings';
+import Admin from './app/Admin';
 
 function NotFound() {
   return (
@@ -44,6 +46,7 @@ export default function App() {
           <Route path="signup" element={<Signup />} />
           <Route path="login" element={<Login />} />
           <Route path="widget" element={<WidgetPage />} />
+          <Route path="admin" element={<AuthGuard><RoleGuard roles={['admin', 'developer']}><Admin /></RoleGuard></AuthGuard>} />
           <Route path="app" element={<AuthGuard><AppShell /></AuthGuard>}>
             <Route index element={<Inbox />} />
             <Route path="visitors" element={<Visitors />} />
