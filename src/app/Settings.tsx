@@ -22,6 +22,36 @@ function SectionTitle({ children }: { children: string }) {
   return <h2 className="text-base font-display font-bold text-slate-900">{children}</h2>;
 }
 
+const NOTIF_EVENTS = [
+  { key: 'chat.message', icon: '💬', label: 'New visitor message' },
+  { key: 'chat.assigned', icon: '👤', label: 'Chat assigned to me' },
+  { key: 'ticket.created', icon: '🎫', label: 'New ticket' },
+  { key: 'ticket.sla', icon: '⏰', label: 'Ticket SLA breach' },
+  { key: 'campaign.sent', icon: '📣', label: 'Campaign sent' },
+  { key: 'goal.completed', icon: '🏁', label: 'Goal completed' },
+  { key: 'mention', icon: '＠', label: 'Mention in a note' },
+];
+
+function defaultPrefs() {
+  return {
+    sound: true,
+    desktopBell: false,
+    events: Object.fromEntries(NOTIF_EVENTS.map((e) => [e.key, true])),
+  };
+}
+
+function notifPermission(): NotificationPermission {
+  return typeof Notification !== 'undefined' ? Notification.permission : 'denied';
+}
+
+async function requestNotifPermission() {
+  try {
+    if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+      await Notification.requestPermission();
+    }
+  } catch { /* ignore */ }
+}
+
 export default function Settings() {
   const store = useStore();
   const { confirm, dialog } = useConfirm();
@@ -228,6 +258,59 @@ export default function Settings() {
               <div className="ml-auto"><Toggle checked={h.enabled} onChange={(v) => updateHour(i, { enabled: v })} label={h.day} /></div>
             </div>
           ))}
+        </div>
+      </Card>
+
+      {/* Notifications */}
+      <Card className="p-6">
+        <SectionTitle>Notifications</SectionTitle>
+        <p className="text-sm text-slate-500 mt-1 mb-4">Choose what pings you — everything stays in this browser.</p>
+        <div className="divide-y divide-slate-100">
+          <div className="flex items-center justify-between py-3">
+            <div>
+              <div className="text-sm font-semibold text-slate-900">🔔 Sound</div>
+              <div className="text-xs text-slate-500">Play a chime when a new notification arrives</div>
+            </div>
+            <Toggle
+              checked={s.notifyPrefs?.sound ?? s.notifySound}
+              onChange={(v) => store.updateSettings({ notifySound: v, notifyPrefs: { ...defaultPrefs(), ...s.notifyPrefs, sound: v } })}
+              label="Notification sound"
+            />
+          </div>
+          <div className="flex items-center justify-between py-3">
+            <div>
+              <div className="text-sm font-semibold text-slate-900">🛎 Desktop bell</div>
+              <div className="text-xs text-slate-500">
+                Show a system notification even when this tab is in the background
+                {notifPermission() !== 'granted' && ' · browser permission needed'}
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              {notifPermission() !== 'granted' && (
+                <Button size="sm" variant="secondary" onClick={requestNotifPermission}>Enable</Button>
+              )}
+              <Toggle
+                checked={(s.notifyPrefs?.desktopBell ?? false) && notifPermission() === 'granted'}
+                onChange={(v) => store.updateSettings({ notifyPrefs: { ...defaultPrefs(), ...s.notifyPrefs, desktopBell: v } })}
+                label="Desktop bell"
+              />
+            </div>
+          </div>
+          <div className="pt-4">
+            <div className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">Notify me about</div>
+            {NOTIF_EVENTS.map((e) => (
+              <div key={e.key} className="flex items-center justify-between py-2.5">
+                <div className="text-sm font-medium text-slate-700">{e.icon} {e.label}</div>
+                <Toggle
+                  checked={s.notifyPrefs?.events?.[e.key] ?? true}
+                  onChange={(v) => store.updateSettings({
+                    notifyPrefs: { ...defaultPrefs(), ...s.notifyPrefs, events: { ...defaultPrefs().events, ...s.notifyPrefs?.events, [e.key]: v } },
+                  })}
+                  label={e.label}
+                />
+              </div>
+            ))}
+          </div>
         </div>
       </Card>
 

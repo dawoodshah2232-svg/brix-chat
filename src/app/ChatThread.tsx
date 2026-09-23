@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useStore } from '../lib/store';
-import type { ChatMessage, ConvStatus } from '../lib/types';
+import { getApi } from '../lib/api';
+import type { ApiPlay } from '../lib/api';
+import type { Canned, ChatMessage, ConvPriority, ConvStatus } from '../lib/types';
 import { Avatar, Badge, Button, EmptyState, Input, Label, Select, Tabs, Textarea, Toggle } from '../components/ui';
 import { cx, fmtDuration, timeAgo } from '../lib/utils';
 import { botReply, OPENERS, threadSentiment } from '../lib/bot';
@@ -14,6 +17,11 @@ interface Props {
 const EMOJIS = ['😀','😂','👍','👋','🙏','❤️','😊','🎉','✅','❌','⚠️','📌','📎','🔗','💡','🚀','⭐','🔥','💬','📞','📧','🕒','💰','🎯'];
 
 const SENT_TONE = { positive: 'green', neutral: 'slate', negative: 'rose' } as const;
+
+/** Canned-response template variables: {{name}} {{visitor}} {{workspace}} {{department}} */
+function fillVars(body: string, ctx: Record<string, string>): string {
+  return body.replace(/\{\{\s*(name|visitor|workspace|department)\s*\}\}/g, (_, k: string) => ctx[k] ?? '');
+}
 
 function VoiceMsg({ sec, mine }: { sec: number; mine: boolean }) {
   const [playing, setPlaying] = useState(false);
@@ -116,8 +124,9 @@ function MsgBubble({ m }: { m: ChatMessage }) {
 export default function ChatThread({ convId, input, setInput }: Props) {
   const {
     session, data, getConversation, addMessage, updateConversation,
-    markRead, addNote, toggleTag, resolveConversation,
+    markRead, addNote, toggleTag, resolveConversation, trackCannedUsage,
   } = useStore();
+  const navigate = useNavigate();
 
   const conv = getConversation(convId);
 
@@ -125,13 +134,17 @@ export default function ChatThread({ convId, input, setInput }: Props) {
   const [recording, setRecording] = useState(false);
   const [showEmoji, setShowEmoji] = useState(false);
   const [showCanned, setShowCanned] = useState(false);
+  const [showPlays, setShowPlays] = useState(false);
+  const [plays, setPlays] = useState<ApiPlay[]>([]);
   const [railTab, setRailTab] = useState<'details' | 'notes'>('details');
   const [noteText, setNoteText] = useState('');
   const [tagText, setTagText] = useState('');
+  const [busy, setBusy] = useState(false);
 
   const timers = useRef<number[]>([]);
   const openerFired = useRef<Set<string>>(new Set());
   const scrollRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
 
   const later = (fn: () => void, ms: number) => {
     const id = window.setTimeout(fn, ms);
@@ -172,6 +185,21 @@ export default function ChatThread({ convId, input, setInput }: Props) {
     if (el) el.scrollTop = el.scrollHeight;
   }, [conv?.messages.length, typing]);
 
+  // Global "R" shortcut → focus the composer
+  useEffect(() => {
+    const focus = () => composerRef.current?.querySelector('input')?.focus();
+    window.addEventListener('brix:focus-reply', focus);
+    return () => window.removeEventListener('brix:focus-reply', focus);
+  }, []);
+
+  // Load plays for the runner (local API)
+  useEffect(() => {
+    if (!session || !showPlays) return;
+    getApi(session.workspace, session.displayName).plays.list()
+      .then(({ data: p }) => setPlays(p))
+      .catch(() => {});
+  }, [session, showPlays]);
+
   if (!conv) {
     return (
       <div className="flex-1 grid place-items-center">
@@ -182,6 +210,86 @@ export default function ChatThread({ convId, input, setInput }: Props) {
 
   const sentiment = threadSentiment(conv.messages);
   const agentName = session?.displayName ?? 'Agent';
+
+  // ---- canned slash menu + variables -----------------------------------------
+  const varCtx = () => ({
+    name: agentName,
+    visitor: conv.visitor,
+    workspace: session?.workspace ?? '',
+    department: conv.department,
+  });
+  const slashActive = input.startsWith('/');
+  const slashQuery = slashActive ? input.slice(1).trim().toLowerCase() : '';
+  const myCanned = data.canned.filter((c) => c.shared !== false || c.owner === agentName);
+  const slashMatches = myCanned.filter((c) =>
+    !slashQuery ||
+    c.shortcut.toLowerCase().includes(slashQuery) ||
+    c.title.toLowerCase().includes(slashQuery) ||
+    c.body.toLowerCase().includes(slashQuery),
+  );
+  const insertCanned = (c: Canned) => {
+    setInput(fillVars(c.body, varCtx()));
+    trackCannedUsage(c.id);
+    setShowCanned(false);
+  };
+
+  // ---- plays runner (applies steps to the local conversation) -----------------
+  const runPlay = (play: ApiPlay) => {
+    setShowPlays(false);
+    const ctx = varCtx();
+    for (const step of play.steps) {
+      const value = fillVars(step.value, ctx);
+      if (step.kind === 'reply' && value.trim()) {
+        addMessage(convId, { from: 'agent', kind: 'text', text: value.trim(), name: agentName });
+      } else if (step.kind === 'note' && value.trim()) {
+        addNote(convId, `▶ ${play.name}: ${value.trim()}`);
+      } else if (step.kind === 'tag' && value.trim()) {
+        const t = value.trim().toLowerCase();
+        if (!conv.tags.includes(t)) toggleTag(convId, t);
+      } else if (step.kind === 'assign' && value.trim()) {
+        updateConversation(convId, { agent: value.trim() });
+      } else if (step.kind === 'priority') {
+        const p = value.trim().toLowerCase();
+        if (['low', 'medium', 'high', 'urgent'].includes(p)) updateConversation(convId, { priority: p as ConvPriority });
+      }
+    }
+    addMessage(convId, { from: 'system', kind: 'text', text: `▶ Play “${play.name}” applied (${play.steps.length} steps).` });
+  };
+
+  // ---- unanswered-question logging (knowledge-gap loop) -----------------------
+  const logUnanswered = async () => {
+    if (!session || busy) return;
+    const lastVisitor = [...conv.messages].reverse().find((m) => m.from === 'visitor' && m.text.trim());
+    const question = input.trim() || lastVisitor?.text.trim() || '';
+    if (!question) return;
+    setBusy(true);
+    try {
+      await getApi(session.workspace, session.displayName).unanswered.add(question, convId);
+      addMessage(convId, { from: 'system', kind: 'text', text: '❓ Logged as an unanswered question — it will appear in the knowledge-gap log.' });
+      setInput('');
+    } catch { /* ignore */ }
+    setBusy(false);
+  };
+
+  // ---- create ticket from this chat -------------------------------------------
+  const createTicket = async () => {
+    if (!session || busy) return;
+    setBusy(true);
+    try {
+      const transcript = conv.messages.map((m) => `${m.from}: ${m.text}`).join('\n');
+      const { data: t } = await getApi(session.workspace, session.displayName).tickets.create({
+        subject: `Chat with ${conv.visitor} (${conv.page})`,
+        message: transcript || 'Created from chat.',
+        requester_name: conv.visitor,
+        priority: conv.priority ?? 'medium',
+        conversation_id: convId,
+        tags: conv.tags,
+      });
+      addMessage(convId, { from: 'system', kind: 'text', text: `🎫 Ticket created from this chat.` });
+      navigate(`/app/tickets?ticket=${t.id}`);
+    } catch { /* ignore */ }
+    setBusy(false);
+  };
 
   const send = () => {
     const text = input.trim();
@@ -247,8 +355,6 @@ export default function ChatThread({ convId, input, setInput }: Props) {
     }, 2000);
   };
 
-  const insertText = (t: string) => setInput((v) => (v ? v + ' ' + t : t));
-
   const statusTone: Record<ConvStatus, 'green' | 'slate' | 'rose' | 'amber'> = {
     open: 'green', closed: 'slate', spam: 'rose', missed: 'amber',
   };
@@ -297,6 +403,11 @@ export default function ChatThread({ convId, input, setInput }: Props) {
                     ))}
                   </Select>
                   <Button size="sm" variant="secondary" onClick={handleResolve}>✓ Resolve</Button>
+                  <Button size="sm" variant="secondary" onClick={createTicket}>🎫 Ticket</Button>
+                  <button onClick={logUnanswered} title="Log as unanswered question"
+                    className="w-8 h-8 grid place-items-center rounded-lg text-slate-400 hover:bg-amber-50 hover:text-amber-600 transition">
+                    ❓
+                  </button>
                   <button onClick={() => updateConversation(convId, { status: 'spam', live: false })} title="Mark as spam"
                     className="w-8 h-8 grid place-items-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition">
                     🚫
@@ -336,21 +447,41 @@ export default function ChatThread({ convId, input, setInput }: Props) {
               )}
               {showCanned && (
                 <div className="absolute bottom-14 left-0 z-30 w-80 max-h-64 overflow-y-auto slim-scroll bg-white border border-slate-200 rounded-2xl shadow-2xl p-2 animate-fade-up">
-                  <div className="px-2 py-1 text-[11px] font-bold uppercase tracking-wide text-slate-400">Canned responses</div>
-                  {data.canned.map((c) => (
-                    <button key={c.id} onClick={() => { insertText(c.body); setShowCanned(false); }}
+                  <div className="px-2 py-1 text-[11px] font-bold uppercase tracking-wide text-slate-400">
+                    {slashActive ? `Canned — matching “${input}”` : 'Canned responses'} <span className="normal-case font-medium">(type / to search)</span>
+                  </div>
+                  {(slashActive ? slashMatches : myCanned).map((c) => (
+                    <button key={c.id} onClick={() => insertCanned(c)}
                       className="w-full text-left px-2.5 py-2 rounded-xl hover:bg-slate-50">
                       <div className="text-sm font-semibold text-slate-800">⚡ {c.title} <span className="text-slate-400 font-normal text-xs">/{c.shortcut}</span></div>
                       <div className="text-xs text-slate-500 truncate">{c.body}</div>
                     </button>
                   ))}
-                  {data.canned.length === 0 && <div className="px-2.5 py-3 text-sm text-slate-500">No canned responses yet.</div>}
+                  {slashMatches.length === 0 && slashActive && <div className="px-2.5 py-3 text-sm text-slate-500">No canned responses match.</div>}
+                  {myCanned.length === 0 && !slashActive && <div className="px-2.5 py-3 text-sm text-slate-500">No canned responses yet.</div>}
+                  <div className="px-2 py-1.5 text-[11px] text-slate-400 border-t border-slate-100 mt-1">
+                    Variables: <code className="font-mono">{'{{name}} {{visitor}} {{workspace}} {{department}}'}</code>
+                  </div>
                 </div>
               )}
-              <div className="flex items-end gap-2">
+              {showPlays && (
+                <div className="absolute bottom-14 left-12 z-30 w-80 max-h-64 overflow-y-auto slim-scroll bg-white border border-slate-200 rounded-2xl shadow-2xl p-2 animate-fade-up">
+                  <div className="px-2 py-1 text-[11px] font-bold uppercase tracking-wide text-slate-400">▶ Run a play</div>
+                  {plays.map((p) => (
+                    <button key={p.id} onClick={() => runPlay(p)}
+                      className="w-full text-left px-2.5 py-2 rounded-xl hover:bg-slate-50">
+                      <div className="text-sm font-semibold text-slate-800">{p.name}</div>
+                      <div className="text-xs text-slate-500">{p.steps.length} step{p.steps.length === 1 ? '' : 's'} · {p.steps.map((s) => s.kind).join(', ')}</div>
+                    </button>
+                  ))}
+                  {plays.length === 0 && <div className="px-2.5 py-3 text-sm text-slate-500">No plays yet — create one in Settings.</div>}
+                </div>
+              )}
+              <div className="flex items-end gap-2" ref={composerRef}>
                 <div className="flex gap-1 pb-1">
-                  <button onClick={() => { setShowEmoji((v) => !v); setShowCanned(false); }} className={cx('w-9 h-9 grid place-items-center rounded-xl text-lg hover:bg-slate-100', showEmoji && 'bg-slate-100')} title="Emoji">😊</button>
-                  <button onClick={() => { setShowCanned((v) => !v); setShowEmoji(false); }} className={cx('w-9 h-9 grid place-items-center rounded-xl text-lg hover:bg-slate-100', showCanned && 'bg-slate-100')} title="Canned responses">⚡</button>
+                  <button onClick={() => { setShowEmoji((v) => !v); setShowCanned(false); setShowPlays(false); }} className={cx('w-9 h-9 grid place-items-center rounded-xl text-lg hover:bg-slate-100', showEmoji && 'bg-slate-100')} title="Emoji">😊</button>
+                  <button onClick={() => { setShowCanned((v) => !v); setShowEmoji(false); setShowPlays(false); }} className={cx('w-9 h-9 grid place-items-center rounded-xl text-lg hover:bg-slate-100', showCanned && 'bg-slate-100')} title="Canned responses">⚡</button>
+                  <button onClick={() => { setShowPlays((v) => !v); setShowEmoji(false); setShowCanned(false); }} className={cx('w-9 h-9 grid place-items-center rounded-xl text-lg hover:bg-slate-100', showPlays && 'bg-slate-100')} title="Run a play">▶</button>
                   <button onClick={handleAttach} className="w-9 h-9 grid place-items-center rounded-xl text-lg hover:bg-slate-100" title="Attach file">📎</button>
                   <button onClick={handleMic} className={cx('w-9 h-9 grid place-items-center rounded-xl text-lg hover:bg-slate-100', recording && 'bg-rose-100 animate-pulse')} title="Voice message">
                     {recording ? '⏺' : '🎙'}
@@ -359,9 +490,16 @@ export default function ChatThread({ convId, input, setInput }: Props) {
                 <div className="flex-1">
                   <Input
                     value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
-                    placeholder={recording ? 'Recording… (2s)' : `Reply to ${conv.visitor.split(' ')[0]}…`}
+                    onChange={(e) => { const v = e.target.value; setInput(v); if (v.startsWith('/')) { setShowCanned(true); setShowEmoji(false); setShowPlays(false); } }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        if (slashActive && showCanned && slashMatches.length > 0) insertCanned(slashMatches[0]);
+                        else send();
+                      }
+                      if (e.key === 'Escape') { setShowCanned(false); setShowPlays(false); setShowEmoji(false); }
+                    }}
+                    placeholder={recording ? 'Recording… (2s)' : `Reply to ${conv.visitor.split(' ')[0]}… (type / for canned)`}
                     disabled={recording}
                   />
                 </div>
@@ -425,6 +563,7 @@ export default function ChatThread({ convId, input, setInput }: Props) {
                   ['🖥 Device', conv.device],
                   ['📍 Location', `${conv.city}, ${conv.country}`],
                   ['🕒 Started', timeAgo(conv.createdAt)],
+                  ['⭐ Satisfaction', conv.rating ? `${conv.rating}/5 CSAT` : '—'],
                 ].map(([k, v]) => (
                   <div key={k} className="flex justify-between gap-2 text-xs">
                     <span className="text-slate-500 font-medium">{k}</span>
@@ -432,6 +571,14 @@ export default function ChatThread({ convId, input, setInput }: Props) {
                   </div>
                 ))}
               </div>
+              <Button
+                size="sm"
+                variant="secondary"
+                className="w-full"
+                onClick={() => navigate(`/app/contacts?search=${encodeURIComponent(conv.visitor)}`)}
+              >
+                📇 View contact timeline
+              </Button>
             </div>
           ) : (
             <div>
