@@ -3,8 +3,8 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStore } from '../lib/store';
 import type { Visitor } from '../lib/types';
-import { fmtDuration } from '../lib/utils';
-import { Badge, Button, Card, EmptyState, Modal } from '../components/ui';
+import { fmtDuration, timeAgo } from '../lib/utils';
+import { Badge, Button, Card, EmptyState, Modal, Tabs } from '../components/ui';
 
 const FLAGS: Record<string, string> = {
   'UAE': '🇦🇪',
@@ -72,6 +72,111 @@ function CobrowseMock({ visitor }: { visitor: Visitor }) {
   );
 }
 
+/** P4-14 — real-time operations monitor. Reads live local state; the parent
+ *  page ticks every second, so queue depth and wait timers update as you work. */
+function OpsMonitor() {
+  const store = useStore();
+  const navigate = useNavigate();
+  const team = store.data.settings.team;
+  const open = store.data.conversations.filter((c) => c.status === 'open');
+  const queue = open.filter((c) => !c.agent);
+
+  const lastVisitorTs = (c: (typeof open)[number]) => {
+    const vm = c.messages.filter((m) => m.from === 'visitor');
+    return vm.length ? vm[vm.length - 1].ts : c.createdAt;
+  };
+  const waits = open.map((c) => ({ c, wait: Date.now() - lastVisitorTs(c) }));
+  const longest = waits.length ? waits.reduce((a, b) => (b.wait > a.wait ? b : a)) : null;
+
+  const online = team.filter((t) => t.online);
+  const away = team.filter((t) => !t.online);
+  const loadOf = (name: string) => open.filter((c) => c.agent === name).length;
+
+  const events = store.data.conversations.flatMap((c) => {
+    const ev: Array<{ ts: number; icon: string; text: string; convId: string }> = [
+      { ts: c.createdAt, icon: '💬', text: `Chat opened — ${c.visitor}`, convId: c.id },
+    ];
+    const ratingMsg = c.messages.find((m) => m.kind === 'rating' && m.rating);
+    if (ratingMsg?.rating) ev.push({ ts: ratingMsg.ts, icon: '⭐', text: `${c.visitor} rated ${ratingMsg.rating}/5`, convId: c.id });
+    if (c.status === 'closed') ev.push({ ts: c.updatedAt, icon: '✅', text: `Chat closed — ${c.visitor}`, convId: c.id });
+    return ev;
+  }).sort((a, b) => b.ts - a.ts).slice(0, 8);
+
+  const stats = [
+    { label: 'Agents online', value: `${online.length}/${team.length}`, sub: away.length ? `${away.length} away` : 'Everyone in' },
+    { label: 'Open chats', value: String(open.length), sub: `${open.filter((c) => c.live).length} live now` },
+    { label: 'Unassigned queue', value: String(queue.length), sub: queue.length ? 'Needs an agent' : 'All assigned' },
+    { label: 'Longest wait', value: longest ? fmtDuration(longest.wait) : '—', sub: longest ? longest.c.visitor : 'No open chats' },
+  ];
+
+  return (
+    <div className="space-y-5">
+      <div className="rounded-xl border border-brix-200 bg-brix-50/60 px-4 py-2.5 text-xs text-brix-800">
+        ⚡ Live operations — updates as you work. Local mode: no server push, figures refresh from your workspace state.
+      </div>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {stats.map((st) => (
+          <Card key={st.label} className="!p-4">
+            <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{st.label}</div>
+            <div className="text-2xl font-extrabold text-slate-900 mt-1 tabular-nums">{st.value}</div>
+            <div className="text-xs text-slate-400 mt-0.5 truncate">{st.sub}</div>
+          </Card>
+        ))}
+      </div>
+      <div className="grid lg:grid-cols-2 gap-5">
+        <Card className="!p-0 overflow-hidden">
+          <div className="px-5 py-4 border-b border-slate-100 font-bold text-slate-900">Agent load</div>
+          <div className="divide-y divide-slate-50">
+            {[...online, ...away].map((t) => (
+              <div key={t.name} className="flex items-center gap-3 px-5 py-3">
+                <span className={'w-2.5 h-2.5 rounded-full ' + (t.online ? 'bg-emerald-500' : 'bg-slate-300')} />
+                <div className="flex-1">
+                  <div className="text-sm font-semibold text-slate-800">{t.name}</div>
+                  <div className="text-xs text-slate-400">{t.role}{t.online ? '' : ' · away'}</div>
+                </div>
+                <Badge tone={loadOf(t.name) > 3 ? 'rose' : loadOf(t.name) > 0 ? 'amber' : 'slate'}>
+                  {loadOf(t.name)} open
+                </Badge>
+              </div>
+            ))}
+            {team.length === 0 && <div className="px-5 py-6 text-sm text-slate-400">No team members.</div>}
+          </div>
+        </Card>
+        <Card className="!p-0 overflow-hidden">
+          <div className="px-5 py-4 border-b border-slate-100 font-bold text-slate-900">Recent events</div>
+          <div className="divide-y divide-slate-50">
+            {events.map((e, i) => (
+              <div key={i} className="flex items-center gap-3 px-5 py-2.5">
+                <span className="text-base">{e.icon}</span>
+                <div className="flex-1 text-sm text-slate-700">{e.text}</div>
+                <button onClick={() => navigate(`/app?c=${e.convId}`)} className="text-xs font-semibold text-brix-600 hover:underline">Open</button>
+                <div className="text-[11px] text-slate-400 whitespace-nowrap">{timeAgo(e.ts)}</div>
+              </div>
+            ))}
+            {events.length === 0 && <div className="px-5 py-6 text-sm text-slate-400">No events yet.</div>}
+          </div>
+        </Card>
+      </div>
+      {queue.length > 0 && (
+        <Card className="!p-0 overflow-hidden">
+          <div className="px-5 py-4 border-b border-slate-100 font-bold text-slate-900">Unassigned queue</div>
+          <div className="divide-y divide-slate-50">
+            {queue.map((c) => (
+              <div key={c.id} className="flex items-center gap-3 px-5 py-2.5">
+                <div className="flex-1">
+                  <div className="text-sm font-semibold text-slate-800">{c.visitor}</div>
+                  <div className="text-xs text-slate-400">waiting {fmtDuration(Date.now() - lastVisitorTs(c))} · {c.department}</div>
+                </div>
+                <Button size="sm" variant="secondary" onClick={() => navigate(`/app?c=${c.id}`)}>Assign</Button>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+    </div>
+  );
+}
+
 export default function Visitors() {
   const store = useStore();
   const navigate = useNavigate();
@@ -93,18 +198,32 @@ export default function Visitors() {
     navigate(`/app?c=${id}`);
   };
 
+  const [tab, setTab] = useState<'visitors' | 'ops'>('visitors');
+
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-xl font-display font-extrabold text-slate-900">Live visitors</h1>
           <p className="text-sm text-slate-500 mt-0.5">Everyone browsing your site right now</p>
         </div>
-        <Badge tone="green" className="text-sm px-3 py-1">
-          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" /> {onlineCount} online
-        </Badge>
+        <div className="flex items-center gap-3">
+          <Tabs
+            tabs={[
+              { id: 'visitors', label: 'Visitors' },
+              { id: 'ops', label: '⚡ Operations' },
+            ]}
+            active={tab}
+            onChange={(id) => setTab(id as 'visitors' | 'ops')}
+          />
+          <Badge tone="green" className="text-sm px-3 py-1">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" /> {onlineCount} online
+          </Badge>
+        </div>
       </div>
 
+      {tab === 'ops' ? <OpsMonitor /> : (
+      <>
       {visitors.length === 0 ? (
         <Card><EmptyState icon="👥" title="No visitors on your site" hint="Visitors will appear here in real time once the widget is embedded." /></Card>
       ) : (
@@ -170,6 +289,8 @@ export default function Visitors() {
         title={mirror ? `Co-browsing · ${mirror.name}` : 'Co-browsing'}>
         {mirror && <CobrowseMock visitor={mirror} />}
       </Modal>
+      </>
+      )}
     </div>
   );
 }
