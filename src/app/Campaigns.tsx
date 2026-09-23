@@ -6,7 +6,8 @@ import { getApi } from '../lib/api';
 import type { ApiGoal } from '../lib/api';
 import type { Campaign } from '../lib/types';
 import { uid } from '../lib/utils';
-import { Badge, Button, Card, EmptyState, Input, Label, Modal, Select, Textarea, useConfirm } from '../components/ui';
+import { splitCounts, simulateResults, pickWinner } from '../lib/ab';
+import { Badge, Button, Card, EmptyState, Input, Label, Modal, Select, Textarea, Toggle, useConfirm } from '../components/ui';
 import { cx } from '../lib/utils';
 
 function blankCampaign(): Campaign {
@@ -62,21 +63,34 @@ export default function Campaigns() {
     setEditor(null);
   };
 
-  const markSent = (c: Campaign) => store.saveCampaign({ ...c, status: 'sent' });
 
   const openEditor = (c: Campaign) => {
     setEditor(c);
     setSendLater(!!c.scheduleAt);
   };
 
-  const estimatedReach = (c: Campaign): number => {
+  const audienceVisitors = (c: Campaign) => {
     const r = c.audienceRules;
     let vs = store.data.visitors;
     if (r?.urlContains) vs = vs.filter((v) => v.page.toLowerCase().includes(r.urlContains!.toLowerCase()));
     if (r?.visitorType === 'new') vs = vs.filter((v) => v.pages <= 1);
     if (r?.visitorType === 'returning') vs = vs.filter((v) => v.pages > 1);
     // Visitor records carry no tags in local mode — tag rules can't narrow reach here.
-    return vs.length;
+    return vs;
+  };
+  const estimatedReach = (c: Campaign): number => audienceVisitors(c).length;
+
+  /** P4-9: deterministic simulated send — splits recipients, generates labeled simulated stats. */
+  const simulateSend = (c: Campaign) => {
+    const ab = c.abTest?.enabled ? c.abTest : undefined;
+    const ids = audienceVisitors(c).map((v) => v.id);
+    const split = ab ? splitCounts(ids, c.id, ab.splitPct) : { a: ids.length, b: 0 };
+    const results = simulateResults(c.id, split.a, split.b);
+    store.saveCampaign({
+      ...c,
+      status: 'sent',
+      abTest: ab ? { ...ab, results } : undefined,
+    });
   };
 
   return (
@@ -112,9 +126,55 @@ export default function Campaigns() {
                 </div>
                 <Badge tone={STATUS_TONE[c.status]}>{c.status}</Badge>
               </div>
-              <p className="text-sm text-slate-600 bg-slate-50 rounded-xl p-3 mb-4 whitespace-pre-wrap">{c.message || 'No message yet.'}</p>
+              <p className="text-sm text-slate-600 bg-slate-50 rounded-xl p-3 mb-3 whitespace-pre-wrap">{c.message || 'No message yet.'}</p>
+              {c.abTest?.enabled && (
+                <div className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-3 mb-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Badge tone="indigo">A/B test</Badge>
+                    <span className="text-xs text-slate-500">{c.abTest.splitPct}% to B · deterministic split</span>
+                  </div>
+                  {c.abTest.variantBMessage && (
+                    <p className="text-xs text-slate-600 bg-white rounded-lg p-2 mb-2 whitespace-pre-wrap"><strong>Variant B:</strong> {c.abTest.variantBMessage}</p>
+                  )}
+                  {c.abTest.results ? (() => {
+                    const r = c.abTest!.results!;
+                    const w = pickWinner(r);
+                    const ctr = (n: number, d: number) => (d ? `${((n / d) * 100).toFixed(1)}%` : '—');
+                    return (
+                      <>
+                        <div className="grid grid-cols-2 gap-2 text-center">
+                          {([
+                            { v: 'A', sent: r.sentA, opens: r.opensA, clicks: r.clicksA },
+                            { v: 'B', sent: r.sentB, opens: r.opensB, clicks: r.clicksB },
+                          ] as const).map((x) => (
+                            <div key={x.v} className={`rounded-lg p-2 ${w.winner === x.v ? 'bg-white ring-2 ring-emerald-400' : 'bg-white/60'}`}>
+                              <div className="text-xs font-extrabold text-slate-700">Variant {x.v} {w.winner === x.v && '🏆'}</div>
+                              <div className="text-[11px] text-slate-500 tabular-nums">
+                                {x.sent} sent · {x.opens} opened · {x.clicks} clicked · CTR {ctr(x.clicks, x.sent)}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="text-xs text-slate-600 mt-2">
+                          {w.winner === 'tie'
+                            ? 'No clear winner yet.'
+                            : <>Winner: <strong>variant {w.winner}</strong> ({ctr(w.winner === 'A' ? r.clicksA : r.clicksB, w.winner === 'A' ? r.sentA : r.sentB)} CTR)</>}
+                          {!w.confident && ' · small sample — treat as directional.'}
+                          <span className="text-slate-400"> Simulated results (local demo).</span>
+                        </div>
+                      </>
+                    );
+                  })() : (
+                    <div className="text-xs text-slate-500">No results yet — simulate a send to generate deterministic demo stats.</div>
+                  )}
+                </div>
+              )}
               <div className="flex justify-end gap-2">
-                {(c.status === 'draft' || c.status === 'scheduled') && <Button size="sm" onClick={() => markSent(c)}>📤 Send now</Button>}
+                {(c.status === 'draft' || c.status === 'scheduled') && (
+                  <Button size="sm" onClick={() => simulateSend(c)}>
+                    {c.abTest?.enabled ? '🧪 Simulate A/B send' : '📤 Send now'}
+                  </Button>
+                )}
                 <Button size="sm" variant="secondary" onClick={() => openEditor({ ...c })}>Edit</Button>
                 <Button size="sm" variant="ghost" className="text-rose-600 hover:bg-rose-50"
                   onClick={() => confirm({
@@ -146,6 +206,42 @@ export default function Campaigns() {
               <Label>Message</Label>
               <Textarea rows={4} value={editor.message} onChange={(e) => setEditor({ ...editor, message: e.target.value })} placeholder="Hey! We've got something for you…" />
               <div className="text-xs text-slate-400 mt-1 text-right tabular-nums">{editor.message.length} chars</div>
+            </div>
+
+            <div className="rounded-xl border border-slate-200 p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="text-sm font-bold text-slate-800">🧪 A/B test</div>
+                <Toggle
+                  checked={editor.abTest?.enabled ?? false}
+                  onChange={(v) => setEditor({ ...editor, abTest: { enabled: v, variantBMessage: editor.abTest?.variantBMessage ?? '', splitPct: editor.abTest?.splitPct ?? 50 } })}
+                  label="A/B test"
+                />
+              </div>
+              {(editor.abTest?.enabled) && (() => {
+                const ab = editor.abTest!;
+                const ids = audienceVisitors(editor).map((v) => v.id);
+                const split = splitCounts(ids, editor.id, ab.splitPct);
+                return (
+                  <>
+                    <div>
+                      <Label>Variant B message</Label>
+                      <Textarea rows={3} value={ab.variantBMessage}
+                        onChange={(e) => setEditor({ ...editor, abTest: { ...ab, variantBMessage: e.target.value } })}
+                        placeholder="A different angle on the same offer…" />
+                    </div>
+                    <div className="mt-3">
+                      <Label>Split — {ab.splitPct}% of recipients get variant B</Label>
+                      <input type="range" min={10} max={90} step={5} value={ab.splitPct}
+                        onChange={(e) => setEditor({ ...editor, abTest: { ...ab, splitPct: Number(e.target.value) } })}
+                        className="w-full accent-brix-600" />
+                    </div>
+                    <div className="text-xs text-slate-500 mt-2">
+                      Deterministic split of the current audience (~{ids.length}): <strong>A {split.a}</strong> · <strong>B {split.b}</strong>.
+                      The same visitor always gets the same variant.
+                    </div>
+                  </>
+                );
+              })()}
             </div>
 
             <div className="rounded-xl border border-slate-200 p-4">
