@@ -5,6 +5,7 @@ import { useStore } from '../lib/store';
 import { getApi } from '../lib/api';
 import type { ApiRating, ApiMember } from '../lib/api';
 import { Badge, Button, Card, EmptyState, PageHeader, Select } from '../components/ui';
+import { toast } from '../components/dashboard/Toasts';
 import { cx } from '../lib/utils';
 
 type KindFilter = 'all' | 'csat' | 'nps';
@@ -34,15 +35,25 @@ export default function Feedback() {
   const [loading, setLoading] = useState(true);
   const [noted, setNoted] = useState<Set<string>>(new Set());
   const [sending, setSending] = useState<string | null>(null);
+  // P4-21: rating ids that already have a follow-up ticket (duplicate suppression)
+  const [ticketed, setTicketed] = useState<Set<string>>(new Set());
+  const [ticketing, setTicketing] = useState<string | null>(null);
 
   useEffect(() => {
     if (!session) return;
     const api = getApi(effectiveWorkspaceId(), session.displayName);
     setLoading(true);
-    Promise.all([api.ratings.list({ limit: 100 }), api.members.list()])
-      .then(([{ data: page }, { data: ms }]) => {
+    Promise.all([api.ratings.list({ limit: 100 }), api.members.list(), api.tickets.list({ limit: 200 })])
+      .then(([{ data: page }, { data: ms }, { data: tp }]) => {
         setRatings(page.items);
         setMembers(ms);
+        const s = new Set<string>();
+        tp.items.forEach((t) =>
+          t.tags.forEach((tag) => {
+            if (tag.startsWith('rating:')) s.add(tag.slice('rating:'.length));
+          }),
+        );
+        setTicketed(s);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -60,6 +71,42 @@ export default function Feedback() {
       }),
     [ratings, kind, sentiment],
   );
+
+  /** P4-21: negative-feedback follow-up ticket loop with duplicate suppression. */
+  const createTicket = async (r: ApiRating) => {
+    if (!session || ticketing) return;
+    const api = getApi(effectiveWorkspaceId(), session.displayName);
+    setTicketing(r.id);
+    try {
+      // Re-check live before creating — suppress duplicates.
+      const { data: tp } = await api.tickets.list({ limit: 200 });
+      const existing = tp.items.find((t) => t.tags.includes(`rating:${r.id}`));
+      if (existing) {
+        setTicketed((prev) => new Set(prev).add(r.id));
+        toast.info('Follow-up ticket already exists', existing.subject);
+        return;
+      }
+      const { data: t } = await api.tickets.create({
+        subject: `Follow-up: ${r.kind.toUpperCase()} ${r.score} (${bucket(r)}) — ${memberName(r.agent_id)}`,
+        requester_name: 'Feedback loop',
+        message: [
+          `A visitor left a ${bucket(r)} ${r.kind.toUpperCase()} rating of ${r.score}.`,
+          r.comment ? `Comment: "${r.comment}"` : 'No comment left.',
+          `Agent: ${memberName(r.agent_id)}`,
+          r.conversation_id ? `Conversation: /app?c=${r.conversation_id}` : 'No linked conversation.',
+          `Rating ID: ${r.id}`,
+        ].join('\n'),
+        priority: 'high',
+        conversation_id: r.conversation_id,
+        tags: ['feedback-followup', `rating:${r.id}`],
+      });
+      setTicketed((prev) => new Set(prev).add(r.id));
+      toast.success('Follow-up ticket created', t.subject);
+    } catch {
+      toast.error('Could not create the follow-up ticket');
+    }
+    setTicketing(null);
+  };
 
   const followUp = async (r: ApiRating) => {
     if (!session || !r.conversation_id || sending) return;
@@ -154,6 +201,16 @@ export default function Feedback() {
                           >
                             {done ? '✓ Note added' : sending === r.id ? 'Adding…' : '↩ Reply as follow-up'}
                           </Button>
+                          {b === 'low' && (
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              disabled={ticketed.has(r.id) || ticketing === r.id}
+                              onClick={() => createTicket(r)}
+                            >
+                              {ticketed.has(r.id) ? '✓ Ticket open' : ticketing === r.id ? 'Creating…' : '🎫 Follow-up ticket'}
+                            </Button>
+                          )}
                         </>
                       ) : (
                         <span className="text-xs text-slate-400">No linked conversation</span>
