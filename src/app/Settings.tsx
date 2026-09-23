@@ -7,7 +7,10 @@ import { Avatar, Button, Card, Input, Label, Select, Textarea, Toggle, useConfir
 
 const COLOR_PRESETS = ['#4f46e5', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#0b1020'];
 const MEMBER_COLORS = ['#4f46e5', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
-const EMBED_CODE = `<script src="https://dawoodshah2232-svg.github.io/brix-chat/widget.js" data-key="demo"></script>`;
+const EMBED_CODE = `<script>
+  window.Brix_API = window.Brix_API || {};
+</script>
+<script async src="https://dawoodshah2232-svg.github.io/brix-chat/widget.js" data-property="bx_demo_7f3a9c1e"></script>`;
 
 const BUBBLE_CLASS: Record<SettingsData['widget']['bubble'], string> = {
   round: 'rounded-full',

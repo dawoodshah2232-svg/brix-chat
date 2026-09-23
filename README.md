@@ -5,6 +5,11 @@ agent dashboard, and a marketing site — same concept as the classic live-chat 
 with a fully original design and a deeper feature set (AI assist, sentiment insights,
 smart routing, proactive triggers, omnichannel-ready inbox, analytics).
 
+> **Local-only phase.** There is no backend yet: every workspace's data
+> (chats, contacts, API keys, webhooks, team, audit log) lives in that
+> browser's localStorage. No cross-device sync until a backend phase lands.
+> Demo login: workspace `demo`, passcode `3456`.
+
 ## Project layout (planned)
 
 - `src/pages/` — marketing site (landing, pricing, features)
