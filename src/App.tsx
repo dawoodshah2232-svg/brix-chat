@@ -76,26 +76,26 @@ export default function App() {
       <BrowserRouter basename="/brix-chat">
         <Routes>
           <Route element={<MarketingLayout />}>
-            <Route index element={<Landing />} />
-            <Route path="features" element={<Features />} />
-            <Route path="pricing" element={<Pricing />} />
-            <Route path="blog" element={<Blog />} />
-            <Route path="blog/:slug" element={<BlogPost />} />
-            <Route path="help" element={<Help />} />
-            <Route path="help/:slug" element={<HelpArticle />} />
-            <Route path="about" element={<About />} />
-            <Route path="contact" element={<Contact />} />
-            <Route path="privacy" element={<Privacy />} />
-            <Route path="terms" element={<Terms />} />
-            <Route path="security" element={<Security />} />
-            <Route path="status" element={<Status />} />
-            <Route path="sitemap" element={<SitemapPage />} />
+            <Route index element={<Titled title="Live chat software for modern teams"><Landing /></Titled>} />
+            <Route path="features" element={<Titled title="Features"><Features /></Titled>} />
+            <Route path="pricing" element={<Titled title="Pricing"><Pricing /></Titled>} />
+            <Route path="blog" element={<Titled title="Blog"><Blog /></Titled>} />
+            <Route path="blog/:slug" element={<Titled title="Blog"><BlogPost /></Titled>} />
+            <Route path="help" element={<Titled title="Help center"><Help /></Titled>} />
+            <Route path="help/:slug" element={<Titled title="Help center"><HelpArticle /></Titled>} />
+            <Route path="about" element={<Titled title="About"><About /></Titled>} />
+            <Route path="contact" element={<Titled title="Contact"><Contact /></Titled>} />
+            <Route path="privacy" element={<Titled title="Privacy policy"><Privacy /></Titled>} />
+            <Route path="terms" element={<Titled title="Terms of service"><Terms /></Titled>} />
+            <Route path="security" element={<Titled title="Security"><Security /></Titled>} />
+            <Route path="status" element={<Titled title="Status"><Status /></Titled>} />
+            <Route path="sitemap" element={<Titled title="Sitemap"><SitemapPage /></Titled>} />
           </Route>
-          <Route path="signup" element={<Signup />} />
-          <Route path="login" element={<Login />} />
-          <Route path="widget" element={<WidgetPage />} />
-          <Route path="kb/:propertyKey" element={<PropertyKb />} />
-          <Route path="admin" element={<OwnerGuard><Admin /></OwnerGuard>} />
+          <Route path="signup" element={<Titled title="Create workspace"><Signup /></Titled>} />
+          <Route path="login" element={<Titled title="Log in"><Login /></Titled>} />
+          <Route path="widget" element={<Titled title="Chat"><WidgetPage /></Titled>} />
+          <Route path="kb/:propertyKey" element={<Titled title="Help center"><PropertyKb /></Titled>} />
+          <Route path="admin" element={<OwnerGuard><Titled title="Platform admin"><Admin /></Titled></OwnerGuard>} />
           <Route path="app" element={<AuthGuard><AppShell /></AuthGuard>}>
             <Route index element={<Titled title="Inbox"><Inbox /></Titled>} />
             <Route path="visitors" element={<Titled title="Live visitors"><Visitors /></Titled>} />
