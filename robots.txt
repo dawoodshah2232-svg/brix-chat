@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://dawoodshah2232-svg.github.io/brix-chat/sitemap.xml
