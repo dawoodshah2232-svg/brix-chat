@@ -232,6 +232,13 @@ export interface Settings {
   qualityRubric?: QualityWeights;
   /** SLA policies per ticket priority (P4-16). Falls back to DEFAULT_SLA_POLICIES. */
   slaPolicies?: SlaPolicy[];
+  /** Bot & handoff config (P4-18). */
+  bot?: {
+    /** Auto-reply confidence below this (0–100) → route to a human instead. */
+    confidenceThreshold: number;
+    /** Minutes an AI-handled chat may wait for agent pickup before escalation. */
+    handoffTimeoutMins: number;
+  };
 }
 
 export interface DistressSettings {

@@ -6,7 +6,7 @@ import type { ApiPlay } from '../lib/api';
 import type { Canned, ChatMessage, ConvPriority, ConvStatus } from '../lib/types';
 import { Avatar, Badge, Button, EmptyState, Input, Label, Select, Tabs, Textarea, Toggle } from '../components/ui';
 import { cx, fmtDuration, timeAgo } from '../lib/utils';
-import { botReply, OPENERS } from '../lib/bot';
+import { botReply, botConfidence, OPENERS, DEFAULT_BOT_THRESHOLD, DEFAULT_HANDOFF_TIMEOUT_MINS } from '../lib/bot';
 import { SentimentPill, QualityBadge } from '../components/dashboard/Sentiment';
 import { suggestReplies } from '../lib/suggest';
 
@@ -295,7 +295,18 @@ export default function ChatThread({ convId, input, setInput }: Props) {
   const send = () => {
     const text = input.trim();
     if (!text || conv.status !== 'open') return;
-    const asAi = conv.aiHandled;
+    // P4-18: confidence threshold gates AI auto-answering (heuristic, not AI certainty)
+    const lastVisitor = [...conv.messages].reverse().find((m) => m.from === 'visitor');
+    const conf = lastVisitor && lastVisitor.text ? botConfidence(lastVisitor.text) : 100;
+    const threshold = data.settings.bot?.confidenceThreshold ?? DEFAULT_BOT_THRESHOLD;
+    const lowConf = conv.aiHandled && conf < threshold;
+    const asAi = conv.aiHandled && !lowConf;
+    if (lowConf) {
+      addMessage(convId, {
+        from: 'system', kind: 'text',
+        text: `Low AI confidence (${conf}% < ${threshold}% threshold) — routed to a human instead of auto-answering. Confidence is a keyword-heuristic estimate.`,
+      });
+    }
     addMessage(convId, {
       from: asAi ? 'ai' : 'agent',
       kind: 'text',
@@ -419,6 +430,26 @@ export default function ChatThread({ convId, input, setInput }: Props) {
             </div>
           </div>
         </div>
+
+        {/* P4-18: handoff-timeout escalation banner */}
+        {(() => {
+          const timeoutMs = (data.settings.bot?.handoffTimeoutMins ?? DEFAULT_HANDOFF_TIMEOUT_MINS) * 60000;
+          const pickedUp = conv.messages.some((m) => m.from === 'agent');
+          const waitingMins = Math.floor((Date.now() - conv.createdAt) / 60000);
+          if (!conv.aiHandled || conv.status !== 'open' || pickedUp || Date.now() - conv.createdAt < timeoutMs) return null;
+          return (
+            <div className="shrink-0 mx-4 sm:mx-6 mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 flex items-center gap-3">
+              <span className="text-sm text-amber-800">
+                ⏱ AI has handled this chat for <strong>{waitingMins} min</strong> with no agent pickup
+                (timeout {data.settings.bot?.handoffTimeoutMins ?? DEFAULT_HANDOFF_TIMEOUT_MINS} min).
+              </span>
+              <button onClick={() => updateConversation(convId, { aiHandled: false })}
+                className="ml-auto shrink-0 text-xs font-bold text-amber-900 bg-amber-200/70 hover:bg-amber-200 rounded-lg px-2.5 py-1.5 transition">
+                Take over
+              </button>
+            </div>
+          );
+        })()}
 
         {/* Messages */}
         <div ref={scrollRef} className="flex-1 overflow-y-auto slim-scroll px-4 sm:px-6 py-5 space-y-3 bg-slate-50">

@@ -7,6 +7,7 @@ import type { CopilotSettings, DataSettings, SecuritySettings } from '../lib/api
 import { copyText } from '../lib/utils';
 import { Avatar, Button, Card, Input, Label, Select, Textarea, Toggle, useConfirm } from '../components/ui';
 import { DEFAULT_SLA_POLICIES, type SlaPolicy, type SlaPriority } from '../lib/sla';
+import { DEFAULT_BOT_THRESHOLD, DEFAULT_HANDOFF_TIMEOUT_MINS } from '../lib/bot';
 
 const COLOR_PRESETS = ['#4f46e5', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#0b1020'];
 const MEMBER_COLORS = ['#4f46e5', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
@@ -301,6 +302,14 @@ export default function Settings() {
   const store = useStore();
   const { confirm, dialog } = useConfirm();
   const s = store.data.settings;
+  const patchBot = (patch: Partial<NonNullable<SettingsData['bot']>>) =>
+    store.updateSettings({
+      bot: {
+        confidenceThreshold: s.bot?.confidenceThreshold ?? DEFAULT_BOT_THRESHOLD,
+        handoffTimeoutMins: s.bot?.handoffTimeoutMins ?? DEFAULT_HANDOFF_TIMEOUT_MINS,
+        ...patch,
+      },
+    });
   const patchSla = (priority: SlaPriority, patch: Partial<SlaPolicy>) =>
     store.updateSettings({
       slaPolicies: (s.slaPolicies ?? DEFAULT_SLA_POLICIES).map((p) => (p.priority === priority ? { ...p, ...patch } : p)),
@@ -588,6 +597,35 @@ export default function Settings() {
               </div>
             </div>
           ))}
+        </div>
+      </Card>
+
+      {/* Bot & handoff */}
+      <Card className="p-6">
+        <SectionTitle>Bot & handoff</SectionTitle>
+        <p className="text-sm text-slate-500 mt-1 mb-4">
+          The bot answers from a keyword heuristic — confidence is an auto estimate, not AI certainty.
+          Below the threshold a chat is routed to a human instead of auto-answered.
+        </p>
+        <div className="grid sm:grid-cols-2 gap-4">
+          <div>
+            <Label>Confidence threshold (%)</Label>
+            <Input
+              type="number" min={0} max={100}
+              value={s.bot?.confidenceThreshold ?? DEFAULT_BOT_THRESHOLD}
+              onChange={(e) => patchBot({ confidenceThreshold: Math.min(100, Math.max(0, Number(e.target.value) || 0)) })}
+            />
+            <p className="text-xs text-slate-500 mt-1">Bot replies scoring below this are handed to a human.</p>
+          </div>
+          <div>
+            <Label>Handoff timeout (minutes)</Label>
+            <Input
+              type="number" min={1} max={240}
+              value={s.bot?.handoffTimeoutMins ?? DEFAULT_HANDOFF_TIMEOUT_MINS}
+              onChange={(e) => patchBot({ handoffTimeoutMins: Math.min(240, Math.max(1, Number(e.target.value) || 1)) })}
+            />
+            <p className="text-xs text-slate-500 mt-1">An AI-handled chat waiting this long for an agent is escalated.</p>
+          </div>
         </div>
       </Card>
 

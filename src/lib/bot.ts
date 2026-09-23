@@ -109,6 +109,26 @@ export function botReply(input: string): string {
   return FALLBACKS[Math.floor(Math.random() * FALLBACKS.length)];
 }
 
+/**
+ * P4-18: heuristic confidence (0–100) that the bot understood the input.
+ * Matched rule → 70 + 5 per extra matched keyword (cap 97).
+ * No match → deterministic 20–45 derived from the input hash (honest low score).
+ * This is a keyword heuristic, not AI.
+ */
+export function botConfidence(input: string): number {
+  const t = input.toLowerCase();
+  for (const rule of RULES) {
+    const hits = rule.keys.filter((k) => t.includes(k)).length;
+    if (hits > 0) return Math.min(97, 70 + 5 * (hits - 1));
+  }
+  let h = 0;
+  for (let i = 0; i < t.length; i++) h = (h * 31 + t.charCodeAt(i)) % 997;
+  return 20 + (h % 26);
+}
+
+export const DEFAULT_BOT_THRESHOLD = 60;
+export const DEFAULT_HANDOFF_TIMEOUT_MINS = 10;
+
 // ---- Visitor openers (used to simulate inbound chats) ----
 
 export const OPENERS: string[] = [

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useStore } from '../lib/store';
 import { getApi } from '../lib/api';
 import type { ApiGoal, ApiTicket } from '../lib/api';
-import { downloadCsv, fmtDuration } from '../lib/utils';
+import { downloadCsv, fmtDuration, timeAgo } from '../lib/utils';
 import { Card, StatCard } from '../components/ui';
 import { cx } from '../lib/utils';
 
@@ -238,6 +238,25 @@ export default function Analytics() {
     return [...map.entries()].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value);
   }, [convs]);
 
+  // P4-18: bot handling + drop-off analytics.
+  // Drop-off = visitor wrote, nobody (agent or AI) ever replied, and it isn't a "missed" chat.
+  const botStats = useMemo(() => {
+    const aiHandled = convs.filter((c) => c.aiHandled);
+    const withVisitor = convs.filter((c) => c.messages.some((m) => m.from === 'visitor'));
+    const dropoffs = withVisitor.filter(
+      (c) => c.status !== 'missed' && !c.messages.some((m) => m.from === 'agent' || m.from === 'ai'),
+    );
+    const avgMsgs = dropoffs.length
+      ? dropoffs.reduce((n, c) => n + c.messages.filter((m) => m.from === 'visitor').length, 0) / dropoffs.length
+      : 0;
+    return {
+      aiHandled: aiHandled.length,
+      dropoffs,
+      dropRate: withVisitor.length ? Math.round((dropoffs.length / withVisitor.length) * 100) : 0,
+      avgMsgs: Math.round(avgMsgs * 10) / 10,
+    };
+  }, [convs]);
+
   const csv = {
     conversations: () => downloadCsv('brix-conversations.csv', [
       ['id', 'visitor', 'country', 'status', 'department', 'agent', 'priority', 'messages', 'created', 'rating'],
@@ -250,6 +269,11 @@ export default function Analytics() {
     leaderboard: () => downloadCsv('brix-leaderboard.csv', [
       ['agent', 'chats', 'resolution_pct', 'csat_pct', 'avg_first_response_sec'],
       ...leaderboard.map((l) => [l.name, String(l.chats), String(l.resolution), l.csat === null ? '' : String(l.csat), l.avgResp === null ? '' : String(Math.round(l.avgResp))]),
+    ]),
+    dropoff: () => downloadCsv('brix-dropoff.csv', [
+      ['id', 'visitor', 'status', 'department', 'ai_handled', 'visitor_messages', 'created'],
+      ...botStats.dropoffs.map((c) => [c.id, c.visitor, c.status, c.department, c.aiHandled ? 'yes' : 'no',
+        String(c.messages.filter((m) => m.from === 'visitor').length), new Date(c.createdAt).toISOString()]),
     ]),
     csat: () => downloadCsv('brix-csat.csv', [
       ['stars', 'count'],
@@ -291,6 +315,8 @@ export default function Analytics() {
         <StatCard label="Satisfaction" value={csat.rated ? `${csat.pct}%` : '—'} icon="⭐" tone="green"
           delta={csat.rated ? `${csat.rated} rated` : undefined} />
         <StatCard label="Missed chats" value={String(convs.filter((c) => c.status === 'missed').length)} icon="📵" tone="rose" />
+        <StatCard label="Chat drop-offs" value={String(botStats.dropoffs.length)} icon="🏃" tone="amber"
+          delta={botStats.dropRate ? `${botStats.dropRate}% of chats` : undefined} />
       </div>
 
       <div className="grid lg:grid-cols-2 gap-4">
@@ -392,6 +418,46 @@ export default function Analytics() {
                 </div>
               ))}
               <div className="text-sm text-slate-500 pt-1">Overall satisfaction: <span className="font-bold text-slate-900">{csat.pct}%</span> from {csat.rated} ratings</div>
+            </div>
+          )}
+        </Card>
+
+        <Card className="p-5">
+          <SectionHead title="Bot & drop-off" hint="AI-handled chats, handoff, and visitors who left unanswered" onCsv={csv.dropoff} />
+          <div className="grid grid-cols-3 gap-3 mb-4">
+            <div className="rounded-xl bg-indigo-50 border border-indigo-100 p-3 text-center">
+              <div className="text-2xl font-extrabold text-indigo-600">{botStats.aiHandled}</div>
+              <div className="text-[11px] font-semibold text-indigo-500 uppercase tracking-wide mt-0.5">AI-handled</div>
+            </div>
+            <div className="rounded-xl bg-amber-50 border border-amber-100 p-3 text-center">
+              <div className="text-2xl font-extrabold text-amber-600">{botStats.dropoffs.length}</div>
+              <div className="text-[11px] font-semibold text-amber-500 uppercase tracking-wide mt-0.5">Drop-offs</div>
+            </div>
+            <div className="rounded-xl bg-slate-50 border border-slate-100 p-3 text-center">
+              <div className="text-2xl font-extrabold text-slate-700">{botStats.avgMsgs}</div>
+              <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide mt-0.5">Msgs / drop-off</div>
+            </div>
+          </div>
+          <p className="text-xs text-slate-500 mb-3">
+            Drop-off = visitor wrote but no agent or AI ever replied ({botStats.dropRate}% of chats with visitor messages).
+            Low-confidence replies are routed to a human at the threshold set in Settings → Bot &amp; handoff.
+          </p>
+          {botStats.dropoffs.length === 0 ? (
+            <div className="text-sm text-slate-400 py-4 text-center">No drop-offs in this period. 🎉</div>
+          ) : (
+            <div className="space-y-1.5 max-h-48 overflow-y-auto slim-scroll">
+              {botStats.dropoffs.slice(0, 8).map((c) => (
+                <div key={c.id} className="flex items-center gap-2 text-sm">
+                  <span className="font-semibold text-slate-800 truncate">{c.visitor}</span>
+                  <span className="text-xs text-slate-400">
+                    {c.messages.filter((m) => m.from === 'visitor').length} msg{c.messages.filter((m) => m.from === 'visitor').length === 1 ? '' : 's'} · {c.department} · {timeAgo(c.createdAt)}
+                  </span>
+                  {c.aiHandled && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-600">AI</span>}
+                </div>
+              ))}
+              {botStats.dropoffs.length > 8 && (
+                <div className="text-xs text-slate-400">+ {botStats.dropoffs.length - 8} more — download CSV for the full list.</div>
+              )}
             </div>
           )}
         </Card>
