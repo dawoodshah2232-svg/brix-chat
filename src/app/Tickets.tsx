@@ -27,6 +27,27 @@ function slaBadge(slaDue: string | null): { label: string; tone: 'rose' | 'amber
   return { label: `SLA ${new Date(t).toLocaleDateString([], { month: 'short', day: 'numeric' })}`, tone: 'slate' };
 }
 
+/** P4-10: duplicate-ticket suggestions via keyword overlap. */
+const DUP_STOP = new Set('the a an and or of to in on for with is are was were it this that what how do does did can could would should i you we they he she my your our their me him her them as at by from be been have has had will shall may might must not no yes if then than so but'.split(' '));
+function dupKeys(t: string): string[] {
+  return t.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter((w) => w.length > 3 && !DUP_STOP.has(w));
+}
+function duplicateScore(a: Pick<ApiTicket, 'subject' | 'message' | 'requester_email'>, b: Pick<ApiTicket, 'subject' | 'message' | 'requester_email'>): number {
+  const ka = new Set(dupKeys(`${a.subject} ${a.message}`));
+  let hit = 0;
+  dupKeys(`${b.subject} ${b.message}`).forEach((w) => { if (ka.has(w)) hit += 1; });
+  if (a.requester_email && b.requester_email && a.requester_email.toLowerCase() === b.requester_email.toLowerCase()) hit += 3;
+  return hit;
+}
+function findDuplicates(t: Pick<ApiTicket, 'id' | 'subject' | 'message' | 'requester_email'>, all: ApiTicket[], limit = 3): Array<{ t: ApiTicket; score: number }> {
+  return all
+    .filter((x) => x.id !== t.id && x.status !== 'resolved')
+    .map((x) => ({ t: x, score: duplicateScore(t, x) }))
+    .filter((x) => x.score >= 3)
+    .sort((x, y) => y.score - x.score)
+    .slice(0, limit);
+}
+
 function toLocalInput(iso: string | null): string {
   if (!iso) return '';
   const d = new Date(iso);
@@ -51,6 +72,8 @@ export default function Tickets() {
   const [bulkAgent, setBulkAgent] = useState('');
   const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [merging, setMerging] = useState(false);
+  const [mergePrimary, setMergePrimary] = useState('');
 
   // create form
   const [fSubject, setFSubject] = useState('');
@@ -120,6 +143,43 @@ export default function Tickets() {
       await api.tickets.bulk([...selected], action, action === 'assign' ? bulkAgent || undefined : undefined);
       setSelected(new Set());
       refresh();
+    } catch { /* ignore */ }
+    setBusy(false);
+  };
+
+  /** P4-10: merge selected tickets into one. Sources are resolved + tagged (reversible), never deleted. */
+  const mergeTickets = async () => {
+    if (!api || selected.size < 2 || !mergePrimary) return;
+    setBusy(true);
+    try {
+      const sel = tickets.filter((t) => selected.has(t.id));
+      const primary = sel.find((t) => t.id === mergePrimary) ?? sel[0];
+      const others = sel.filter((t) => t.id !== primary.id);
+      const prioRank: TicketPriority[] = ['low', 'medium', 'high', 'urgent'];
+      const topPrio = [...sel].sort((a, b) => prioRank.indexOf(b.priority) - prioRank.indexOf(a.priority))[0].priority;
+      const slaDates = sel.map((t) => t.sla_due).filter(Boolean) as string[];
+      const earliestSla = slaDates.length ? slaDates.sort()[0] : null;
+      const { data: merged } = await api.tickets.create({
+        subject: primary.subject,
+        requester_name: primary.requester_name,
+        requester_email: primary.requester_email,
+        message: [primary.message, ...others.map((t) => `\n\n— merged from "${t.subject}" (${t.requester_name}) —\n${t.message}`)].join(''),
+        priority: topPrio,
+        assignee_id: primary.assignee_id,
+        sla_due: earliestSla,
+        conversation_id: primary.conversation_id,
+        tags: [...new Set([...sel.flatMap((t) => t.tags), 'merged'])],
+      });
+      for (const t of others) {
+        await api.tickets.update(t.id, { status: 'resolved', tags: [...new Set([...t.tags, `merged:${merged.id}`])] });
+      }
+      setTickets((xs) => [merged, ...xs.map((x) => (selected.has(x.id) && x.id !== primary.id
+        ? { ...x, status: 'resolved' as TicketStatus, tags: [...new Set([...x.tags, `merged:${merged.id}`])] }
+        : x))]);
+      setSelected(new Set());
+      setMergePrimary('');
+      setMerging(false);
+      select(merged.id);
     } catch { /* ignore */ }
     setBusy(false);
   };
@@ -195,6 +255,9 @@ export default function Tickets() {
               </Select>
               <button onClick={() => bulk('assign')} disabled={!bulkAgent || busy} className="text-xs font-semibold px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-40">Apply</button>
               <button onClick={() => bulk('resolve')} disabled={busy} className="text-xs font-semibold px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20">✓ Resolve</button>
+              {selected.size >= 2 && (
+                <button onClick={() => { setMergePrimary([...selected][0]); setMerging(true); }} disabled={busy} className="text-xs font-semibold px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20">🔀 Merge</button>
+              )}
               <button onClick={() => bulk('spam')} disabled={busy} className="text-xs font-semibold px-2 py-1 rounded-lg bg-rose-500/80 hover:bg-rose-500">🚫 Spam</button>
               <button onClick={() => setSelected(new Set())} className="ml-auto text-xs text-slate-300 hover:text-white">✕</button>
             </div>
@@ -290,6 +353,24 @@ export default function Tickets() {
                 </div>
               </div>
 
+              {(() => {
+                const dups = findDuplicates(active, tickets);
+                if (dups.length === 0) return null;
+                return (
+                  <div className="mt-5 rounded-xl bg-amber-50 border border-amber-200 p-4">
+                    <div className="text-xs font-bold uppercase tracking-wide text-amber-700 mb-2">Possible duplicates</div>
+                    <div className="space-y-1.5">
+                      {dups.map(({ t }) => (
+                        <button key={t.id} onClick={() => select(t.id)} className="w-full text-left text-sm hover:underline">
+                          <span className="font-semibold text-slate-800">{t.subject}</span>
+                          <span className="text-slate-500"> · {t.requester_name} · {t.status} · ⚑ {t.priority}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+
               <div className="mt-4 text-xs text-slate-400">
                 Assigned to {memberName(active.assignee_id)}{active.conversation_id ? ' · linked to a chat conversation' : ''}
               </div>
@@ -309,10 +390,52 @@ export default function Tickets() {
         )}
       </div>
 
+      {/* Merge modal */}
+      <Modal open={merging} onClose={() => setMerging(false)} title={`Merge ${selected.size} tickets`}>
+        <p className="text-sm text-slate-500 mb-4">
+          Combines the selected tickets into one. The others are resolved and tagged — nothing is deleted.
+        </p>
+        <Label>Keep as primary</Label>
+        <div className="space-y-2 mt-1">
+          {tickets.filter((t) => selected.has(t.id)).map((t) => (
+            <label key={t.id} className={cx('flex items-start gap-3 rounded-xl border p-3 cursor-pointer transition',
+              mergePrimary === t.id ? 'border-brix-500 bg-brix-50' : 'border-slate-200 hover:border-slate-300')}>
+              <input type="radio" name="merge-primary" checked={mergePrimary === t.id}
+                onChange={() => setMergePrimary(t.id)} className="mt-1 accent-brix-600" />
+              <div className="min-w-0">
+                <div className="text-sm font-semibold text-slate-900 truncate">{t.subject}</div>
+                <div className="text-xs text-slate-500">{t.requester_name} · {t.status} · ⚑ {t.priority}</div>
+              </div>
+            </label>
+          ))}
+        </div>
+        <div className="flex justify-end gap-2 mt-5">
+          <Button variant="secondary" onClick={() => setMerging(false)}>Cancel</Button>
+          <Button onClick={mergeTickets} disabled={busy || !mergePrimary}>{busy ? 'Merging…' : 'Merge tickets'}</Button>
+        </div>
+      </Modal>
+
       {/* Create modal */}
       <Modal open={creating} onClose={() => setCreating(false)} title="New ticket" wide>
         <div className="grid sm:grid-cols-2 gap-4">
-          <div className="sm:col-span-2"><Label>Subject</Label><Input value={fSubject} onChange={(e) => setFSubject(e.target.value)} placeholder="What is this about?" /></div>
+          <div className="sm:col-span-2"><Label>Subject</Label><Input value={fSubject} onChange={(e) => setFSubject(e.target.value)} placeholder="What is this about?" />
+            {fSubject.trim().length > 4 && (() => {
+              const dups = findDuplicates({ id: '', subject: fSubject, message: fMessage, requester_email: fEmail }, tickets);
+              if (dups.length === 0) return null;
+              return (
+                <div className="mt-2 rounded-xl bg-amber-50 border border-amber-200 px-3 py-2">
+                  <div className="text-[11px] font-bold uppercase tracking-wide text-amber-700">Possible duplicates — reply there instead?</div>
+                  {dups.map(({ t }) => (
+                    <button key={t.id} onClick={() => { setCreating(false); select(t.id); }}
+                      className="block w-full text-left text-xs mt-1 hover:underline">
+                      <span className="font-semibold text-slate-800">{t.subject}</span>
+                      <span className="text-slate-500"> · {t.status} · {isoAgo(t.updated_at)}</span>
+                    </button>
+                  ))}
+                </div>
+              );
+            })()}
+          </div>
           <div><Label>Requester name</Label><Input value={fName} onChange={(e) => setFName(e.target.value)} placeholder="Jane Cooper" /></div>
           <div><Label>Requester email</Label><Input value={fEmail} onChange={(e) => setFEmail(e.target.value)} placeholder="jane@company.com" /></div>
           <div className="sm:col-span-2"><Label>Message</Label><Textarea value={fMessage} onChange={(e) => setFMessage(e.target.value)} rows={4} placeholder="Describe the issue…" /></div>
