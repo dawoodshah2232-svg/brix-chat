@@ -1,4 +1,4 @@
-// Brix Chat — signup page (passcode-based, no email).
+// Brix Chat — signup page (passcode-based, creates a workspace + admin member).
 
 import { useState } from 'react';
 import type { FormEvent } from 'react';
@@ -14,16 +14,21 @@ export default function Signup() {
   const [displayName, setDisplayName] = useState('');
   const [passcode, setPasscode] = useState('');
   const [confirm, setConfirm] = useState('');
+  const [rememberMe, setRememberMe] = useState(true);
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
 
-  const submit = (e: FormEvent) => {
+  const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (passcode !== confirm) {
       setError('Passcodes do not match.');
       return;
     }
-    const res = signup(workspace, displayName, passcode);
-    if (res.ok) navigate('/app');
+    setBusy(true);
+    setError('');
+    const res = await signup(workspace, displayName, passcode, { rememberMe });
+    setBusy(false);
+    if (res.ok) navigate('/admin');
     else setError(res.error ?? 'Something went wrong.');
   };
 
@@ -57,13 +62,22 @@ export default function Signup() {
               <Label>Confirm passcode</Label>
               <Input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} placeholder="••••" minLength={4} autoComplete="new-password" required />
             </div>
+            <label className="flex items-center gap-2.5 text-sm text-slate-600 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={rememberMe}
+                onChange={(e) => setRememberMe(e.target.checked)}
+                className="w-4 h-4 rounded accent-brix-600"
+              />
+              Remember me on this device
+            </label>
             {error && (
               <p role="alert" className="text-sm font-medium text-rose-600 bg-rose-50 border border-rose-200 rounded-xl px-4 py-2.5">
                 {error}
               </p>
             )}
-            <Button type="submit" size="lg" className="w-full">
-              Create workspace
+            <Button type="submit" size="lg" className="w-full" disabled={busy}>
+              {busy ? 'Creating…' : 'Create workspace'}
             </Button>
           </form>
           <p className="mt-6 text-sm text-slate-500 text-center">

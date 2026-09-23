@@ -1,24 +1,42 @@
-// Brix Chat — login page (passcode-based, no email).
+// Brix Chat — login page (passcode-based, per-member login).
 
 import { useState } from 'react';
 import type { FormEvent } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useStore } from '../lib/store';
-import { Button, Card, Input, Label } from '../components/ui';
+import { Button, Card, Input, Label, Select } from '../components/ui';
 import Logo from '../components/Logo';
 
 export default function Login() {
-  const { login } = useStore();
+  const { login, knownWorkspaces } = useStore();
   const navigate = useNavigate();
+  const location = useLocation();
   const [workspace, setWorkspace] = useState('');
+  const [displayName, setDisplayName] = useState('');
   const [passcode, setPasscode] = useState('');
+  const [rememberMe, setRememberMe] = useState(true);
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
 
-  const submit = (e: FormEvent) => {
+  const submit = async (e: FormEvent) => {
     e.preventDefault();
-    const res = login(workspace, passcode);
-    if (res.ok) navigate('/app');
-    else setError(res.error ?? 'Something went wrong.');
+    setBusy(true);
+    setError('');
+    const res = await login(workspace, passcode, { displayName, rememberMe });
+    setBusy(false);
+    if (!res.ok) {
+      setError(res.error ?? 'Something went wrong.');
+      return;
+    }
+    const from = (location.state as { from?: string } | null)?.from;
+    if (from && from !== '/login' && from !== '/signup') {
+      navigate(from);
+      return;
+    }
+    // Role-based landing is handled by the store session once refreshed;
+    // default guess: admins go to /admin, everyone else to the inbox.
+    const role = res.role;
+    navigate(role === 'admin' || role === 'developer' ? '/admin' : '/app');
   };
 
   return (
@@ -41,19 +59,44 @@ export default function Login() {
           <form onSubmit={submit} className="mt-5 space-y-4">
             <div>
               <Label>Workspace name</Label>
-              <Input value={workspace} onChange={(e) => setWorkspace(e.target.value)} placeholder="demo" autoComplete="off" required />
+              {knownWorkspaces.length > 1 ? (
+                <Select value={workspace} onChange={(e) => setWorkspace(e.target.value)} className="w-full" required>
+                  <option value="">Select a workspace…</option>
+                  {knownWorkspaces.map((w) => (
+                    <option key={w} value={w}>{w}</option>
+                  ))}
+                </Select>
+              ) : (
+                <Input value={workspace} onChange={(e) => setWorkspace(e.target.value)} placeholder="demo" autoComplete="off" list="brix-workspaces" required />
+              )}
+              <datalist id="brix-workspaces">
+                {knownWorkspaces.map((w) => <option key={w} value={w} />)}
+              </datalist>
+            </div>
+            <div>
+              <Label>Your name <span className="text-slate-400 font-normal">(optional — speeds up login)</span></Label>
+              <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Demo Agent" autoComplete="name" />
             </div>
             <div>
               <Label>Passcode</Label>
               <Input type="password" value={passcode} onChange={(e) => setPasscode(e.target.value)} placeholder="••••" autoComplete="current-password" required />
             </div>
+            <label className="flex items-center gap-2.5 text-sm text-slate-600 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={rememberMe}
+                onChange={(e) => setRememberMe(e.target.checked)}
+                className="w-4 h-4 rounded accent-brix-600"
+              />
+              Remember me on this device
+            </label>
             {error && (
               <p role="alert" className="text-sm font-medium text-rose-600 bg-rose-50 border border-rose-200 rounded-xl px-4 py-2.5">
                 {error}
               </p>
             )}
-            <Button type="submit" size="lg" className="w-full">
-              Log in
+            <Button type="submit" size="lg" className="w-full" disabled={busy}>
+              {busy ? 'Logging in…' : 'Log in'}
             </Button>
           </form>
           <p className="mt-6 text-sm text-slate-500 text-center">
