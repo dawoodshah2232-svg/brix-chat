@@ -24,7 +24,11 @@ const STATIC: Array<{ group: string; links: Array<{ to: string; label: string; d
     group: 'Resources',
     links: [
       { to: '/blog', label: 'Blog', desc: 'Notes on support that works' },
+      { to: '/roi', label: 'ROI calculator', desc: 'Estimate your support savings' },
+      { to: '/compare', label: 'Compare', desc: 'Why teams move on from traditional live chat' },
+      { to: '/changelog', label: 'Changelog', desc: 'Every release, newest first' },
       { to: '/help', label: 'Help center', desc: 'Guides and how-tos' },
+      { to: '/support', label: 'Support', desc: 'Submit and track a ticket — no account needed' },
       { to: '/sitemap', label: 'Sitemap', desc: 'This page' },
     ],
   },

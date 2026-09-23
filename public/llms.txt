@@ -17,6 +17,9 @@
 - Home: https://brixchat.com/
 - Features: https://brixchat.com/features
 - Pricing: https://brixchat.com/pricing
+- ROI calculator: https://brixchat.com/roi
+- Compare: https://brixchat.com/compare
+- Changelog: https://brixchat.com/changelog
 - Blog: https://brixchat.com/blog
 - Help center: https://brixchat.com/help
 - About: https://brixchat.com/about
@@ -25,6 +28,7 @@
 - Status: https://brixchat.com/status
 - Privacy: https://brixchat.com/privacy
 - Terms: https://brixchat.com/terms
+- Support (customer ticket portal): https://brixchat.com/support — submit a support request and track it by ticket ID, no account needed.
 - HTML sitemap: https://brixchat.com/sitemap
 
 ## Feature list

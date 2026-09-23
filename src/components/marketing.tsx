@@ -97,7 +97,12 @@ const COLS: Array<{ title: string; links: Array<{ label: string; to: string }> }
     title: 'Resources',
     links: [
       { label: 'Blog', to: '/blog' },
+      { label: 'ROI calculator', to: '/roi' },
+      { label: 'Compare', to: '/compare' },
+      { label: 'Changelog', to: '/changelog' },
       { label: 'Help center', to: '/help' },
+      { label: 'Support', to: '/support' },
+      { label: 'Track your ticket', to: '/support' },
       { label: 'Sitemap', to: '/sitemap' },
     ],
   },

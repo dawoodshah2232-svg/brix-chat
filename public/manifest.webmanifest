@@ -1,0 +1,24 @@
+{
+    "background_color": "#ffffff",
+    "description": "Live chat platform: embeddable website widget, real-time agent dashboard, AI reply copilot and analytics.",
+    "display": "standalone",
+    "icons": [
+        {
+            "sizes": "any",
+            "src": "/brix-chat/logo.svg",
+            "type": "image/svg+xml"
+        },
+        {
+            "purpose": "any",
+            "sizes": "any",
+            "src": "/brix-chat/favicon.svg",
+            "type": "image/svg+xml"
+        }
+    ],
+    "name": "Brix Chat",
+    "orientation": "portrait",
+    "scope": "/brix-chat/",
+    "short_name": "BrixChat",
+    "start_url": "/brix-chat/",
+    "theme_color": "#4f46e5"
+}
