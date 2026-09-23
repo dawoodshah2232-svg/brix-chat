@@ -202,3 +202,63 @@ export const LogoutIcon = ({ className }: { className?: string }) => (
     <path d="m10.5 12 6.5-.5M14.5 8.5l3.5 3.5-3.5 3.5" />
   </Icon>
 );
+
+export const GlobeIcon = ({ className }: { className?: string }) => (
+  <Icon className={className}>
+    <circle cx="12" cy="12" r="8" />
+    <path d="M4 12h16M12 4c2.8 2.6 4.2 5 4.2 8S14.8 17.4 12 20c-2.8-2.6-4.2-5-4.2-8S9.2 6.6 12 4z" />
+  </Icon>
+);
+
+export const PaletteIcon = ({ className }: { className?: string }) => (
+  <Icon className={className}>
+    <path d="M12 4.5a7.5 7.5 0 0 0-7.5 7.5c0 2 1.2 3 2.8 3h2.2a1.5 1.5 0 0 1 1.5 1.5v.2a2.3 2.3 0 0 0 4.6 0c2.8-.5 4.9-2.9 4.9-5.9A7.5 7.5 0 0 0 12 4.5z" />
+    <circle cx="8.5" cy="10.5" r="1" fill="currentColor" />
+    <circle cx="12.5" cy="8.5" r="1" fill="currentColor" />
+    <circle cx="15.5" cy="11" r="1" fill="currentColor" />
+  </Icon>
+);
+
+export const CodeIcon = ({ className }: { className?: string }) => (
+  <Icon className={className}>
+    <path d="m9 9-3.5 3L9 15M15 9l3.5 3L15 15M13.5 5.5l-3 13" />
+  </Icon>
+);
+
+export const TeamIcon = ({ className }: { className?: string }) => (
+  <Icon className={className}>
+    <circle cx="9" cy="8.5" r="3" />
+    <path d="M3.5 19.5c0-3 2.5-5 5.5-5s5.5 2 5.5 5" />
+    <circle cx="16.5" cy="9.5" r="2.4" />
+    <path d="M15.8 14.7c2.6.3 4.7 2.1 4.7 4.8" />
+  </Icon>
+);
+
+export const BuildingIcon = ({ className }: { className?: string }) => (
+  <Icon className={className}>
+    <path d="M5 20V6.5A1.5 1.5 0 0 1 6.5 5h7A1.5 1.5 0 0 1 15 6.5V20" />
+    <path d="M15 9.5h3.5A1.5 1.5 0 0 1 20 11v9" />
+    <path d="M3.5 20h17" />
+    <path d="M8.5 8.5h3M8.5 12h3M8.5 15.5h3" />
+  </Icon>
+);
+
+export const TagIcon = ({ className }: { className?: string }) => (
+  <Icon className={className}>
+    <path d="m4 4.5 8-1 11 11-7 7-11-11-1-6z" />
+    <circle cx="9" cy="9.5" r="1.3" />
+  </Icon>
+);
+
+export const TerminalIcon = ({ className }: { className?: string }) => (
+  <Icon className={className}>
+    <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18.5v-13z" />
+    <path d="m8.5 9.5 2.5 2.5-2.5 2.5M13 14.5h3.5" />
+  </Icon>
+);
+
+export const HeartIcon = ({ className }: { className?: string }) => (
+  <Icon className={className}>
+    <path d="M12 19.5S4.5 14.5 4.5 9.7A4.2 4.2 0 0 1 8.7 5.5c1.5 0 2.7.8 3.3 1.9a4.2 4.2 0 0 1 3.3-1.9 4.2 4.2 0 0 1 4.2 4.2c0 4.8-7.5 9.8-7.5 9.8z" />
+  </Icon>
+);

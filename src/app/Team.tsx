@@ -2,12 +2,12 @@
 // bulk role changes. Client-scoped. No 'owner' role is assignable here.
 
 import { useEffect, useMemo, useState } from 'react';
-import { Button, Card, Input, Label, Modal, Select, Badge, EmptyState } from '../components/ui';
+import { Button, Card, Input, Label, Modal, Select, Badge, EmptyState, useConfirm } from '../components/ui';
 import { toast } from '../components/dashboard/Toasts';
 import { useClientApi } from '../components/dashboard/useClientApi';
 import { useStore } from '../lib/store';
 import type { ApiMember, TeamRole } from '../lib/api';
-import { useConfirm } from '../components/Confirm';
+
 import { timeAgo } from '../lib/utils';
 
 const ASSIGNABLE: TeamRole[] = ['admin', 'agent', 'developer', 'viewer'];
@@ -90,13 +90,21 @@ export default function Team() {
     }
   };
 
-  const remove = async (m: ApiMember) => {
+  const remove = (m: ApiMember) => {
     if (!api) return;
     if (m.id === session?.memberId) {
       toast.error('You cannot remove yourself.');
       return;
     }
-    if (!(await confirm(`Remove ${m.display_name} from the team? They will no longer be able to log in.`))) return;
+    confirm({
+      title: 'Remove member?',
+      body: `Remove ${m.display_name} from the team? They will no longer be able to log in.`,
+      action: () => { void doRemove(m); },
+    });
+  };
+
+  const doRemove = async (m: ApiMember) => {
+    if (!api) return;
     try {
       await api.members.remove(m.id);
       toast.success(`${m.display_name} removed.`);
@@ -170,7 +178,7 @@ export default function Team() {
                     <Select value={m.role} onChange={(e) => changeRole(m, e.target.value as TeamRole)} className="text-xs">
                       {ASSIGNABLE.map((r) => <option key={r} value={r}>{r}</option>)}
                     </Select>
-                    <Button size="sm" variant="ghost" onClick={() => remove(m)} title="Remove">🗑</Button>
+                    <Button size="sm" variant="ghost" onClick={() => remove(m)}>🗑</Button>
                   </div>
                 )}
               </li>

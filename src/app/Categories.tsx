@@ -2,11 +2,11 @@
 // Client-scoped per property.
 
 import { useEffect, useState } from 'react';
-import { Button, Card, Input, Label, Modal, Select, EmptyState, Tabs } from '../components/ui';
+import { Button, Card, Input, Label, Modal, Select, EmptyState, Tabs, useConfirm } from '../components/ui';
 import { toast } from '../components/dashboard/Toasts';
 import { useClientApi } from '../components/dashboard/useClientApi';
 import type { ApiCategory, ApiProperty } from '../lib/api';
-import { useConfirm } from '../components/Confirm';
+
 
 const SCOPES: Array<{ id: ApiCategory['scope']; label: string; hint: string }> = [
   { id: 'kb', label: 'Knowledge base', hint: 'Group help articles' },
@@ -63,9 +63,17 @@ export default function Categories() {
     }
   };
 
-  const remove = async (c: ApiCategory) => {
+  const remove = (c: ApiCategory) => {
     if (!api) return;
-    if (!(await confirm(`Delete the “${c.name}” category? Items using it become uncategorized.`))) return;
+    confirm({
+      title: 'Delete category?',
+      body: `Delete the “${c.name}” category? Items using it become uncategorized.`,
+      action: () => { void doRemove(c); },
+    });
+  };
+
+  const doRemove = async (c: ApiCategory) => {
+    if (!api) return;
     try {
       await api.categories.delete(c.id);
       toast.success('Category deleted.');
@@ -106,7 +114,7 @@ export default function Categories() {
                 </span>
                 <span className="font-semibold text-slate-800 flex-1 truncate">{c.name}</span>
                 <Button size="sm" variant="secondary" onClick={() => setDraft(c)}>Rename</Button>
-                <Button size="sm" variant="ghost" onClick={() => remove(c)} title="Delete">🗑</Button>
+                <Button size="sm" variant="ghost" onClick={() => remove(c)}>🗑</Button>
               </li>
             ))}
           </ul>

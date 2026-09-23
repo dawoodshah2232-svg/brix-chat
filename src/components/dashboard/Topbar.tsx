@@ -18,11 +18,18 @@ export const CRUMBS: Record<string, { section: string; label: string }> = {
   '/app/knowledge': { section: 'Support', label: 'Knowledge base' },
   '/app/canned': { section: 'Support', label: 'Canned responses' },
   '/app/analytics': { section: 'Grow', label: 'Analytics' },
+  '/app/ratings': { section: 'Grow', label: 'Ratings' },
   '/app/feedback': { section: 'Grow', label: 'Feedback' },
   '/app/contacts': { section: 'Grow', label: 'Contacts' },
   '/app/triggers': { section: 'Automate', label: 'Triggers' },
+  '/app/properties': { section: 'Workspace', label: 'Properties' },
+  '/app/branding': { section: 'Workspace', label: 'Branding' },
+  '/app/install': { section: 'Workspace', label: 'Install' },
+  '/app/team': { section: 'Workspace', label: 'Team' },
+  '/app/departments': { section: 'Workspace', label: 'Departments' },
+  '/app/categories': { section: 'Workspace', label: 'Categories' },
+  '/app/developers': { section: 'Workspace', label: 'Developers' },
   '/app/settings': { section: 'Workspace', label: 'Settings' },
-  '/admin': { section: 'Workspace', label: 'Admin console' },
 };
 
 function Breadcrumbs() {

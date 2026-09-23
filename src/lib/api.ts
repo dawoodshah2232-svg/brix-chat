@@ -42,6 +42,7 @@ export type MsgSender = 'visitor' | 'agent' | 'ai' | 'system';
 export type MsgKind = 'text' | 'file' | 'voice' | 'rating';
 export type TicketStatus = 'new' | 'open' | 'resolved';
 export type TeamRole = 'owner' | 'admin' | 'agent' | 'developer' | 'viewer';
+export type DeliveryStatus = 'pending' | 'delivered' | 'failed' | 'dead' | 'test';
 
 export interface ApiMessage {
   id: string;

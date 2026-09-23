@@ -213,7 +213,7 @@ export interface Settings {
   notifyPrefs?: NotifyPrefs; // phase 2
 }
 
-export type MemberRole = 'admin' | 'agent' | 'developer' | 'viewer';
+export type MemberRole = 'owner' | 'admin' | 'agent' | 'developer' | 'viewer';
 
 export interface Workspace {
   name: string;

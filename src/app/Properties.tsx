@@ -2,11 +2,11 @@
 // regenerate, enable/disable. Client-scoped to the effective workspace.
 
 import { useEffect, useState } from 'react';
-import { Button, Card, Input, Label, Modal, Badge, EmptyState, Select } from '../components/ui';
+import { Button, Card, Input, Label, Modal, Badge, EmptyState, Select, useConfirm } from '../components/ui';
 import { toast } from '../components/dashboard/Toasts';
 import { useClientApi } from '../components/dashboard/useClientApi';
 import type { ApiProperty } from '../lib/api';
-import { useConfirm } from '../components/Confirm';
+
 
 export default function Properties() {
   const { api } = useClientApi();
@@ -50,9 +50,17 @@ export default function Properties() {
     }
   };
 
-  const regen = async (p: ApiProperty) => {
+  const regen = (p: ApiProperty) => {
     if (!api) return;
-    if (!(await confirm(`Regenerate the public key for “${p.name}”? The old embed snippet will stop working.`))) return;
+    confirm({
+      title: 'Regenerate public key?',
+      body: `Regenerate the public key for “${p.name}”? The old embed snippet will stop working.`,
+      action: () => { void doRegen(p); },
+    });
+  };
+
+  const doRegen = async (p: ApiProperty) => {
+    if (!api) return;
     try {
       const { data } = await api.properties.regenerateKey(p.id);
       toast.success(`New public key: ${data.public_key}`);
@@ -62,9 +70,17 @@ export default function Properties() {
     }
   };
 
-  const remove = async (p: ApiProperty) => {
+  const remove = (p: ApiProperty) => {
     if (!api) return;
-    if (!(await confirm(`Delete “${p.name}” and its widget configuration?`))) return;
+    confirm({
+      title: 'Delete property?',
+      body: `Delete “${p.name}” and its widget configuration? This cannot be undone.`,
+      action: () => { void doRemove(p); },
+    });
+  };
+
+  const doRemove = async (p: ApiProperty) => {
+    if (!api) return;
     try {
       await api.properties.remove(p.id);
       toast.success('Property deleted.');
@@ -104,14 +120,14 @@ export default function Properties() {
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <h2 className="font-bold text-slate-900 truncate">{p.name}</h2>
-                    <Badge tone={p.enabled ? 'green' : 'gray'}>{p.enabled ? 'Enabled' : 'Disabled'}</Badge>
+                    <Badge tone={p.enabled ? 'green' : 'slate'}>{p.enabled ? 'Enabled' : 'Disabled'}</Badge>
                   </div>
                   {p.domain && <div className="text-sm text-slate-500 truncate mt-0.5">{p.domain}</div>}
                 </div>
                 <div className="flex gap-1 shrink-0">
                   <Button size="sm" variant="secondary" onClick={() => setEditor(p)}>Edit</Button>
-                  <Button size="sm" variant="ghost" onClick={() => regen(p)} title="Regenerate public key">🔑</Button>
-                  <Button size="sm" variant="ghost" onClick={() => remove(p)} title="Delete">🗑</Button>
+                  <Button size="sm" variant="ghost" onClick={() => regen(p)}>🔑</Button>
+                  <Button size="sm" variant="ghost" onClick={() => remove(p)}>🗑</Button>
                 </div>
               </div>
               <div className="mt-3 flex items-center gap-2">

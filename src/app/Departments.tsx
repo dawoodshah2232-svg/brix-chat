@@ -2,11 +2,11 @@
 // CRUD, agent assignment, routing modes. Client-scoped per property.
 
 import { useEffect, useState } from 'react';
-import { Button, Card, Input, Label, Modal, Select, Badge, EmptyState } from '../components/ui';
+import { Button, Card, Input, Label, Modal, Select, Badge, EmptyState, useConfirm } from '../components/ui';
 import { toast } from '../components/dashboard/Toasts';
 import { useClientApi } from '../components/dashboard/useClientApi';
 import type { ApiDepartment, ApiMember, ApiProperty } from '../lib/api';
-import { useConfirm } from '../components/Confirm';
+
 import { cx } from '../lib/utils';
 
 const ROUTING: Array<{ id: ApiDepartment['routing_mode']; label: string; hint: string }> = [
@@ -74,9 +74,17 @@ export default function Departments() {
     }
   };
 
-  const remove = async (d: ApiDepartment) => {
+  const remove = (d: ApiDepartment) => {
     if (!api) return;
-    if (!(await confirm(`Delete the “${d.name}” department? Chats route to the fallback afterwards.`))) return;
+    confirm({
+      title: 'Delete department?',
+      body: `Delete the “${d.name}” department? Chats route to the fallback afterwards.`,
+      action: () => { void doRemove(d); },
+    });
+  };
+
+  const doRemove = async (d: ApiDepartment) => {
+    if (!api) return;
     try {
       await api.departments.delete(d.id);
       toast.success('Department deleted.');
@@ -125,7 +133,7 @@ export default function Departments() {
                 </div>
                 <div className="flex gap-1 shrink-0">
                   <Button size="sm" variant="secondary" onClick={() => setDraft(d)}>Edit</Button>
-                  <Button size="sm" variant="ghost" onClick={() => remove(d)} title="Delete">🗑</Button>
+                  <Button size="sm" variant="ghost" onClick={() => remove(d)}>🗑</Button>
                 </div>
               </div>
               <div className="flex items-center gap-2 mt-3 flex-wrap">

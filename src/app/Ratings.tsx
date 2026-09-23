@@ -8,11 +8,6 @@ import { Stat } from '../components/dashboard/Stat';
 import type { ApiRating, ApiProperty, ApiMember } from '../lib/api';
 import { timeAgo, cx } from '../lib/utils';
 
-function dayKey(ts: number): string {
-  const d = new Date(ts);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
 export default function Ratings() {
   const { api } = useClientApi();
   const [props, setProps] = useState<ApiProperty[]>([]);
@@ -83,10 +78,10 @@ export default function Ratings() {
       </div>
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Stat label="CSAT average" value={summary?.csat_avg != null ? `${summary.csat_avg.toFixed(1)} / 5` : '—'} sub={`${summary?.csat_count ?? 0} responses`} spark={summary?.trend.map((t) => t.csat_avg ?? 0)} />
-        <Stat label="NPS score" value={summary?.nps_score != null ? String(Math.round(summary.nps_score)) : '—'} sub={`${summary?.nps_count ?? 0} responses`} spark={summary?.trend.map((t) => t.nps_avg ?? 0)} tone={summary?.nps_score != null && summary.nps_score < 0 ? 'rose' : 'emerald'} />
-        <Stat label="Promoters" value={String(summary?.promoters ?? 0)} sub="scored 9–10" tone="emerald" />
-        <Stat label="Detractors" value={String(summary?.detractors ?? 0)} sub="scored 0–6" tone="rose" />
+        <Stat label="CSAT average" icon="😊" value={summary?.csat_avg != null ? `${summary.csat_avg.toFixed(1)} / 5` : '—'} delta={`${summary?.csat_count ?? 0} responses`} spark={summary?.trend.map((t) => t.csat_avg ?? 0)} />
+        <Stat label="NPS score" icon="📊" value={summary?.nps_score != null ? String(Math.round(summary.nps_score)) : '—'} delta={`${summary?.nps_count ?? 0} responses`} spark={summary?.trend.map((t) => t.nps_avg ?? 0)} tone={summary?.nps_score != null && summary.nps_score < 0 ? 'rose' : 'green'} />
+        <Stat label="Promoters" icon="👍" value={String(summary?.promoters ?? 0)} delta="scored 9–10" tone="green" />
+        <Stat label="Detractors" icon="👎" value={String(summary?.detractors ?? 0)} delta="scored 0–6" tone="rose" />
       </div>
 
       <Card className="p-6">

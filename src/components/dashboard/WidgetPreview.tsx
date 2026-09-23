@@ -1,7 +1,7 @@
 // Brix Chat — live widget preview for the branding studio.
 // Renders a miniature chat window using the property's branding settings.
 
-import type { PropertySettings } from '../lib/api';
+import type { PropertySettings } from '../../lib/api';
 
 export default function WidgetPreview({ settings }: { settings: PropertySettings }) {
   const color = settings.widget_color || '#4f46e5';

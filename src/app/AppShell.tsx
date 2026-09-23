@@ -2,7 +2,7 @@
 // breadcrumbs + command palette, notification center, presence + profile.
 
 import { useCallback, useEffect, useState } from 'react';
-import { NavLink, Outlet, useLocation } from 'react-router-dom';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useStore } from '../lib/store';
 import { getApi } from '../lib/api';
 import { Modal, Button } from '../components/ui';
@@ -15,14 +15,21 @@ import type { SidebarGroup } from '../components/dashboard/Sidebar';
 import {
   BoltIcon,
   BookIcon,
+  BuildingIcon,
   ChartIcon,
   ChatIcon,
   CogIcon,
   ContactsIcon,
+  CodeIcon,
+  GlobeIcon,
+  HeartIcon,
   MegaphoneIcon,
   MenuIcon,
-  ShieldIcon,
+  PaletteIcon,
   StarIcon,
+  TagIcon,
+  TeamIcon,
+  TerminalIcon,
   TicketIcon,
   TriggerIcon,
   UsersIcon,
@@ -70,6 +77,44 @@ function useBadges() {
   return { unread, onlineVisitors, ticketBadge };
 }
 
+/** Persistent banner shown when a platform owner is viewing a client workspace. */
+function ViewAsBanner() {
+  const { session, effectiveWorkspaceId, setViewingWorkspace } = useStore();
+  const navigate = useNavigate();
+  const [name, setName] = useState('');
+
+  useEffect(() => {
+    if (!session?.viewingWorkspaceId) return;
+    getApi(effectiveWorkspaceId(), session.displayName)
+      .workspaceInfo.get()
+      .then(({ data }) => setName(data.name))
+      .catch(() => setName(session.viewingWorkspaceId ?? ''));
+  }, [session?.viewingWorkspaceId, effectiveWorkspaceId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (!session?.viewingWorkspaceId) return null;
+  const exit = () => {
+    setViewingWorkspace(null);
+    navigate('/admin');
+  };
+  return (
+    <div className="z-30 bg-gradient-to-r from-indigo-950 via-indigo-900 to-indigo-950 text-white">
+      <div className="flex items-center justify-center gap-3 px-4 py-2 text-[13px] flex-wrap">
+        <span className="inline-flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" aria-hidden />
+          <span className="font-semibold">Viewing as {name || '…'}</span>
+          <span className="text-indigo-300">— platform admin view</span>
+        </span>
+        <button
+          onClick={exit}
+          className="rounded-lg bg-white/10 hover:bg-white/20 px-3 py-1 text-xs font-bold transition"
+        >
+          Exit view-as
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function AppShell() {
   const { session, effectiveWorkspaceId } = useStore();
   const location = useLocation();
@@ -86,7 +131,6 @@ export default function AppShell() {
   const { unread, onlineVisitors, ticketBadge } = useBadges();
 
   const role = session?.role ?? 'agent';
-  const canAdmin = role === 'admin' || role === 'developer';
   const showQuality = role !== 'viewer';
 
   const toggleCollapsed = () => {
@@ -156,6 +200,7 @@ export default function AppShell() {
       label: 'Grow',
       items: [
         { to: '/app/analytics', label: 'Analytics', icon: <ChartIcon /> },
+        { to: '/app/ratings', label: 'Ratings', icon: <HeartIcon /> },
         { to: '/app/feedback', label: 'Feedback', icon: <StarIcon /> },
         { to: '/app/contacts', label: 'Contacts', icon: <ContactsIcon /> },
         ...(showQuality
@@ -173,8 +218,14 @@ export default function AppShell() {
     {
       label: 'Workspace',
       items: [
+        { to: '/app/properties', label: 'Properties', icon: <GlobeIcon /> },
+        { to: '/app/branding', label: 'Branding', icon: <PaletteIcon /> },
+        { to: '/app/install', label: 'Install', icon: <CodeIcon /> },
+        { to: '/app/team', label: 'Team', icon: <TeamIcon /> },
+        { to: '/app/departments', label: 'Departments', icon: <BuildingIcon /> },
+        { to: '/app/categories', label: 'Categories', icon: <TagIcon /> },
+        { to: '/app/developers', label: 'Developers', icon: <TerminalIcon /> },
         { to: '/app/settings', label: 'Settings', icon: <CogIcon /> },
-        ...(canAdmin ? [{ to: '/admin', label: 'Admin console', icon: <ShieldIcon /> }] : []),
       ],
     },
   ];
@@ -278,6 +329,7 @@ export default function AppShell() {
 
       {/* Main column */}
       <div className="flex-1 flex flex-col min-w-0">
+        <ViewAsBanner />
         <Topbar
           onMenu={() => setMobileOpen(true)}
           onPalette={() => setPaletteOpen(true)}

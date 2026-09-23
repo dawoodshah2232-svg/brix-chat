@@ -3,7 +3,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { StoreProvider } from './lib/store';
 import { MarketingLayout } from './components/marketing';
 import AuthGuard from './auth/AuthGuard';
-import RoleGuard from './auth/RoleGuard';
+import OwnerGuard from './auth/OwnerGuard';
 import Landing from './pages/Landing';
 import Features from './pages/Features';
 import Pricing from './pages/Pricing';
@@ -34,6 +34,14 @@ import Campaigns from './app/Campaigns';
 import Tickets from './app/Tickets';
 import Settings from './app/Settings';
 import Admin from './app/Admin';
+import Properties from './app/Properties';
+import Branding from './app/Branding';
+import Install from './app/Install';
+import Team from './app/Team';
+import Departments from './app/Departments';
+import Categories from './app/Categories';
+import Developers from './app/Developers';
+import Ratings from './app/Ratings';
 // Worker A creates src/app/Feedback.tsx; the ./app/Feedback path below is
 // correct from src/App.tsx (the "../app/Feedback" in the work order assumed a pages/ file).
 import Feedback from './app/Feedback';
@@ -86,18 +94,26 @@ export default function App() {
           <Route path="login" element={<Login />} />
           <Route path="widget" element={<WidgetPage />} />
           <Route path="kb/:propertyKey" element={<PropertyKb />} />
-          <Route path="admin" element={<AuthGuard><RoleGuard roles={['admin', 'developer']}><Admin /></RoleGuard></AuthGuard>} />
+          <Route path="admin" element={<OwnerGuard><Admin /></OwnerGuard>} />
           <Route path="app" element={<AuthGuard><AppShell /></AuthGuard>}>
             <Route index element={<Titled title="Inbox"><Inbox /></Titled>} />
-            <Route path="visitors" element={<Titled title="Visitors"><Visitors /></Titled>} />
+            <Route path="visitors" element={<Titled title="Live visitors"><Visitors /></Titled>} />
             <Route path="contacts" element={<Titled title="Contacts"><Contacts /></Titled>} />
             <Route path="analytics" element={<Titled title="Analytics"><Analytics /></Titled>} />
+            <Route path="ratings" element={<Titled title="Ratings"><Ratings /></Titled>} />
             <Route path="knowledge" element={<Titled title="Knowledge base"><KnowledgeBase /></Titled>} />
             <Route path="canned" element={<Titled title="Canned responses"><Canned /></Titled>} />
             <Route path="triggers" element={<Titled title="Triggers"><Triggers /></Titled>} />
             <Route path="campaigns" element={<Titled title="Campaigns"><Campaigns /></Titled>} />
             <Route path="tickets" element={<Titled title="Tickets"><Tickets /></Titled>} />
             <Route path="feedback" element={<Titled title="Feedback"><Feedback /></Titled>} />
+            <Route path="properties" element={<Titled title="Properties"><Properties /></Titled>} />
+            <Route path="branding" element={<Titled title="Branding"><Branding /></Titled>} />
+            <Route path="install" element={<Titled title="Install"><Install /></Titled>} />
+            <Route path="team" element={<Titled title="Team"><Team /></Titled>} />
+            <Route path="departments" element={<Titled title="Departments"><Departments /></Titled>} />
+            <Route path="categories" element={<Titled title="Categories"><Categories /></Titled>} />
+            <Route path="developers" element={<Titled title="Developers"><Developers /></Titled>} />
             <Route path="settings" element={<Titled title="Settings"><Settings /></Titled>} />
           </Route>
           <Route path="*" element={<NotFound />} />

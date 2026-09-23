@@ -2,13 +2,13 @@
 // webhooks (CRUD, event catalog, secret rotation, delivery log, test-fire).
 
 import { useEffect, useState } from 'react';
-import { Button, Card, Input, Label, Modal, Select, Badge, EmptyState, Tabs } from '../components/ui';
+import { Button, Card, Input, Label, Modal, Select, Badge, EmptyState, Tabs, useConfirm } from '../components/ui';
 import { toast } from '../components/dashboard/Toasts';
 import { useClientApi } from '../components/dashboard/useClientApi';
 import { useStore } from '../lib/store';
 import type { ApiKeyRecord, ApiWebhook, ApiDelivery, ApiProperty } from '../lib/api';
 import { samplePayload } from '../lib/api';
-import { useConfirm } from '../components/Confirm';
+
 import { timeAgo, cx } from '../lib/utils';
 
 const SCOPES = ['chat:read', 'chat:write', 'contacts:read', 'contacts:write', 'tickets:read', 'tickets:write', 'metrics:read', 'webhooks:read', 'webhooks:write'];
@@ -82,9 +82,17 @@ export default function Developers() {
     }
   };
 
-  const rotateKey = async (k: ApiKeyRecord) => {
+  const rotateKey = (k: ApiKeyRecord) => {
     if (!api) return;
-    if (!(await confirm(`Rotate “${k.name}”? The old key stops working immediately.`))) return;
+    confirm({
+      title: 'Rotate API key?',
+      body: `Rotate “${k.name}”? The old key stops working immediately.`,
+      action: () => { void doRotateKey(k); },
+    });
+  };
+
+  const doRotateKey = async (k: ApiKeyRecord) => {
+    if (!api) return;
     try {
       const { data } = await api.apiKeys.rotate(k.id);
       setShown({ title: 'Key rotated', value: data.key, hint: `New key for ${k.name}.` });
@@ -94,9 +102,17 @@ export default function Developers() {
     }
   };
 
-  const revokeKey = async (k: ApiKeyRecord) => {
+  const revokeKey = (k: ApiKeyRecord) => {
     if (!api) return;
-    if (!(await confirm(`Revoke “${k.name}”?`))) return;
+    confirm({
+      title: 'Revoke API key?',
+      body: `Revoke “${k.name}”? Applications using it will stop working.`,
+      action: () => { void doRevokeKey(k); },
+    });
+  };
+
+  const doRevokeKey = async (k: ApiKeyRecord) => {
+    if (!api) return;
     try {
       await api.apiKeys.revoke(k.id);
       toast.success('Key revoked.');
@@ -127,9 +143,17 @@ export default function Developers() {
     }
   };
 
-  const rotateSecret = async (w: ApiWebhook) => {
+  const rotateSecret = (w: ApiWebhook) => {
     if (!api) return;
-    if (!(await confirm(`Rotate the signing secret for ${w.url}?`))) return;
+    confirm({
+      title: 'Rotate signing secret?',
+      body: `Rotate the signing secret for ${w.url}? Update your endpoint to verify with the new one.`,
+      action: () => { void doRotateSecret(w); },
+    });
+  };
+
+  const doRotateSecret = async (w: ApiWebhook) => {
+    if (!api) return;
     try {
       const { data } = await api.webhooks.rotateSecret(w.id);
       setShown({ title: 'Secret rotated', value: data.secret, hint: `New signing secret for ${w.url}.` });
@@ -138,9 +162,17 @@ export default function Developers() {
     }
   };
 
-  const removeHook = async (w: ApiWebhook) => {
+  const removeHook = (w: ApiWebhook) => {
     if (!api) return;
-    if (!(await confirm(`Delete the webhook ${w.url}?`))) return;
+    confirm({
+      title: 'Delete webhook?',
+      body: `Delete the webhook ${w.url}? You will stop receiving events there.`,
+      action: () => { void doRemoveHook(w); },
+    });
+  };
+
+  const doRemoveHook = async (w: ApiWebhook) => {
+    if (!api) return;
     try {
       await api.webhooks.remove(w.id);
       toast.success('Webhook deleted.');
@@ -243,11 +275,11 @@ export default function Developers() {
                       <Select value={testEvent} onChange={(e) => setTestEvent(e.target.value)} className="text-xs max-w-44">
                         {EVENTS.map((e) => <option key={e} value={e}>{e}</option>)}
                       </Select>
-                      <Button size="sm" variant="secondary" onClick={() => testFire(w)}>Test fire</Button>
+                      <Button size="sm" variant="secondary" onClick={() => { void testFire(w); }}>Test fire</Button>
                       <Button size="sm" variant="secondary" onClick={() => setLogFor(w)}>Deliveries</Button>
                       <Button size="sm" variant="secondary" onClick={() => setHookDraft(w)}>Edit</Button>
-                      <Button size="sm" variant="ghost" onClick={() => rotateSecret(w)} title="Rotate signing secret">🔐</Button>
-                      <Button size="sm" variant="ghost" onClick={() => removeHook(w)} title="Delete">🗑</Button>
+                      <Button size="sm" variant="ghost" onClick={() => rotateSecret(w)}>🔐</Button>
+                      <Button size="sm" variant="ghost" onClick={() => removeHook(w)}>🗑</Button>
                     </div>
                   </div>
                 </Card>
