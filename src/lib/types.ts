@@ -1,6 +1,7 @@
 // Brix Chat — shared domain types (demo mode: localStorage-backed, no backend)
 
 import type { QualityWeights } from './quality';
+import type { SlaPolicy } from './sla';
 
 export type MsgFrom = 'visitor' | 'agent' | 'ai' | 'system';
 // phase 4 (P4-17): 'audio' = widget/dashboard voice-note message (HTML5 player,
@@ -217,6 +218,8 @@ export interface Settings {
   distress?: DistressSettings;
   /** Admin-editable quality rubric weights (P4-7). Falls back to DEFAULT_QUALITY_WEIGHTS. */
   qualityRubric?: QualityWeights;
+  /** SLA policies per ticket priority (P4-16). Falls back to DEFAULT_SLA_POLICIES. */
+  slaPolicies?: SlaPolicy[];
 }
 
 export interface DistressSettings {

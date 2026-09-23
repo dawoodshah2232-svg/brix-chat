@@ -6,6 +6,7 @@ import { getApi } from '../lib/api';
 import type { CopilotSettings, DataSettings, SecuritySettings } from '../lib/api';
 import { copyText } from '../lib/utils';
 import { Avatar, Button, Card, Input, Label, Select, Textarea, Toggle, useConfirm } from '../components/ui';
+import { DEFAULT_SLA_POLICIES, type SlaPolicy, type SlaPriority } from '../lib/sla';
 
 const COLOR_PRESETS = ['#4f46e5', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#0b1020'];
 const MEMBER_COLORS = ['#4f46e5', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
@@ -300,6 +301,10 @@ export default function Settings() {
   const store = useStore();
   const { confirm, dialog } = useConfirm();
   const s = store.data.settings;
+  const patchSla = (priority: SlaPriority, patch: Partial<SlaPolicy>) =>
+    store.updateSettings({
+      slaPolicies: (s.slaPolicies ?? DEFAULT_SLA_POLICIES).map((p) => (p.priority === priority ? { ...p, ...patch } : p)),
+    });
   const w = s.widget;
 
   const setWidget = (patch: Partial<SettingsData['widget']>) =>
@@ -555,6 +560,34 @@ export default function Settings() {
               </div>
             ))}
           </div>
+        </div>
+      </Card>
+
+      {/* SLA policies */}
+      <Card className="p-6">
+        <SectionTitle>SLA policies</SectionTitle>
+        <p className="text-sm text-slate-500 mt-1 mb-2">
+          Response and resolution targets per ticket priority. When a ticket is created you can apply its
+          policy to set the SLA due date automatically. Risk = due within 24 hours.
+        </p>
+        <div className="divide-y divide-slate-100">
+          {(s.slaPolicies ?? DEFAULT_SLA_POLICIES).map((p) => (
+            <div key={p.priority} className="flex items-center gap-3 py-3 flex-wrap">
+              <div className="w-24 capitalize text-sm font-semibold text-slate-900">⚑ {p.priority}</div>
+              <Toggle checked={p.enabled} onChange={(v) => patchSla(p.priority, { enabled: v })} label={`SLA policy for ${p.priority}`} />
+              <div className="flex items-center gap-2 ml-auto">
+                <span className="text-xs text-slate-500">Respond in</span>
+                <Input type="number" min={1} max={720} value={p.firstResponseHours} disabled={!p.enabled}
+                  onChange={(e) => patchSla(p.priority, { firstResponseHours: Math.max(1, Number(e.target.value) || 1) })}
+                  className="w-20" />
+                <span className="text-xs text-slate-500">h · resolve in</span>
+                <Input type="number" min={1} max={2160} value={p.resolveHours} disabled={!p.enabled}
+                  onChange={(e) => patchSla(p.priority, { resolveHours: Math.max(1, Number(e.target.value) || 1) })}
+                  className="w-20" />
+                <span className="text-xs text-slate-500">h</span>
+              </div>
+            </div>
+          ))}
         </div>
       </Card>
 

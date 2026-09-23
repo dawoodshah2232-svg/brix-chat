@@ -6,6 +6,7 @@ import { useStore } from '../lib/store';
 import { getApi } from '../lib/api';
 import type { ApiMember, ApiTicket, TicketPriority, TicketStatus } from '../lib/api';
 import { Avatar, Badge, Button, EmptyState, Input, Label, Modal, SearchInput, Select, Tabs, Textarea } from '../components/ui';
+import { slaState, slaCountdown, slaDueFromPolicy, policyFor, DEFAULT_SLA_POLICIES, type SlaPriority } from '../lib/sla';
 import { cx, timeAgo } from '../lib/utils';
 
 const STATUS_TONE: Record<TicketStatus, 'cyan' | 'green' | 'slate'> = { new: 'cyan', open: 'green', resolved: 'slate' };
@@ -17,15 +18,7 @@ function isoAgo(iso: string): string {
   return Number.isNaN(t) ? '' : timeAgo(t);
 }
 
-function slaBadge(slaDue: string | null): { label: string; tone: 'rose' | 'amber' | 'slate' | null } {
-  if (!slaDue) return { label: 'No SLA', tone: null };
-  const t = Date.parse(slaDue);
-  if (Number.isNaN(t)) return { label: 'No SLA', tone: null };
-  const diff = t - Date.now();
-  if (diff < 0) return { label: 'SLA breached', tone: 'rose' };
-  if (diff < 24 * 3600000) return { label: `SLA in ${Math.max(1, Math.round(diff / 3600000))}h`, tone: 'amber' };
-  return { label: `SLA ${new Date(t).toLocaleDateString([], { month: 'short', day: 'numeric' })}`, tone: 'slate' };
-}
+const SLA_TONE: Record<'ok' | 'risk' | 'breached', 'slate' | 'amber' | 'rose'> = { ok: 'slate', risk: 'amber', breached: 'rose' };
 
 /** P4-10: duplicate-ticket suggestions via keyword overlap. */
 const DUP_STOP = new Set('the a an and or of to in on for with is are was were it this that what how do does did can could would should i you we they he she my your our their me him her them as at by from be been have has had will shall may might must not no yes if then than so but'.split(' '));
@@ -57,7 +50,8 @@ function toLocalInput(iso: string | null): string {
 }
 
 export default function Tickets() {
-  const { session, effectiveWorkspaceId } = useStore();
+  const store = useStore();
+  const { session, effectiveWorkspaceId } = store;
   const [params, setParams] = useSearchParams();
   const api = useMemo(() => (session ? getApi(effectiveWorkspaceId(), session.displayName) : null), [session]);
 
@@ -66,6 +60,13 @@ export default function Tickets() {
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<'all' | TicketStatus>('all');
   const [q, setQ] = useState('');
+  const [slaFilter, setSlaFilter] = useState<'all' | 'breached' | 'risk' | 'none'>('all');
+  // P4-16: tick so SLA countdowns stay live
+  const [, setNow] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setNow((x) => x + 1), 30000);
+    return () => clearInterval(t);
+  }, []);
   const [priority, setPriority] = useState<'all' | TicketPriority>('all');
   const [assignee, setAssignee] = useState('all');
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -112,6 +113,7 @@ export default function Tickets() {
       .filter((x) => tab === 'all' || x.status === tab)
       .filter((x) => priority === 'all' || x.priority === priority)
       .filter((x) => assignee === 'all' || (assignee === 'unassigned' ? !x.assignee_id : x.assignee_id === assignee))
+      .filter((x) => slaFilter === 'all' || slaState(x.sla_due) === slaFilter)
       .filter((x) =>
         !t ||
         x.subject.toLowerCase().includes(t) ||
@@ -240,6 +242,12 @@ export default function Tickets() {
               <option value="all">Priority: all</option>
               {PRIORITIES.map((p) => <option key={p} value={p} className="capitalize">⚑ {p}</option>)}
             </Select>
+            <Select value={slaFilter} onChange={(e) => setSlaFilter(e.target.value as typeof slaFilter)} className="text-xs flex-1">
+              <option value="all">SLA: all</option>
+              <option value="breached">SLA: breached</option>
+              <option value="risk">SLA: at risk</option>
+              <option value="none">SLA: none</option>
+            </Select>
             <Select value={assignee} onChange={(e) => setAssignee(e.target.value)} className="text-xs flex-1">
               <option value="all">Assignee: all</option>
               <option value="unassigned">Unassigned</option>
@@ -270,7 +278,7 @@ export default function Tickets() {
             <EmptyState icon="🎫" title="No tickets" hint="Create one, or turn any chat into a ticket from the thread." />
           )}
           {list.map((t) => {
-            const sla = slaBadge(t.sla_due);
+            const st = slaState(t.sla_due);
             return (
               <div key={t.id} className={cx('flex gap-2.5 px-4 py-3.5 border-b border-slate-100 hover:bg-slate-50 transition', active?.id === t.id && 'bg-brix-50 hover:bg-brix-50 border-l-4 border-l-brix-600')}>
                 <input type="checkbox" checked={selected.has(t.id)} onChange={() => toggleSelect(t.id)}
@@ -284,7 +292,7 @@ export default function Tickets() {
                   <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
                     <Badge tone={STATUS_TONE[t.status]}>{t.status}</Badge>
                     <Badge tone={PRIORITY_TONE[t.priority]}>⚑ {t.priority}</Badge>
-                    {sla.tone && <Badge tone={sla.tone}>{sla.label}</Badge>}
+                    {st !== 'none' && <Badge tone={SLA_TONE[st]}>⏱ {slaCountdown(t.sla_due)}</Badge>}
                     {t.conversation_id && <Badge tone="indigo">💬 chat</Badge>}
                   </div>
                 </button>
@@ -310,7 +318,7 @@ export default function Tickets() {
                   <div className="flex items-center gap-1.5 mt-2 flex-wrap">
                     <Badge tone={STATUS_TONE[active.status]}>{active.status}</Badge>
                     <Badge tone={PRIORITY_TONE[active.priority]}>⚑ {active.priority}</Badge>
-                    {(() => { const s = slaBadge(active.sla_due); return s.tone ? <Badge tone={s.tone}>{s.label}</Badge> : null; })()}
+                    {(() => { const st = slaState(active.sla_due); return st !== 'none' ? <Badge tone={SLA_TONE[st]}>⏱ {slaCountdown(active.sla_due)}</Badge> : null; })()}
                     {active.tags.map((tg) => <Badge key={tg} tone="slate">#{tg}</Badge>)}
                   </div>
                 </div>
@@ -439,7 +447,18 @@ export default function Tickets() {
           <div><Label>Requester name</Label><Input value={fName} onChange={(e) => setFName(e.target.value)} placeholder="Jane Cooper" /></div>
           <div><Label>Requester email</Label><Input value={fEmail} onChange={(e) => setFEmail(e.target.value)} placeholder="jane@company.com" /></div>
           <div className="sm:col-span-2"><Label>Message</Label><Textarea value={fMessage} onChange={(e) => setFMessage(e.target.value)} rows={4} placeholder="Describe the issue…" /></div>
-          <div><Label>Priority</Label><Select value={fPriority} onChange={(e) => setFPriority(e.target.value as TicketPriority)} className="w-full capitalize">{PRIORITIES.map((p) => <option key={p} value={p} className="capitalize">{p}</option>)}</Select></div>
+          <div><Label>Priority</Label><Select value={fPriority} onChange={(e) => setFPriority(e.target.value as TicketPriority)} className="w-full capitalize">{PRIORITIES.map((p) => <option key={p} value={p} className="capitalize">{p}</option>)}</Select>
+            {(() => {
+              const pol = policyFor(store.data.settings.slaPolicies ?? DEFAULT_SLA_POLICIES, fPriority as SlaPriority);
+              if (!pol) return null;
+              return (
+                <button type="button" className="text-xs text-brix-600 hover:underline mt-1"
+                  onClick={() => { const iso = slaDueFromPolicy(store.data.settings.slaPolicies ?? DEFAULT_SLA_POLICIES, fPriority as SlaPriority); if (iso) setFSla(toLocalInput(iso)); }}>
+                  📋 Apply policy: respond {pol.firstResponseHours}h · resolve {pol.resolveHours}h
+                </button>
+              );
+            })()}
+          </div>
           <div><Label>Assignee</Label><Select value={fAssignee} onChange={(e) => setFAssignee(e.target.value)} className="w-full"><option value="">Unassigned</option>{members.map((m) => <option key={m.id} value={m.id}>{m.display_name}</option>)}</Select></div>
           <div><Label>SLA due</Label><Input type="datetime-local" value={fSla} onChange={(e) => setFSla(e.target.value)} className="w-full" /></div>
           <div><Label>Tags (comma separated)</Label><Input value={fTags} onChange={(e) => setFTags(e.target.value)} placeholder="billing, urgent" /></div>
