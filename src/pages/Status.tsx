@@ -21,14 +21,14 @@ export default function Status() {
   useEffect(() => {
     (async () => {
       try {
-        const p2 = asP2(getApi(session?.workspace ?? 'demo', 'web'));
+        const p2 = asP2(getApi(session?.workspaceId ?? 'demo', 'web'));
         const { data } = await p2.statusEntries.list();
         setEntries([...data.items].sort((a, b) => b.created_at - a.created_at));
       } catch {
         setEntries([]);
       }
     })();
-  }, [session?.workspace]);
+  }, [session?.workspaceId]);
 
   const latest = entries[0];
   const overall = latest && latest.state !== 'operational' ? latest.state : 'operational';

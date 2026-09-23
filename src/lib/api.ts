@@ -41,8 +41,7 @@ export type ConvStatus = 'open' | 'closed' | 'spam' | 'missed';
 export type MsgSender = 'visitor' | 'agent' | 'ai' | 'system';
 export type MsgKind = 'text' | 'file' | 'voice' | 'rating';
 export type TicketStatus = 'new' | 'open' | 'resolved';
-export type TeamRole = 'admin' | 'agent' | 'developer' | 'viewer';
-export type DeliveryStatus = 'pending' | 'delivered' | 'failed' | 'dead' | 'test';
+export type TeamRole = 'owner' | 'admin' | 'agent' | 'developer' | 'viewer';
 
 export interface ApiMessage {
   id: string;
@@ -102,6 +101,44 @@ export interface ApiProperty {
   widget_config: WidgetConfig;
   secure_mode: boolean;
   enabled: boolean; // disabled properties are hidden from widgets/checklists (local flag)
+  created_at: string;
+}
+
+/** Client workspace record — one per workspace slug ('demo', 'acme', …). */
+export interface ApiWorkspace {
+  id: string; // slug, e.g. 'demo'
+  name: string; // display name, e.g. 'Acme Store'
+  slug: string;
+  plan: 'trial' | 'growth' | 'scale' | string;
+  seats: number;
+  status: 'active' | 'suspended' | 'trial';
+}
+
+/** Campaign A/B test variant. */
+export interface ApiCampaignVariant {
+  id: string;
+  name: string;
+  body: string;
+}
+
+/** Per-variant funnel counters. */
+export interface ApiVariantStats {
+  sends: number;
+  replies: number;
+  goals: number;
+}
+
+export interface ApiCampaign {
+  id: string;
+  name: string;
+  body: string; // control message (variant "A" content source)
+  audience: string;
+  status: 'draft' | 'scheduled' | 'sent';
+  scheduled_at: string | null;
+  goal: string;
+  variants: ApiCampaignVariant[];
+  winner_variant_id: string | null;
+  stats: Record<string, ApiVariantStats>; // variant id -> counters
   created_at: string;
 }
 
@@ -224,7 +261,7 @@ export interface AuditEntry {
 
 export interface ApiNotification {
   id: string;
-  type: 'chat.assigned' | 'ticket.sla' | 'ticket.created' | 'campaign.sent' | 'mention' | 'system';
+  type: 'chat.assigned' | 'ticket.sla' | 'ticket.created' | 'campaign.sent' | 'mention' | 'system' | 'attention';
   title: string;
   body: string;
   link: string | null;
@@ -470,7 +507,9 @@ export const API_SCOPES: Array<{ name: string; description: string }> = [
 const LS_KEY = 'brixchat_api_v1';
 
 interface ApiDB {
+  workspace: ApiWorkspace;
   properties: ApiProperty[];
+  campaigns: ApiCampaign[];
   conversations: ApiConversation[];
   contacts: ApiContact[];
   agents: ApiAgent[];
@@ -802,12 +841,14 @@ function seedDB(): ApiDB {
   ];
 
   return {
+    workspace: { id: 'demo', name: 'Demo', slug: 'demo', plan: 'scale', seats: 25, status: 'active' },
     properties: [
       {
         id: propId, name: 'Demo Store', domain: 'demo.brixchat.com', public_key: 'bx_demo_7f3a9c1e',
         widget_config: defaultWidgetConfig(), secure_mode: false, enabled: true, created_at: now,
       },
     ],
+    campaigns: [],
     conversations: convs,
     contacts: [
       { id: uid('con'), name: 'Ayesha Khan', email: 'ayesha@example.com', phone: '', country: 'UAE', tags: ['lead'], notes: 'Asked about annual billing.', source: 'chat', chats: 2, created_at: now, last_seen_at: now },
@@ -864,14 +905,165 @@ function seedDB(): ApiDB {
   };
 }
 
+/** Workspace record for a slug. */
+function defaultWorkspace(slug: string): ApiWorkspace {
+  return {
+    id: slug,
+    name: slug === 'demo' ? 'Demo' : slug.charAt(0).toUpperCase() + slug.slice(1),
+    slug,
+    plan: slug === 'demo' ? 'scale' : 'trial',
+    seats: slug === 'demo' ? 25 : 5,
+    status: slug === 'demo' ? 'active' : 'trial',
+  };
+}
+
+/** Seed a workspace db, with per-slug demo content for 'demo' (platform) and 'acme' (client). */
+function seedWorkspace(slug: string): ApiDB {
+  const db = seedDB();
+  db.workspace = defaultWorkspace(slug);
+  if (slug === 'demo') {
+    // Platform workspace: the primary member is the platform owner.
+    const owner = db.members[0];
+    if (owner) {
+      owner.role = 'owner';
+      owner.job_title = 'Platform Owner';
+    }
+    return db;
+  }
+  if (slug === 'acme') {
+    const now = isoNow();
+    db.workspace = { id: 'acme', name: 'Acme Store', slug: 'acme', plan: 'growth', seats: 10, status: 'active' };
+    const propId = 'bx_acme_9d2b4f8a';
+    db.properties = [{
+      id: propId, name: 'Acme Store', domain: 'acme-store.example', public_key: 'bx_pk_acme_9d2b4f8a',
+      widget_config: defaultWidgetConfig(), secure_mode: false, enabled: true, created_at: now,
+    }];
+    db.propertySettings[propId] = {
+      ...defaultPropertySettings(),
+      brand_name: 'Acme Store',
+      tagline: 'Quality gear, shipped fast.',
+      widget_color: '#0d9488',
+      accent_color: '#14b8a6',
+      theme: 'teal',
+    };
+    const ava: ApiMember = {
+      id: uid('mem'), display_name: 'Ava Client', initials: 'AC', color: '#0d9488', role: 'admin',
+      passcode: '7890', last_login: null, status: 'offline', job_title: 'Store Owner',
+      avatar_data_url: null, department_ids: [], created_at: now,
+    };
+    const ben: ApiMember = {
+      id: uid('mem'), display_name: 'Ben Agent', initials: 'BA', color: '#4f46e5', role: 'agent',
+      passcode: '2468', last_login: null, status: 'offline', job_title: 'Support Agent',
+      avatar_data_url: null, department_ids: [], created_at: now,
+    };
+    db.members = [ava, ben];
+    const mkMsgs = (list: Array<[string, string]>): ApiConversation['messages'] =>
+      list.map(([sender, text]) => ({
+        id: uid('msg'), conversation_id: '', sender: sender as 'visitor' | 'agent',
+        kind: 'text', text, metadata: {}, created_at: now,
+      }));
+    const convs: ApiConversation[] = [
+      {
+        id: uid('conv'), property_id: propId, visitor_name: 'Lena Meyer', visitor_email: 'lena@example.com',
+        page_url: '/products/trail-pack', referrer: 'https://google.com', status: 'open', department: 'Support',
+        agent_id: ben.id, agent_name: 'Ben Agent', tags: ['shipping'], priority: 'medium', notes: [],
+        rating: null, unread: 1, ai_handled: false, created_at: now, updated_at: now, closed_at: null,
+        messages: mkMsgs([
+          ['visitor', 'Hi! When will my trail pack ship?'],
+          ['agent', 'Hi Lena! It ships within 24 hours — tracking lands in your inbox once the courier scans it.'],
+          ['visitor', 'Great, thanks!'],
+        ]),
+      },
+      {
+        id: uid('conv'), property_id: propId, visitor_name: 'Ravi Patel', visitor_email: 'ravi@example.com',
+        page_url: '/checkout', referrer: '', status: 'open', department: 'Sales',
+        agent_id: null, agent_name: null, tags: ['pricing'], priority: 'high', notes: [],
+        rating: null, unread: 2, ai_handled: false, created_at: now, updated_at: now, closed_at: null,
+        messages: mkMsgs([
+          ['visitor', 'This is the third time I am asking — my discount code still does not work!!'],
+          ['visitor', 'Nobody is answering. This is ridiculous.'],
+        ]),
+      },
+      {
+        id: uid('conv'), property_id: propId, visitor_name: 'Sofia Rossi', visitor_email: 'sofia@example.com',
+        page_url: '/products/camp-stove', referrer: '', status: 'closed', department: 'Sales',
+        agent_id: ava.id, agent_name: 'Ava Client', tags: [], priority: 'low', notes: [],
+        rating: 5, unread: 0, ai_handled: false, created_at: now, updated_at: now, closed_at: now,
+        messages: mkMsgs([
+          ['visitor', 'Does the camp stove work with standard gas canisters?'],
+          ['agent', 'Yes — it fits all standard screw-top canisters. Happy camping!'],
+          ['visitor', 'Perfect, ordering now. Thank you!'],
+        ]),
+      },
+      {
+        id: uid('conv'), property_id: propId, visitor_name: 'Tom Becker', visitor_email: 'tom@example.com',
+        page_url: '/returns', referrer: '', status: 'open', department: 'Support',
+        agent_id: ben.id, agent_name: 'Ben Agent', tags: ['returns'], priority: 'medium', notes: [],
+        rating: null, unread: 0, ai_handled: false, created_at: now, updated_at: now, closed_at: null,
+        messages: mkMsgs([
+          ['visitor', 'Hi, I need to return a jacket — wrong size.'],
+          ['agent', 'No problem, Tom. I started a return for you — the label is on its way to your email.'],
+        ]),
+      },
+    ];
+    convs.forEach((c) => c.messages.forEach((m) => { m.conversation_id = c.id; }));
+    db.conversations = convs;
+    db.tickets = [
+      {
+        id: uid('t'), property_id: propId, subject: 'Order #4821 arrived damaged', requester_name: 'Lena Meyer',
+        requester_email: 'lena@example.com', message: 'The trail pack arrived with a torn strap. Please advise.',
+        status: 'new', priority: 'high', assignee_id: ben.id,
+        sla_due: new Date(Date.now() + 4 * 3600000).toISOString(), conversation_id: null,
+        tags: ['shipping'], category_id: null, created_at: now, updated_at: now,
+      },
+      {
+        id: uid('t'), property_id: propId, subject: 'Discount code not applying', requester_name: 'Ravi Patel',
+        requester_email: 'ravi@example.com', message: 'WELCOME10 is rejected at checkout.',
+        status: 'open', priority: 'medium', assignee_id: null, sla_due: null, conversation_id: null,
+        tags: ['billing'], category_id: null, created_at: now, updated_at: now,
+      },
+    ];
+    db.contacts = [
+      { id: uid('con'), name: 'Lena Meyer', email: 'lena@example.com', phone: '', country: 'Germany', tags: ['customer'], notes: 'Trail pack buyer.', source: 'chat', chats: 2, created_at: now, last_seen_at: now },
+      { id: uid('con'), name: 'Ravi Patel', email: 'ravi@example.com', phone: '', country: 'India', tags: ['lead'], notes: 'Discount issue at checkout.', source: 'chat', chats: 1, created_at: now, last_seen_at: now },
+      { id: uid('con'), name: 'Sofia Rossi', email: 'sofia@example.com', phone: '', country: 'Italy', tags: ['customer'], notes: 'Happy with support.', source: 'chat', chats: 3, created_at: now, last_seen_at: now },
+    ];
+    db.canned = [
+      { id: uid('can'), shortcut: 'ship', title: 'Shipping times', body: 'Orders ship within 24 hours and tracking appears in your account once the courier scans the parcel.', category_id: null },
+      { id: uid('can'), shortcut: 'return', title: 'Start a return', body: 'I can start a return for you right away — the prepaid label will land in your inbox within a few minutes.', category_id: null },
+      { id: uid('can'), shortcut: 'discount', title: 'Discount help', body: 'Sorry about that! Discount codes apply to full-price items only and cannot be combined. Want me to check your code manually?', category_id: null },
+      { id: uid('can'), shortcut: 'thanks', title: 'Warm close', body: 'You are very welcome! If anything else comes up, just ping us here.', category_id: null },
+    ];
+    db.helpDocs = [
+      { id: uid('kb'), slug: 'shipping-info', title: 'Shipping information', body: 'Orders placed before 2pm Gulf time ship the same day. Delivery takes 2–4 business days across the UAE and 5–8 days internationally. Tracking is emailed once the courier scans your parcel.', category: 'Orders', order: 1, updated_at: now },
+      { id: uid('kb'), slug: 'returns', title: 'Returns & exchanges', body: 'You have 30 days to return unused items in original packaging. Start a return from your account page or ask us in chat and we will email a prepaid label.', category: 'Orders', order: 2, updated_at: now },
+      { id: uid('kb'), slug: 'discount-codes', title: 'Using discount codes', body: 'Enter your code at checkout before paying. Codes apply to full-price items, one code per order, and cannot be combined with other promotions.', category: 'Billing', order: 3, updated_at: now },
+    ];
+    db.campaigns = [
+      {
+        id: uid('cmp'), name: 'Spring gear launch', body: 'New trail collection is live — early birds get 15% off this week.',
+        audience: 'all visitors', status: 'draft', scheduled_at: null, goal: 'purchase',
+        variants: [], winner_variant_id: null, stats: {}, created_at: now,
+      },
+    ];
+    db.ratings = [
+      { id: uid('rt'), property_id: propId, conversation_id: convs[2]?.id ?? null, agent_id: ava.id, kind: 'csat', score: 5, comment: 'Quick and friendly!', created_at: Date.now() - 86400000 },
+      { id: uid('rt'), property_id: propId, conversation_id: convs[0]?.id ?? null, agent_id: ben.id, kind: 'csat', score: 4, comment: 'Helpful.', created_at: Date.now() - 43200000 },
+    ];
+    return db;
+  }
+  return db;
+}
+
 /** Backfill phase-2 collections into workspaces seeded before phase 2. Idempotent. */
-function ensureDefaults(db: ApiDB): void {
-  const seeded = seedDB();
+function ensureDefaults(db: ApiDB, slug = 'demo'): void {
+  const seeded = seedWorkspace(slug);
   (Object.keys(seeded) as Array<keyof ApiDB>).forEach((k) => {
     if (db[k] === undefined || db[k] === null) {
       (db as unknown as Record<string, unknown>)[k] = seeded[k];
     }
   });
+  if (!db.workspace) db.workspace = defaultWorkspace(slug);
   if (db.members.length === 0) db.members = seedMembers();
   if (db.integrations.length === 0) db.integrations = seedIntegrations();
   db.conversations.forEach((c) => { if (!c.priority) c.priority = 'medium'; });
@@ -994,9 +1186,9 @@ export class BrixApi {
   private db(): ApiDB {
     const all = loadAll();
     if (!all[this.workspace]) {
-      all[this.workspace] = seedDB();
+      all[this.workspace] = seedWorkspace(this.workspace);
     } else {
-      ensureDefaults(all[this.workspace]);
+      ensureDefaults(all[this.workspace], this.workspace);
     }
     saveAll(all);
     return all[this.workspace];
@@ -1071,6 +1263,14 @@ export class BrixApi {
       this.logAudit(db, 'property.deleted', 'property', id, {});
       this.save(db);
       return { data: { deleted: true } };
+    },
+  };
+
+  // ---- workspace record ----------------------------------------------------
+  workspaceInfo = {
+    /** The client workspace record for this API instance's workspace. */
+    get: async (): Promise<Envelope<ApiWorkspace>> => {
+      return { data: this.db().workspace };
     },
   };
 
@@ -2306,7 +2506,7 @@ export class BrixApi {
       throw new ApiError('validation', 'Export is missing required collections.', 422);
     }
     const db = payload.db as ApiDB;
-    ensureDefaults(db);
+    ensureDefaults(db, this.workspace);
     this.logAudit(db, 'data.imported', 'workspace', this.workspace, {});
     const all = loadAll();
     all[this.workspace] = db;
@@ -2315,7 +2515,7 @@ export class BrixApi {
   };
   /** Reseed the workspace with demo data. */
   dataReset = async (): Promise<Envelope<{ reset: true }>> => {
-    const db = seedDB();
+    const db = seedWorkspace(this.workspace);
     db.audit = [{ id: uid('aud'), actor: this.actor, action: 'data.reset', entity: 'workspace', entity_id: this.workspace, meta: {}, created_at: isoNow() }];
     const all = loadAll();
     all[this.workspace] = db;

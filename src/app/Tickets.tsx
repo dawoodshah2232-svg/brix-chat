@@ -36,9 +36,9 @@ function toLocalInput(iso: string | null): string {
 }
 
 export default function Tickets() {
-  const { session } = useStore();
+  const { session, effectiveWorkspaceId } = useStore();
   const [params, setParams] = useSearchParams();
-  const api = useMemo(() => (session ? getApi(session.workspace, session.displayName) : null), [session]);
+  const api = useMemo(() => (session ? getApi(effectiveWorkspaceId(), session.displayName) : null), [session]);
 
   const [tickets, setTickets] = useState<ApiTicket[]>([]);
   const [members, setMembers] = useState<ApiMember[]>([]);
@@ -79,7 +79,7 @@ export default function Tickets() {
     setLoading(false);
   };
 
-  useEffect(() => { refresh(); }, [session?.workspace]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { refresh(); }, [session?.workspaceId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const memberName = (id: string | null) => members.find((m) => m.id === id)?.display_name ?? 'Unassigned';
 

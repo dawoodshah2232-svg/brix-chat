@@ -44,7 +44,7 @@ function snippet(c: Conversation): string {
 }
 
 export default function Inbox() {
-  const { session, data, updateConversation, resolveConversation } = useStore();
+  const { session, data, updateConversation, resolveConversation, effectiveWorkspaceId } = useStore();
   const [params, setParams] = useSearchParams();
   const [tab, setTab] = useState<Tab>('open');
   const [dept, setDept] = useState('all');
@@ -68,7 +68,7 @@ export default function Inbox() {
   const [savingView, setSavingView] = useState(false);
   const [activeView, setActiveView] = useState<string | null>(null);
 
-  const api = useMemo(() => (session ? getApi(session.workspace, session.displayName) : null), [session]);
+  const api = useMemo(() => (session ? getApi(effectiveWorkspaceId(), session.displayName) : null), [session]);
 
   const refreshViews = async () => {
     if (!api) return;
@@ -78,7 +78,7 @@ export default function Inbox() {
     } catch { /* ignore */ }
   };
 
-  useEffect(() => { refreshViews(); }, [session?.workspace]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { refreshViews(); }, [session?.workspaceId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const convId = params.get('c');
   const conv = convId ? data.conversations.find((c) => c.id === convId) : undefined;

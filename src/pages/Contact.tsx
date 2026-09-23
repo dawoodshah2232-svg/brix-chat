@@ -23,7 +23,7 @@ export default function Contact() {
     setBusy(true);
     setError('');
     try {
-      const p2 = asP2(getApi(session?.workspace ?? 'demo', name || 'web'));
+      const p2 = asP2(getApi(session?.workspaceId ?? 'demo', name || 'web'));
       await p2.contactMessages.create({ name: name.trim(), email: email.trim(), subject, message: message.trim() });
       setSent(true);
     } catch (err) {

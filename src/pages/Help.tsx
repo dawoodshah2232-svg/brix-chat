@@ -23,7 +23,7 @@ export default function Help() {
   useEffect(() => {
     (async () => {
       try {
-        const p2 = asP2(getApi(session?.workspace ?? 'demo', 'web'));
+        const p2 = asP2(getApi(session?.workspaceId ?? 'demo', 'web'));
         await seedHelpIfEmpty(p2);
         const { data } = await p2.helpDocs.list();
         setArticles([...data.items].sort((a, b) => a.order - b.order));
@@ -31,7 +31,7 @@ export default function Help() {
         setArticles([]);
       }
     })();
-  }, [session?.workspace]);
+  }, [session?.workspaceId]);
 
   const filtered = useMemo(() => {
     const t = q.trim().toLowerCase();

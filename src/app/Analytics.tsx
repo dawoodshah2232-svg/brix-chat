@@ -122,7 +122,7 @@ function SectionHead({ title, hint, onCsv }: { title: string; hint: string; onCs
 
 export default function Analytics() {
   const store = useStore();
-  const { session } = store;
+  const { session, effectiveWorkspaceId } = store;
   const [preset, setPreset] = useState<Preset>('30d');
   const [goals, setGoals] = useState<ApiGoal[]>([]);
   const [tickets, setTickets] = useState<ApiTicket[]>([]);
@@ -132,7 +132,7 @@ export default function Analytics() {
 
   useEffect(() => {
     if (!session) return;
-    const api = getApi(session.workspace, session.displayName);
+    const api = getApi(effectiveWorkspaceId(), session.displayName);
     api.goals.list().then(({ data }) => setGoals(data)).catch(() => {});
     api.tickets.list({ limit: 500 }).then(({ data }) => setTickets(data.items)).catch(() => {});
   }, [session]);

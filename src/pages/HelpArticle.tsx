@@ -19,7 +19,7 @@ export default function HelpArticle() {
   useEffect(() => {
     (async () => {
       try {
-        const p2 = asP2(getApi(session?.workspace ?? 'demo', 'web'));
+        const p2 = asP2(getApi(session?.workspaceId ?? 'demo', 'web'));
         await seedHelpIfEmpty(p2);
         const { data } = await p2.helpDocs.getBySlug(slug ?? '');
         setArticle(data);
@@ -33,7 +33,7 @@ export default function HelpArticle() {
         setMissing(true);
       }
     })();
-  }, [slug, session?.workspace]);
+  }, [slug, session?.workspaceId]);
 
   if (missing) {
     return (

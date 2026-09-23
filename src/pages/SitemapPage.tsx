@@ -59,7 +59,7 @@ export default function SitemapPage() {
   useEffect(() => {
     (async () => {
       try {
-        const p2 = asP2(getApi(session?.workspace ?? 'demo', 'web'));
+        const p2 = asP2(getApi(session?.workspaceId ?? 'demo', 'web'));
         await seedBlogIfEmpty(p2);
         await seedHelpIfEmpty(p2);
         const b = await p2.blog.list(true);
@@ -70,7 +70,7 @@ export default function SitemapPage() {
         /* static links still render */
       }
     })();
-  }, [session?.workspace]);
+  }, [session?.workspaceId]);
 
   return (
     <main>

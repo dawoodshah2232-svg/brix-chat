@@ -590,7 +590,7 @@ export default function Settings() {
       </Card>
 
       {/* Advanced: copilot, security, data */}
-      {store.session && <AdvancedSettings workspace={store.session.workspace} actor={store.session.displayName} />}
+      {store.session && <AdvancedSettings workspace={store.session.workspaceId} actor={store.session.displayName} />}
 
       {/* Danger zone */}
       <Card className="p-6 border-rose-200">

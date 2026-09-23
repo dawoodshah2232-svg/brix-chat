@@ -51,7 +51,7 @@ function isoAgo(iso: string | null): string {
 }
 
 function AgentMenu() {
-  const { session, logout, currentMember, updateProfile, setStatus, changePasscode } = useStore();
+  const { session, logout, currentMember, updateProfile, setStatus, changePasscode, effectiveWorkspaceId: effWs } = useStore();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [pwOpen, setPwOpen] = useState(false);
@@ -82,7 +82,7 @@ function AgentMenu() {
     setPwOk(false);
     if (!session) return;
     try {
-      await getApi(session.workspace, session.displayName).members.login(
+      await getApi(effWs(), session.displayName).members.login(
         member?.display_name ?? session.displayName,
         currentPw,
       );
@@ -279,7 +279,7 @@ function beep() {
 }
 
 function NotificationBell() {
-  const { session, data } = useStore();
+  const { session, data, effectiveWorkspaceId: effWs } = useStore();
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<ApiNotification[]>([]);
   const [unread, setUnread] = useState(0);
@@ -309,7 +309,7 @@ function NotificationBell() {
   const refresh = useCallback(async () => {
     if (!session) return;
     try {
-      const api = getApi(session.workspace, session.displayName);
+      const api = getApi(effWs(), session.displayName);
       const { data: page } = await api.notifications.list({ limit: 30 });
       setItems(page.items);
       const u = page.items.filter((n) => !n.read).length;
@@ -345,7 +345,7 @@ function NotificationBell() {
     setOpen(true);
     if (!session) return;
     try {
-      const api = getApi(session.workspace, session.displayName);
+      const api = getApi(effWs(), session.displayName);
       await api.notifications.markAllRead();
       setUnread(0);
       setItems((xs) => xs.map((n) => ({ ...n, read: true })));
@@ -421,7 +421,7 @@ export function Topbar({
   onPalette: () => void;
   onHelp: () => void;
 }) {
-  const { session, searchAll } = useStore();
+  const { searchAll, effectiveWorkspaceId } = useStore();
   const navigate = useNavigate();
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(false);
@@ -532,7 +532,7 @@ export function Topbar({
         </button>
         <NotificationBell />
         <span className="hidden xl:inline-flex text-xs font-semibold text-slate-500 bg-slate-100 rounded-lg px-2.5 py-1.5">
-          {session?.workspace ?? ''}
+          {effectiveWorkspaceId()}
         </span>
         <div className="w-px h-6 bg-slate-200 hidden sm:block" />
         <AgentMenu />

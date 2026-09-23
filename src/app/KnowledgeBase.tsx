@@ -20,7 +20,7 @@ function blankArticle(): Article {
 
 export default function KnowledgeBase() {
   const store = useStore();
-  const { session } = store;
+  const { session, effectiveWorkspaceId } = store;
   const { confirm, dialog } = useConfirm();
   const [editor, setEditor] = useState<{ article: Article; slugTouched: boolean } | null>(null);
   const [reader, setReader] = useState<Article | null>(null);
@@ -30,7 +30,7 @@ export default function KnowledgeBase() {
   const [unanswered, setUnanswered] = useState<ApiUnanswered[]>([]);
   const [busy, setBusy] = useState(false);
 
-  const api = useMemo(() => (session ? getApi(session.workspace, session.displayName) : null), [session]);
+  const api = useMemo(() => (session ? getApi(effectiveWorkspaceId(), session.displayName) : null), [session]);
 
   const refreshUnanswered = async () => {
     if (!api) return;
@@ -40,7 +40,7 @@ export default function KnowledgeBase() {
     } catch { /* ignore */ }
   };
 
-  useEffect(() => { refreshUnanswered(); }, [session?.workspace]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { refreshUnanswered(); }, [session?.workspaceId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const promote = async (id: string) => {
     if (!api || busy) return;

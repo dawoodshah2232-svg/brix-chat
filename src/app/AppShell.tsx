@@ -41,7 +41,7 @@ const SHORTCUTS: Array<[string, string]> = [
 ];
 
 function useBadges() {
-  const { session, data } = useStore();
+  const { session, data, effectiveWorkspaceId } = useStore();
   const [ticketBadge, setTicketBadge] = useState(0);
   const unread = data.conversations.reduce((n, c) => n + (c.status === 'open' ? c.unread : 0), 0);
   const onlineVisitors = data.visitors.filter((v) => v.online).length;
@@ -49,7 +49,7 @@ function useBadges() {
   const refresh = useCallback(async () => {
     if (!session) return;
     try {
-      const api = getApi(session.workspace, session.displayName);
+      const api = getApi(effectiveWorkspaceId(), session.displayName);
       const { data: page } = await api.tickets.list({ limit: 200 });
       setTicketBadge(page.items.filter((t) => t.status !== 'resolved').length);
     } catch {
@@ -71,7 +71,7 @@ function useBadges() {
 }
 
 export default function AppShell() {
-  const { session } = useStore();
+  const { session, effectiveWorkspaceId } = useStore();
   const location = useLocation();
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -235,7 +235,7 @@ export default function AppShell() {
         footer={
           !collapsed ? (
             <div className="mt-2 px-3.5 py-2 rounded-xl bg-white/5 text-[11px] text-slate-400 font-medium truncate">
-              {session?.workspace ?? ''}
+              {effectiveWorkspaceId()}
             </div>
           ) : undefined
         }

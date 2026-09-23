@@ -38,7 +38,7 @@ function audienceLabel(c: Campaign): string {
 
 export default function Campaigns() {
   const store = useStore();
-  const { session } = store;
+  const { session, effectiveWorkspaceId } = store;
   const { confirm, dialog } = useConfirm();
   const [editor, setEditor] = useState<Campaign | null>(null);
   const [sendLater, setSendLater] = useState(false);
@@ -46,7 +46,7 @@ export default function Campaigns() {
 
   useEffect(() => {
     if (!session) return;
-    getApi(session.workspace, session.displayName).goals.list()
+    getApi(effectiveWorkspaceId(), session.displayName).goals.list()
       .then(({ data }) => setGoals(data))
       .catch(() => {});
   }, [session]);

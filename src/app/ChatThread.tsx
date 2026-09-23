@@ -125,6 +125,7 @@ export default function ChatThread({ convId, input, setInput }: Props) {
   const {
     session, data, getConversation, addMessage, updateConversation,
     markRead, addNote, toggleTag, resolveConversation, trackCannedUsage,
+    effectiveWorkspaceId,
   } = useStore();
   const navigate = useNavigate();
 
@@ -195,7 +196,7 @@ export default function ChatThread({ convId, input, setInput }: Props) {
   // Load plays for the runner (local API)
   useEffect(() => {
     if (!session || !showPlays) return;
-    getApi(session.workspace, session.displayName).plays.list()
+    getApi(effectiveWorkspaceId(), session.displayName).plays.list()
       .then(({ data: p }) => setPlays(p))
       .catch(() => {});
   }, [session, showPlays]);
@@ -215,7 +216,7 @@ export default function ChatThread({ convId, input, setInput }: Props) {
   const varCtx = () => ({
     name: agentName,
     visitor: conv.visitor,
-    workspace: session?.workspace ?? '',
+    workspace: effectiveWorkspaceId(),
     department: conv.department,
   });
   const slashActive = input.startsWith('/');
@@ -264,7 +265,7 @@ export default function ChatThread({ convId, input, setInput }: Props) {
     if (!question) return;
     setBusy(true);
     try {
-      await getApi(session.workspace, session.displayName).unanswered.add(question, convId);
+      await getApi(effectiveWorkspaceId(), session.displayName).unanswered.add(question, convId);
       addMessage(convId, { from: 'system', kind: 'text', text: '❓ Logged as an unanswered question — it will appear in the knowledge-gap log.' });
       setInput('');
     } catch { /* ignore */ }
@@ -277,7 +278,7 @@ export default function ChatThread({ convId, input, setInput }: Props) {
     setBusy(true);
     try {
       const transcript = conv.messages.map((m) => `${m.from}: ${m.text}`).join('\n');
-      const { data: t } = await getApi(session.workspace, session.displayName).tickets.create({
+      const { data: t } = await getApi(effectiveWorkspaceId(), session.displayName).tickets.create({
         subject: `Chat with ${conv.visitor} (${conv.page})`,
         message: transcript || 'Created from chat.',
         requester_name: conv.visitor,

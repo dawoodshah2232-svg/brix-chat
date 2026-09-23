@@ -26,7 +26,7 @@ function fmtDate(ts: number): string {
 }
 
 export default function Feedback() {
-  const { session } = useStore();
+  const { session, effectiveWorkspaceId } = useStore();
   const [ratings, setRatings] = useState<ApiRating[]>([]);
   const [members, setMembers] = useState<ApiMember[]>([]);
   const [kind, setKind] = useState<KindFilter>('all');
@@ -37,7 +37,7 @@ export default function Feedback() {
 
   useEffect(() => {
     if (!session) return;
-    const api = getApi(session.workspace, session.displayName);
+    const api = getApi(effectiveWorkspaceId(), session.displayName);
     setLoading(true);
     Promise.all([api.ratings.list({ limit: 100 }), api.members.list()])
       .then(([{ data: page }, { data: ms }]) => {
@@ -65,7 +65,7 @@ export default function Feedback() {
     if (!session || !r.conversation_id || sending) return;
     setSending(r.id);
     try {
-      const api = getApi(session.workspace, session.displayName);
+      const api = getApi(effectiveWorkspaceId(), session.displayName);
       await api.conversations.addNote(r.conversation_id, {
         author: session.displayName,
         text: `Follow-up on ${r.kind.toUpperCase()} ${r.score}${r.comment ? `: "${r.comment}"` : ' (no comment left)'}`,

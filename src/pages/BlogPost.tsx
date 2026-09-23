@@ -98,7 +98,7 @@ export default function BlogPost() {
   useEffect(() => {
     (async () => {
       try {
-        const p2 = asP2(getApi(session?.workspace ?? 'demo', 'web'));
+        const p2 = asP2(getApi(session?.workspaceId ?? 'demo', 'web'));
         await seedBlogIfEmpty(p2);
         const { data } = await p2.blog.getBySlug(slug ?? '');
         setPost(data);
@@ -112,7 +112,7 @@ export default function BlogPost() {
         setMissing(true);
       }
     })();
-  }, [slug, session?.workspace]);
+  }, [slug, session?.workspaceId]);
 
   if (missing) {
     return (

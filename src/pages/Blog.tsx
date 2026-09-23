@@ -23,7 +23,7 @@ export default function Blog() {
   useEffect(() => {
     (async () => {
       try {
-        const p2 = asP2(getApi(session?.workspace ?? 'demo', 'web'));
+        const p2 = asP2(getApi(session?.workspaceId ?? 'demo', 'web'));
         await seedBlogIfEmpty(p2);
         const { data } = await p2.blog.list(true);
         setPosts([...data.items].sort((a, b) => b.created_at - a.created_at));
@@ -33,7 +33,7 @@ export default function Blog() {
         setLoading(false);
       }
     })();
-  }, [session?.workspace]);
+  }, [session?.workspaceId]);
 
   const visible = tag ? posts.filter((p) => p.tags.includes(tag)) : posts;
 

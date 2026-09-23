@@ -2,7 +2,7 @@
 // Demo mode: everything is client-side. A backend would replace the
 // persistence layer without changing the component API.
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import type {
   Article,
@@ -27,27 +27,42 @@ const LS_KEY = 'brixchat_v1';
 const SESSION_LS = 'brixchat_session_v1';
 const ALIVE_SS = 'brixchat_session_alive';
 
+// Session shape (client dashboard + platform admin):
+// { memberId, workspaceId, displayName, role, isPlatformAdmin, viewingWorkspaceId?,
+//   rememberMe, loggedInAt }.
+// effectiveWorkspaceId() = viewingWorkspaceId ?? workspaceId — every /app page
+// and API call must go through it so a client only ever sees their own data.
 export interface Session {
-  workspace: string;
+  workspaceId: string;
   memberId: string;
   displayName: string;
   role: MemberRole;
+  /** Platform admin (owner role). Only owners reach /admin. */
+  isPlatformAdmin: boolean;
+  /** Set by a platform admin to inspect a client workspace from /app. */
+  viewingWorkspaceId?: string;
   rememberMe: boolean;
   loggedInAt: number;
+}
+
+export function effectiveWorkspaceId(s: Session | null): string {
+  return s?.viewingWorkspaceId ?? s?.workspaceId ?? 'demo';
 }
 
 interface Persisted {
   workspaces: Record<string, Workspace>;
   session: Session | null;
-  data: ChatData;
+  /** Client-scoped demo data, keyed by workspace id. */
+  dataByWorkspace: Record<string, ChatData>;
 }
 
 function loadSession(): Session | null {
   try {
     const raw = localStorage.getItem(SESSION_LS);
     if (!raw) return null;
-    const s = JSON.parse(raw) as Session;
-    if (!s || !s.workspace) return null;
+    const s = JSON.parse(raw) as Session & { workspace?: string };
+    const workspaceId = s.workspaceId ?? s.workspace;
+    if (!workspaceId) return null;
     const alive = sessionStorage.getItem(ALIVE_SS);
     if (!alive && s.rememberMe === false) {
       // New browser session and the user did not ask to be remembered.
@@ -55,7 +70,16 @@ function loadSession(): Session | null {
       return null;
     }
     sessionStorage.setItem(ALIVE_SS, '1');
-    return s;
+    return {
+      workspaceId,
+      memberId: s.memberId ?? '',
+      displayName: s.displayName,
+      role: s.role,
+      isPlatformAdmin: s.isPlatformAdmin ?? (s.role === 'owner'),
+      viewingWorkspaceId: s.viewingWorkspaceId,
+      rememberMe: s.rememberMe ?? true,
+      loggedInAt: s.loggedInAt ?? Date.now(),
+    };
   } catch {
     return null;
   }
@@ -63,36 +87,41 @@ function loadSession(): Session | null {
 
 function load(): Persisted {
   let workspaces: Record<string, Workspace> | null = null;
-  let data: ChatData | null = null;
-  let legacySession: { workspace: string; displayName: string; role: MemberRole } | null = null;
+  let dataByWorkspace: Record<string, ChatData> | null = null;
   try {
     const raw = localStorage.getItem(LS_KEY);
     if (raw) {
-      const p = JSON.parse(raw) as { workspaces?: Record<string, Workspace>; data?: ChatData; session?: unknown };
-      if (p.workspaces && p.data) {
-        workspaces = p.workspaces;
-        data = p.data;
-      }
-      // Migrate pre-phase-2 sessions (old shape: { workspace, displayName, role }).
-      if (p.session && typeof p.session === 'object' && 'workspace' in p.session && !('memberId' in p.session)) {
-        const s = p.session as { workspace: string; displayName: string; role: MemberRole };
-        legacySession = { workspace: s.workspace, displayName: s.displayName, role: s.role };
+      const p = JSON.parse(raw) as {
+        workspaces?: Record<string, Workspace>;
+        data?: ChatData;
+        dataByWorkspace?: Record<string, ChatData>;
+      };
+      if (p.workspaces) workspaces = p.workspaces;
+      if (p.dataByWorkspace) {
+        dataByWorkspace = p.dataByWorkspace;
+      } else if (p.data) {
+        // Migrate single-workspace demo data onto the 'demo' workspace.
+        dataByWorkspace = { demo: p.data };
       }
     }
   } catch {
     /* corrupted — reseed */
   }
-  const session = loadSession() ?? (legacySession
-    ? { workspace: legacySession.workspace, memberId: '', displayName: legacySession.displayName, role: legacySession.role, rememberMe: true, loggedInAt: Date.now() }
-    : null);
-  return { workspaces: workspaces ?? seedWorkspaces(), session, data: data ?? seedData() };
+  const session = loadSession();
+  if (!dataByWorkspace) dataByWorkspace = { demo: seedData() };
+  return { workspaces: workspaces ?? seedWorkspaces(), session, dataByWorkspace };
 }
 
-export type AuthResult = { ok: boolean; error?: string; role?: MemberRole };
+export type AuthResult = { ok: boolean; error?: string; role?: MemberRole; isPlatformAdmin?: boolean };
 
 interface Store {
   session: Session | null;
+  /** Demo data scoped to the effective workspace (never another workspace's data). */
   data: ChatData;
+  /** viewingWorkspaceId ?? workspaceId */
+  effectiveWorkspaceId: () => string;
+  /** Platform admin: inspect a client workspace from /app. null = back to own. */
+  setViewingWorkspace: (id: string | null) => void;
   knownWorkspaces: string[];
   currentMember: ApiMember | null;
 
@@ -147,7 +176,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     try {
-      localStorage.setItem(LS_KEY, JSON.stringify({ workspaces: persisted.workspaces, data: persisted.data }));
+      localStorage.setItem(LS_KEY, JSON.stringify({ workspaces: persisted.workspaces, dataByWorkspace: persisted.dataByWorkspace }));
     } catch {
       /* storage full — ignore in demo */
     }
@@ -164,27 +193,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   }, [persisted]);
 
-  const patchData = useCallback((fn: (d: ChatData) => ChatData) => {
-    setPersisted((p) => ({ ...p, data: fn(p.data) }));
-  }, []);
-
   // Keep the signed-in member record fresh for the agent menu.
   useEffect(() => {
     const s = persisted.session;
     if (!s) { setCurrentMember(null); return; }
+    const effWs = effectiveWorkspaceId(s);
     let cancelled = false;
     (async () => {
       try {
-        const api = getApi(s.workspace, s.displayName);
-        if (s.memberId) {
-          const { data: m } = await api.members.get(s.memberId);
-          if (!cancelled) setCurrentMember(m);
-        } else {
-          const { data: all } = await api.members.list();
-          const m = all.find((x) => x.display_name.toLowerCase() === s.displayName.toLowerCase()) ?? null;
-          if (!cancelled) {
+        const api = getApi(effWs, s.displayName);
+        const m = s.memberId ? (await api.members.get(s.memberId).catch(() => ({ data: null as ApiMember | null }))).data : null;
+        if (!cancelled) {
+          if (m) {
             setCurrentMember(m);
-            if (m) setPersisted((p) => (p.session ? { ...p, session: { ...p.session!, memberId: m.id, role: m.role } } : p));
+          } else {
+            const { data: all } = await api.members.list();
+            const found = all.find((x) => x.display_name.toLowerCase() === s.displayName.toLowerCase()) ?? null;
+            setCurrentMember(found);
+            if (found) setPersisted((p) => (p.session ? { ...p, session: { ...p.session!, memberId: found.id, role: found.role, isPlatformAdmin: found.role === 'owner' } } : p));
           }
         }
       } catch {
@@ -192,10 +218,28 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
     })();
     return () => { cancelled = true; };
-  }, [persisted.session?.workspace, persisted.session?.memberId]);
+  }, [persisted.session?.workspaceId, persisted.session?.viewingWorkspaceId, persisted.session?.memberId]);
 
   const store = useMemo<Store>(() => {
     const norm = (s: string) => s.trim().toLowerCase();
+
+    // Everything in this memo operates on the effective workspace's data slice only.
+    const effWs = effectiveWorkspaceId(persisted.session);
+    const data: ChatData = persisted.dataByWorkspace[effWs] ?? seedData();
+
+    const patchData = (fn: (d: ChatData) => ChatData) => {
+      setPersisted((p) => {
+        const ws = effectiveWorkspaceId(p.session);
+        const cur = p.dataByWorkspace[ws] ?? seedData();
+        return { ...p, dataByWorkspace: { ...p.dataByWorkspace, [ws]: fn(cur) } };
+      });
+    };
+
+    const effectiveWorkspaceIdFn = () => effectiveWorkspaceId(persisted.session);
+
+    const setViewingWorkspace: Store['setViewingWorkspace'] = (id) => {
+      setPersisted((p) => (p.session ? { ...p, session: { ...p.session, viewingWorkspaceId: id ?? undefined } } : p));
+    };
 
     const authError = (e: unknown): string =>
       e instanceof ApiError ? e.message : 'Something went wrong.';
@@ -221,8 +265,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
         await api.members.touchLogin(member.id);
         const session: Session = {
-          workspace: w, memberId: member.id, displayName: member.display_name,
-          role: member.role, rememberMe: opts?.rememberMe ?? true, loggedInAt: Date.now(),
+          workspaceId: w, memberId: member.id, displayName: member.display_name,
+          role: member.role, isPlatformAdmin: member.role === 'owner',
+          rememberMe: opts?.rememberMe ?? true, loggedInAt: Date.now(),
         };
         setPersisted((p) => ({
           ...p,
@@ -230,7 +275,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           session,
         }));
         setCurrentMember(member);
-        return { ok: true, role: member.role };
+        return { ok: true, role: member.role, isPlatformAdmin: member.role === 'owner' };
       } catch (e) {
         return { ok: false, error: authError(e) };
       }
@@ -245,8 +290,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const { data: member } = await api.members.login(opts?.displayName ?? '', passcode);
         await api.members.touchLogin(member.id);
         const session: Session = {
-          workspace: w, memberId: member.id, displayName: member.display_name,
-          role: member.role, rememberMe: opts?.rememberMe ?? false, loggedInAt: Date.now(),
+          workspaceId: w, memberId: member.id, displayName: member.display_name,
+          role: member.role, isPlatformAdmin: member.role === 'owner',
+          rememberMe: opts?.rememberMe ?? false, loggedInAt: Date.now(),
         };
         setPersisted((p) => ({
           ...p,
@@ -254,7 +300,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           session,
         }));
         setCurrentMember(member);
-        return { ok: true, role: member.role };
+        return { ok: true, role: member.role, isPlatformAdmin: member.role === 'owner' };
       } catch (e) {
         return { ok: false, error: authError(e) };
       }
@@ -269,7 +315,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const s = persisted.session;
       if (!s?.memberId) return { ok: false, error: 'Not signed in.' };
       try {
-        const api = getApi(s.workspace, s.displayName);
+        const api = getApi(effectiveWorkspaceId(s), s.displayName);
         const { data: m } = await api.members.update(s.memberId, patch);
         setCurrentMember(m);
         setPersisted((p) => (p.session ? { ...p, session: { ...p.session!, displayName: m.display_name } } : p));
@@ -282,7 +328,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const setStatus: Store['setStatus'] = (status) => {
       const s = persisted.session;
       if (!s?.memberId) return;
-      const api = getApi(s.workspace, s.displayName);
+      const api = getApi(effectiveWorkspaceId(s), s.displayName);
       api.members.setStatus(s.memberId, status).then(({ data: m }) => setCurrentMember(m)).catch(() => {});
     };
 
@@ -290,7 +336,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const s = persisted.session;
       if (!s?.memberId) return { ok: false, error: 'Not signed in.' };
       try {
-        const api = getApi(s.workspace, s.displayName);
+        const api = getApi(effectiveWorkspaceId(s), s.displayName);
         await api.members.setPasscode(s.memberId, newPasscode);
         return { ok: true };
       } catch (e) {
@@ -300,11 +346,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
     const resetDemo = () => {
       const keep = load();
-      setPersisted({ workspaces: keep.workspaces, session: keep.session, data: seedData() });
+      const ws = effectiveWorkspaceId(keep.session);
+      setPersisted({ workspaces: keep.workspaces, session: keep.session, dataByWorkspace: { ...keep.dataByWorkspace, [ws]: seedData() } });
     };
 
-    const getConversation = (id: string) => persisted.data.conversations.find((c) => c.id === id);
-    const getVisitor = (id: string) => persisted.data.visitors.find((v) => v.id === id);
+    const getConversation = (id: string) => data.conversations.find((c) => c.id === id);
+    const getVisitor = (id: string) => data.visitors.find((v) => v.id === id);
 
     const addMessage: Store['addMessage'] = (convId, msg) => {
       patchData((d) => ({
@@ -371,7 +418,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     };
 
     const newProactiveChat: Store['newProactiveChat'] = (visitorId, opener) => {
-      const v = persisted.data.visitors.find((x) => x.id === visitorId);
+      const v = data.visitors.find((x) => x.id === visitorId);
       const id = uid('c');
       const now = Date.now();
       const c: Conversation = {
@@ -382,7 +429,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         page: v?.page ?? '/',
         device: `${v?.device ?? 'Desktop'} · ${v?.browser ?? 'Chrome'}`,
         status: 'open',
-        department: persisted.data.settings.departments[1] ?? 'Support',
+        department: data.settings.departments[1] ?? 'Support',
         agent: persisted.session?.displayName ?? 'Demo Agent',
         tags: ['proactive'],
         messages: [
@@ -431,13 +478,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const searchAll: Store['searchAll'] = (q) => {
       const t = q.trim().toLowerCase();
       if (!t) return { conversations: [], contacts: [] };
-      const conversations = persisted.data.conversations.filter(
+      const conversations = data.conversations.filter(
         (c) =>
           c.visitor.toLowerCase().includes(t) ||
           c.messages.some((m) => m.text.toLowerCase().includes(t)) ||
           c.tags.some((tag) => tag.includes(t)),
       );
-      const contacts = persisted.data.contacts.filter(
+      const contacts = data.contacts.filter(
         (c) => c.name.toLowerCase().includes(t) || c.email.toLowerCase().includes(t) || c.tags.some((tag) => tag.includes(t)),
       );
       return { conversations, contacts };
@@ -445,7 +492,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
     return {
       session: persisted.session,
-      data: persisted.data,
+      data,
+      effectiveWorkspaceId: effectiveWorkspaceIdFn,
+      setViewingWorkspace,
       knownWorkspaces: Object.keys(persisted.workspaces).sort(),
       currentMember,
       signup, login, logout, resetDemo,
@@ -456,7 +505,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       saveCanned, deleteCanned, trackCannedUsage, saveTrigger, deleteTrigger, toggleTrigger,
       saveCampaign, deleteCampaign, updateSettings, searchAll,
     };
-  }, [persisted, patchData]);
+  }, [persisted]);
 
   return <Ctx.Provider value={store}>{children}</Ctx.Provider>;
 }
