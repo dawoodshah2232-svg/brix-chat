@@ -20,7 +20,7 @@ import type {
 } from './types';
 import { getApi, ApiError } from './api';
 import type { ApiMember } from './api';
-import { seedData, seedWorkspaces } from './seed';
+import { seedData, seedDataForWorkspace, seedWorkspaces } from './seed';
 import { uid } from './utils';
 
 const LS_KEY = 'brixchat_v1';
@@ -225,12 +225,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
     // Everything in this memo operates on the effective workspace's data slice only.
     const effWs = effectiveWorkspaceId(persisted.session);
-    const data: ChatData = persisted.dataByWorkspace[effWs] ?? seedData();
+    const data: ChatData = persisted.dataByWorkspace[effWs] ?? seedDataForWorkspace(effWs);
 
     const patchData = (fn: (d: ChatData) => ChatData) => {
       setPersisted((p) => {
         const ws = effectiveWorkspaceId(p.session);
-        const cur = p.dataByWorkspace[ws] ?? seedData();
+        const cur = p.dataByWorkspace[ws] ?? seedDataForWorkspace(ws);
         return { ...p, dataByWorkspace: { ...p.dataByWorkspace, [ws]: fn(cur) } };
       });
     };
@@ -347,7 +347,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const resetDemo = () => {
       const keep = load();
       const ws = effectiveWorkspaceId(keep.session);
-      setPersisted({ workspaces: keep.workspaces, session: keep.session, dataByWorkspace: { ...keep.dataByWorkspace, [ws]: seedData() } });
+      setPersisted({ workspaces: keep.workspaces, session: keep.session, dataByWorkspace: { ...keep.dataByWorkspace, [ws]: seedDataForWorkspace(ws) } });
     };
 
     const getConversation = (id: string) => data.conversations.find((c) => c.id === id);

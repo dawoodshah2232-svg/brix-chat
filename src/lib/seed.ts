@@ -252,7 +252,8 @@ function seedSettings(): Settings {
 
 export function seedWorkspaces(): Record<string, Workspace> {
   return {
-    demo: { name: 'demo', displayName: 'Demo Agent', passcode: '3456', role: 'admin', createdAt: Date.now() - 30 * DAY },
+    demo: { name: 'demo', displayName: 'Demo Agent', passcode: '3456', role: 'owner', createdAt: Date.now() - 30 * DAY },
+    acme: { name: 'acme', displayName: 'Ava Client', passcode: '7890', role: 'admin', createdAt: Date.now() - 12 * DAY },
   };
 }
 
@@ -267,4 +268,162 @@ export function seedData(): ChatData {
     campaigns: seedCampaigns(),
     settings: seedSettings(),
   };
+}
+
+// --- per-workspace ChatData ---------------------------------------------------
+// The API layer seeds each workspace with its own data (see api.ts
+// seedWorkspace). The store-side ChatData (Inbox/Triggers/etc. still read it)
+// needs the same treatment so e.g. the Acme Store dashboard never shows the
+// generic Brix Chat demo content.
+
+function seedAcmeConversations(): Conversation[] {
+  return [
+    conv({
+      visitor: 'Huda Al Farsi', email: 'huda@example.com', country: 'UAE', city: 'Dubai',
+      page: '/products/trail-backpack-45l', device: 'Mobile · Safari', department: 'Sales', agent: 'Ben Agent',
+      tags: ['order', 'shipping'], unread: 1, aiHandled: false, live: true,
+      messages: [
+        m('visitor', 'Hi! Is the Trail Backpack 45L waterproof?', 22),
+        m('agent', 'Hi Huda! It’s water-resistant with a rain cover included — the cover packs into its own pocket. Happy to add one to your cart.', 19, { name: 'Ben Agent' }),
+        m('visitor', 'And delivery to Dubai — how long?', 6),
+      ],
+    }),
+    conv({
+      visitor: 'Tariq Aziz', email: 'tariq@example.com', country: 'UAE', city: 'Sharjah',
+      page: '/checkout', device: 'Desktop · Chrome', department: 'Support', agent: 'Ava Client',
+      tags: ['refund'], unread: 0, aiHandled: false, live: true,
+      messages: [
+        m('visitor', 'Hello, order #A-2214 arrived with the wrong size. Can I exchange it?', 48),
+        m('agent', 'Of course, Tariq — sorry about that! I’ve booked a free courier pickup for tomorrow and the correct size ships the same day. Anything else?', 41, { name: 'Ava Client' }),
+        m('visitor', 'That’s perfect, thank you!', 38),
+      ],
+      rating: 5,
+    }),
+    conv({
+      visitor: 'Guest #9031', country: 'Saudi Arabia', city: 'Riyadh',
+      page: '/products/summit-tent-2p', device: 'Mobile · Chrome', department: 'Sales',
+      tags: ['pricing'], status: 'open', unread: 0, aiHandled: true,
+      messages: [
+        m('visitor', 'Does the Summit Tent fit 2 adults + a kid?', 75),
+        m('ai', 'Yes — it’s a true 2-person tent with a vestibule that comfortably fits a child’s mat. Setup takes about 8 minutes with the color-coded poles.', 74, { name: 'Brix AI' }),
+        m('visitor', 'Nice. Is there a discount code right now?', 70),
+      ],
+    }),
+    conv({
+      visitor: 'Maria Santos', email: 'maria@example.com', country: 'UAE', city: 'Abu Dhabi',
+      page: '/track-order', device: 'Desktop · Edge', department: 'Support', agent: 'Ben Agent',
+      tags: ['order'], status: 'closed', unread: 0, aiHandled: false, rating: 4,
+      messages: [
+        m('visitor', 'My parcel has been “out for delivery” for two days. Order #A-2198.', 3 * 24 * 60 + 90),
+        m('agent', 'Let me check with the courier right now, Maria.', 3 * 24 * 60 + 85, { name: 'Ben Agent' }),
+        m('agent', 'Found it — the courier attempted delivery while you were out. I’ve rebooked it for tomorrow morning, 9–12. Sorry for the wait!', 3 * 24 * 60 + 60, { name: 'Ben Agent' }),
+        m('visitor', 'Thanks for sorting it out quickly.', 3 * 24 * 60 + 55),
+      ],
+    }),
+  ];
+}
+
+function seedAcmeVisitors(): Visitor[] {
+  return [
+    { id: uid('v'), name: 'Guest #9031', page: '/products/summit-tent-2p', pages: 5, country: 'Saudi Arabia', city: 'Riyadh', device: 'Mobile', browser: 'Chrome', timeOnSite: 210, typing: 'Does the Summit Tent…', online: true, cartValue: 349 },
+    { id: uid('v'), name: 'Guest #9032', page: '/products/trail-backpack-45l', pages: 3, country: 'UAE', city: 'Dubai', device: 'Mobile', browser: 'Safari', timeOnSite: 96, online: true, cartValue: 129 },
+    { id: uid('v'), name: 'Omar K.', page: '/checkout', pages: 7, country: 'Kuwait', city: 'Kuwait City', device: 'Desktop', browser: 'Chrome', timeOnSite: 340, online: true, cartValue: 512 },
+    { id: uid('v'), name: 'Guest #9034', page: '/', pages: 1, country: 'UAE', city: 'Ajman', device: 'Desktop', browser: 'Firefox', timeOnSite: 28, online: true },
+  ];
+}
+
+function seedAcmeContacts(): Contact[] {
+  const rows: Array<[string, string, string, string, string[], number, number, string]> = [
+    ['Huda Al Farsi', 'huda@example.com', '+971 50 222 3344', 'UAE', ['lead'], 1, 0, 'Chat'],
+    ['Tariq Aziz', 'tariq@example.com', '', 'UAE', ['customer'], 2, 4, 'Chat'],
+    ['Maria Santos', 'maria@example.com', '+971 55 777 8899', 'UAE', ['customer', 'vip'], 5, 30, 'Chat'],
+    ['Omar Khalidi', 'omar.k@example.com', '', 'Kuwait', ['lead', 'cart-512'], 0, 0, 'Widget'],
+  ];
+  return rows.map(([name, email, phone, country, tags, chats, daysAgo, source]) => ({
+    id: uid('ct'), name, email, phone: phone || undefined, country, tags, chats,
+    notes: '', lastSeen: Date.now() - daysAgo * DAY - 2 * HOUR, source,
+  }));
+}
+
+function seedAcmeArticles(): Article[] {
+  return [
+    {
+      id: uid('a'), title: 'Shipping & delivery times', slug: 'shipping-delivery',
+      category: 'Orders', status: 'published', updatedAt: Date.now() - 4 * DAY, views: 612,
+      body: 'Orders placed before 2pm GST ship the same day from our Dubai warehouse. Delivery takes 1–2 business days within the UAE and 3–5 days across the GCC. Tracking is emailed as soon as the courier collects the parcel.',
+    },
+    {
+      id: uid('a'), title: 'Returns & exchanges', slug: 'returns-exchanges',
+      category: 'Orders', status: 'published', updatedAt: Date.now() - 9 * DAY, views: 488,
+      body: 'Unused gear can be returned within 30 days for a full refund. Exchanges are free — we book the courier pickup and ship the replacement the same day. Start a return from your account page or ask us here in chat.',
+    },
+  ];
+}
+
+function seedAcmeCanned(): Canned[] {
+  return [
+    { id: uid('cc'), shortcut: '/greet', title: 'Greeting', body: 'Hi there! Welcome to Acme Store — looking for anything in particular today?' },
+    { id: uid('cc'), shortcut: '/shipping', title: 'Shipping times', body: 'Orders ship same-day before 2pm GST: 1–2 days in the UAE, 3–5 days across the GCC. I’ll share tracking as soon as it’s on its way!' },
+    { id: uid('cc'), shortcut: '/returns', title: 'Returns', body: 'No problem — returns are free within 30 days. I’ve booked your pickup; the refund lands 3–5 business days after we receive it.' },
+    { id: uid('cc'), shortcut: '/discount', title: 'First-order discount', body: 'Here’s 10% off your first order: ACME10 — applied automatically at checkout.' },
+  ];
+}
+
+function seedAcmeTriggers(): TriggerRule[] {
+  return [
+    { id: uid('t'), name: 'High-value cart rescue', kind: 'proactive', conditions: ['Cart value > $200', 'Idle > 60s'], action: 'Open chat with: “Need a hand finishing checkout? I can apply ACME10 for you.”', enabled: true },
+    { id: uid('t'), name: 'Route order keywords', kind: 'routing', conditions: ['Message contains: order, delivery, tracking, refund, exchange'], action: 'Route to department: Support', enabled: true },
+  ];
+}
+
+function seedAcmeCampaigns(): Campaign[] {
+  return [
+    { id: uid('cp'), name: 'Camping season kickoff', audience: 'Visitors who viewed tents or backpacks in last 30 days', message: 'Camping season is here 🏕️ — 15% off tents & backpacks this weekend with code CAMP15.', schedule: '2026-09-26 10:00 GST', status: 'scheduled' },
+  ];
+}
+
+function seedAcmeSettings(): Settings {
+  return {
+    widget: {
+      color: '#0d9488', position: 'bottom-right', bubble: 'round', radius: 16,
+      greeting: 'Hi! Looking for gear? Ask us anything.',
+      offlineText: 'We’re away — leave a message and we’ll reply within a few hours.',
+      agentName: 'Acme Store team', showBranding: true,
+    },
+    departments: ['Sales', 'Support'],
+    team: [
+      { name: 'Ava Client', role: 'Admin', online: false, color: '#0d9488' },
+      { name: 'Ben Agent', role: 'Agent', online: false, color: '#4f46e5' },
+    ],
+    hours: [
+      { day: 'Monday', from: '09:00', to: '18:00', enabled: true },
+      { day: 'Tuesday', from: '09:00', to: '18:00', enabled: true },
+      { day: 'Wednesday', from: '09:00', to: '18:00', enabled: true },
+      { day: 'Thursday', from: '09:00', to: '18:00', enabled: true },
+      { day: 'Friday', from: '09:00', to: '18:00', enabled: true },
+      { day: 'Saturday', from: '10:00', to: '14:00', enabled: true },
+      { day: 'Sunday', from: '10:00', to: '14:00', enabled: false },
+    ],
+    whiteLabel: false,
+    aiEnabled: true,
+    notifySound: true,
+  };
+}
+
+/** ChatData for a workspace slug: Acme Store gets its own store-flavored demo
+ *  content; every other workspace gets the generic seed. */
+export function seedDataForWorkspace(slug: string): ChatData {
+  if (slug === 'acme') {
+    return {
+      conversations: seedAcmeConversations(),
+      visitors: seedAcmeVisitors(),
+      contacts: seedAcmeContacts(),
+      articles: seedAcmeArticles(),
+      canned: seedAcmeCanned(),
+      triggers: seedAcmeTriggers(),
+      campaigns: seedAcmeCampaigns(),
+      settings: seedAcmeSettings(),
+    };
+  }
+  return seedData();
 }
