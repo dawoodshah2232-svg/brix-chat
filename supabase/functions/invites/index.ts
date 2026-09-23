@@ -73,8 +73,14 @@ async function createInvite(req: Request): Promise<Response> {
     display_name?: unknown;
     role?: unknown;
     email?: unknown;
+    workspace_id?: unknown;
   } | null;
   if (!body) throw new HttpError(400, "invalid_json", "Request body must be JSON");
+
+  const workspaceId = typeof body.workspace_id === "string" ? body.workspace_id : "";
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(workspaceId)) {
+    throw new HttpError(400, "invalid_workspace_id", "workspace_id (UUID) is required");
+  }
 
   const displayName = typeof body.display_name === "string" ? body.display_name.trim() : "";
   if (displayName.length < 2 || displayName.length > 60) {
@@ -97,6 +103,7 @@ async function createInvite(req: Request): Promise<Response> {
   const { data, error } = await client
     .from("member_invites")
     .insert({
+      workspace_id: workspaceId,
       display_name: displayName,
       role,
       email,
@@ -192,34 +199,24 @@ async function acceptInvite(req: Request): Promise<Response> {
     throw new HttpError(400, "invalid_passcode", "passcode must be 8–128 characters");
   }
 
-  const passcodeSalt = randomHex(16);
-  const passcodeHash = await hashSecret(passcodeSalt, passcode);
-
-  const { data: member, error: memErr } = await client
-    .from("members")
-    .insert({
-      display_name: displayName,
-      role: invite.role,
-      email: invite.email,
-      passcode_hash: passcodeHash,
-      passcode_salt: passcodeSalt,
-      status: "offline",
-    })
-    .select("id, display_name, role, email, status")
-    .single();
-  if (memErr || !member) throw new HttpError(500, "member_create_failed", memErr?.message ?? "insert failed");
-
-  // Mark used only AFTER the member exists — single-use, and a failed accept keeps the invite valid.
-  const { error: useErr } = await client
-    .from("member_invites")
-    .update({ used_at: new Date().toISOString() })
-    .eq("id", inviteId)
-    .is("used_at", null);
-  if (useErr) {
-    console.error(JSON.stringify({ fn: "invites", action: "accept", invite: inviteId, stage: "mark_used", error: useErr.message }));
+  // Atomic accept: the member_accept_invite RPC verifies the token again,
+  // creates the member, stores a bcrypt passcode (the only hash member_login
+  // understands), and marks the invite used — all in one transaction.
+  const { data: member, error: rpcErr } = await client.rpc("member_accept_invite", {
+    p_invite_id: inviteId,
+    p_token: token,
+    p_display_name: displayName,
+    p_passcode: passcode,
+  });
+  if (rpcErr || !member) {
+    const msg = rpcErr?.message ?? "accept failed";
+    if (/already used/i.test(msg)) throw new HttpError(410, "invite_used", msg);
+    if (/expired/i.test(msg)) throw new HttpError(410, "invite_expired", msg);
+    if (/invalid token|not found/i.test(msg)) throw new HttpError(401, "invalid_token", msg);
+    throw new HttpError(400, "invite_accept_failed", msg);
   }
 
-  console.log(JSON.stringify({ fn: "invites", action: "accept", invite: inviteId, member: member.id }));
+  console.log(JSON.stringify({ fn: "invites", action: "accept", invite: inviteId, member: (member as { id: string }).id }));
   return json({ data: { member } });
 }
 

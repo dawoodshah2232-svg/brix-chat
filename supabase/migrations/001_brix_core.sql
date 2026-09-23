@@ -14,7 +14,7 @@
 --  * workspace_id is denormalized onto every tenant table so RLS is one hop.
 --  * Secrets are never in readable columns: member passcode hashes live in
 --    member_credentials (zero grants to anon/authenticated, RPC access only);
---    api_keys.key_hash and webhooks.secret_encrypted are excluded from the
+--    api_keys.key_hash and webhooks.secret are excluded from the
 --    authenticated SELECT column grants.
 --  * anon gets EXECUTE on the widget_* RPCs only — no direct table access.
 -- ============================================================================

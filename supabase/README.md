@@ -21,7 +21,7 @@ schema migrations in order. They must create at least these tables/columns
 | `webhook_deliveries` | `id, webhook_id, event, event_id, property_id, payload jsonb, status, attempt_count, http_status, latency_ms, last_error, next_attempt_at, claimed_at` |
 | `tickets` | existing Phase-2 columns **+ `sla_breached boolean default false`** |
 | `members` | existing columns **+ `email, passcode_hash, passcode_salt`** |
-| `member_invites` | `id, display_name, role, email, token_hash, token_salt, used_at, expires_at` |
+| `member_invites` | `id, workspace_id, display_name, role, email, token_hash, token_salt, used_at, expires_at` |
 
 Plus the concurrency-safe queue-claim RPC:
 
