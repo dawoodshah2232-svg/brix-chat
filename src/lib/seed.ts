@@ -252,7 +252,7 @@ function seedSettings(): Settings {
 
 export function seedWorkspaces(): Record<string, Workspace> {
   return {
-    demo: { name: 'demo', displayName: 'Demo Agent', passcode: '3456', createdAt: Date.now() - 30 * DAY },
+    demo: { name: 'demo', displayName: 'Demo Agent', passcode: '3456', role: 'admin', createdAt: Date.now() - 30 * DAY },
   };
 }
 

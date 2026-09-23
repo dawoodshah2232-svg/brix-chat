@@ -12,6 +12,7 @@ import type {
   ChatMessage,
   Contact,
   Conversation,
+  MemberRole,
   Settings,
   TriggerRule,
   Visitor,
@@ -25,6 +26,7 @@ const LS_KEY = 'brixchat_v1';
 export interface Session {
   workspace: string;
   displayName: string;
+  role: MemberRole;
 }
 
 interface Persisted {
@@ -122,11 +124,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           err = 'That workspace already exists — try logging in.';
           return p;
         }
-        const ws: Workspace = { name: w, displayName: displayName.trim(), passcode, createdAt: Date.now() };
+        const ws: Workspace = { name: w, displayName: displayName.trim(), passcode, role: 'admin', createdAt: Date.now() };
         return {
           ...p,
           workspaces: { ...p.workspaces, [w]: ws },
-          session: { workspace: w, displayName: ws.displayName },
+          session: { workspace: w, displayName: ws.displayName, role: ws.role ?? 'admin' },
         };
       });
       return err ? { ok: false, error: err } : { ok: true };
@@ -143,7 +145,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           return p;
         }
         res = { ok: true };
-        return { ...p, session: { workspace: w, displayName: ws.displayName } };
+        return { ...p, session: { workspace: w, displayName: ws.displayName, role: ws.role ?? 'admin' } };
       });
       return res;
     };

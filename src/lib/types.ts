@@ -146,10 +146,13 @@ export interface Settings {
   notifySound: boolean;
 }
 
+export type MemberRole = 'admin' | 'agent' | 'developer' | 'viewer';
+
 export interface Workspace {
   name: string;
   displayName: string;
   passcode: string;
+  role: MemberRole; // role of this login inside the workspace (demo: admin)
   createdAt: number;
 }
 
