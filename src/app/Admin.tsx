@@ -17,7 +17,7 @@ import { Badge, Button, Card, EmptyState, Input, Label, Modal, Select, StatCard,
 import { cx } from '../lib/utils';
 // Phase-4 admin elevation kit (all local, no new deps).
 import { ToastProvider, useToast } from '../components/admin/toast';
-import { Sparkline, BarChart, Donut, ProgressRing } from '../components/admin/charts';
+import { Sparkline, BarChart, Donut } from '../components/admin/charts';
 import { SavedFilterBar } from '../components/admin/savedFilters';
 import { useAdminShortcuts, ShortcutsHelpModal } from '../components/admin/shortcuts';
 import { ImportModal, exportCSV, exportJSON } from '../components/admin/importExport';
@@ -26,9 +26,8 @@ import type { SearchItem, AdminTabId } from '../components/admin/search';
 import { ScheduledReportsPanel } from '../components/admin/reports';
 import { BlogManager, HelpManager, ContactInbox, StatusManager } from '../components/admin/contentManagers';
 import {
-  ensurePlatformSeed,
   listClients, saveClients, listPlans, savePlans,
-  getPlatformSettings, savePlatformSettings, planById,
+  getPlatformSettings, savePlatformSettings,
   allProperties, aggregateAudit, storageUsage,
   logPlatformError, getPlatformErrors, clearPlatformErrors,
   exportAllData, resetAllData, collectPlatformSearchItems,
@@ -53,13 +52,6 @@ const TABS: Array<{ id: Tab; label: string; icon: string }> = [
 
 // --- shared bits -----------------------------------------------------------------
 
-function useApi() {
-  const { session } = useStore();
-  return useMemo(
-    () => getApi(session?.workspaceId ?? 'demo', session?.displayName ?? 'platform'),
-    [session?.workspaceId, session?.displayName],
-  );
-}
 
 function fmtDate(iso: string): string {
   try {
@@ -114,9 +106,6 @@ function Notice({ children }: { children: React.ReactNode }) {
   );
 }
 
-function errMsg(e: unknown): string {
-  return e instanceof ApiError ? e.message : 'Something went wrong.';
-}
 
 // ---------------------------------------------------------------------------
 // Phase-2 admin additions (Worker B): overview, content, branding, ratings,
@@ -126,20 +115,8 @@ function errMsg(e: unknown): string {
 // paginated list shapes).
 // ---------------------------------------------------------------------------
 
-function SectionTitle({ title, sub }: { title: string; sub?: string }) {
-  return (
-    <div className="mb-5">
-      <h2 className="font-display font-bold text-xl">{title}</h2>
-      {sub && <p className="text-sm text-slate-500 mt-0.5">{sub}</p>}
-    </div>
-  );
-}
 
 /** Accept both bare-array and paginated { items } list shapes. */
-function itemsOf<T>(data: { items: T[] } | T[] | null | undefined): T[] {
-  if (!data) return [];
-  return Array.isArray(data) ? data : (data.items ?? []);
-}
 
 /** True when the phase-2 endpoint isn't implemented by the runtime yet. */
 
@@ -160,7 +137,6 @@ function useRowFlash(highlightId: string | undefined, nonce: number): string | n
   return flash;
 }
 
-const FLASH_CLS = 'ring-2 ring-brix-400 shadow-lg shadow-brix-100';
 
 /** Stat card with a mini sparkline trend. */
 function MetricCard({ label, value, icon, spark, sparkColor, sub }: {
@@ -197,13 +173,6 @@ function RowCheck({ checked, onChange, label }: { checked: boolean; onChange: (v
 
 // ---- Category source (api.categories.*) ------------------------------------
 
-interface CatSource {
-  live: boolean;
-  list(scope: CategoryKind): Promise<ApiCategory2[]>;
-  create(scope: CategoryKind, name: string, color: string): Promise<ApiCategory2>;
-  update(id: string, patch: Partial<CategoryInput2>): Promise<ApiCategory2>;
-  remove(id: string): Promise<void>;
-}
 
 function dayKey(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -261,8 +230,9 @@ async function loadClientOverview(client: ClientRecord): Promise<ClientOverview>
   let convs: ConvLite[] = [];
   let csat: number | null = null;
   try {
-    const { items } = await api.conversations.list({ limit: 200 });
-    convs = ((items ?? []) as Array<Record<string, unknown>>).map((c) => ({
+    const { data } = await api.conversations.list({ limit: 200 });
+    const items = data?.items ?? [];
+    convs = (items as unknown as Array<Record<string, unknown>>).map((c) => ({
       id: String(c.id ?? ''),
       status: String(c.status ?? ''),
       created_at: String(c.created_at ?? ''),
@@ -272,8 +242,13 @@ async function loadClientOverview(client: ClientRecord): Promise<ClientOverview>
     }));
   } catch { /* treat as empty */ }
   try {
-    const s = await api.ratings.summary();
-    csat = typeof s?.avg === 'number' ? s.avg : null;
+    const { data: props } = await api.properties.list();
+    const propId = props?.[0]?.id;
+    if (propId) {
+      const s = await api.ratings.summary(propId);
+      const avg = s?.data?.csat_avg;
+      csat = typeof avg === 'number' ? avg : null;
+    }
   } catch { /* no ratings */ }
   const now = new Date();
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -308,9 +283,8 @@ function OverviewTab({ jumpTo }: { jumpTo: (t: Tab) => void }) {
     setRows(data);
     try {
       const api = getApi('demo', 'platform');
-      const { data: posts } = await (api as unknown as { blog: { list: (p: boolean) => Promise<{ data: unknown }> } }).blog.list(true);
-      const list = Array.isArray(posts) ? posts : [];
-      setPublishedPosts(list.length);
+      const { data } = await api.blog.list(true);
+      setPublishedPosts(data?.length ?? 0);
     } catch { setPublishedPosts(null); }
     setLoading(false);
     setLastRefresh(Date.now());
@@ -524,7 +498,7 @@ const CLIENT_STATUS_TONES: Record<ClientStatus, 'green' | 'indigo' | 'rose'> = {
 function ClientsTab({ highlightId, nonce }: { highlightId?: string; nonce: number }) {
   const { setViewingWorkspace } = useStore();
   const navigate = useNavigate();
-  const toast = useToast();
+  const { toast } = useToast();
   const { confirm, dialog } = useConfirm();
   const [clients, setClients] = useState<ClientRecord[]>([]);
   const [plans, setPlans] = useState<PlanRecord[]>([]);
@@ -575,7 +549,7 @@ function ClientsTab({ highlightId, nonce }: { highlightId?: string; nonce: numbe
 
   const setStatus = (slugs: string[], status: ClientStatus) => {
     persist(clients.map((c) => (slugs.includes(c.slug) ? { ...c, status } : c)));
-    toast.success(`${slugs.length} client${slugs.length > 1 ? 's' : ''} ${status === 'suspended' ? 'suspended' : 'set to ' + status}.`);
+    toast(`${slugs.length} client${slugs.length > 1 ? 's' : ''} ${status === 'suspended' ? 'suspended' : 'set to ' + status}.`);
     setSelected(new Set());
   };
 
@@ -594,14 +568,14 @@ function ClientsTab({ highlightId, nonce }: { highlightId?: string; nonce: numbe
       if (!planModal.slugs.includes(c.slug)) return c;
       return { ...c, planId: planChoice, seats: plan ? plan.seats : c.seats };
     }));
-    toast.success(`${planModal.slugs.length} client${planModal.slugs.length > 1 ? 's' : ''} moved to ${plan?.name ?? planChoice}.`);
+    toast(`${planModal.slugs.length} client${planModal.slugs.length > 1 ? 's' : ''} moved to ${plan?.name ?? planChoice}.`);
     setPlanModal(null);
     setSelected(new Set());
   };
 
   const viewAs = (c: ClientRecord) => {
     setViewingWorkspace(c.slug);
-    toast.success(`Viewing as ${c.name}.`);
+    toast(`Viewing as ${c.name}.`);
     navigate('/app');
   };
 
@@ -744,33 +718,30 @@ function ClientsTab({ highlightId, nonce }: { highlightId?: string; nonce: numbe
       <ImportModal
         open={importOpen} onClose={() => setImportOpen(false)} title="Import clients"
         template="slug,name,planId,seats,status\nacme,Acme Store,growth,10,active\n"
-        validate={(rows) => {
-          const valid: Record<string, string>[] = [];
-          const errors: { row: number; message: string }[] = [];
-          const planIds = new Set(plans.map((p) => p.id));
-          rows.forEach((r, i) => {
-            const slug = (r.slug ?? '').trim().toLowerCase();
-            const name = (r.name ?? '').trim();
-            const planId = (r.planId ?? '').trim();
-            const status = (r.status ?? '').trim() as ClientStatus;
-            if (!slug || !name) { errors.push({ row: i + 1, message: 'slug and name are required' }); return; }
-            if (planId && !planIds.has(planId)) { errors.push({ row: i + 1, message: `unknown plan "${planId}"` }); return; }
-            if (status && !['active', 'trial', 'suspended'].includes(status)) { errors.push({ row: i + 1, message: `bad status "${status}"` }); return; }
-            valid.push({ slug, name, planId: planId || 'starter', seats: r.seats ?? '3', status: status || 'trial' });
-          });
-          return { valid, errors };
+        validate={(r, rowNum) => {
+          const slug = (r.slug ?? '').trim().toLowerCase();
+          const name = (r.name ?? '').trim();
+          if (!slug || !name) return `Row ${rowNum}: slug and name are required.`;
+          if (r.planId && !plans.some((p) => p.id === r.planId.trim())) return `Row ${rowNum}: unknown plan "${r.planId}".`;
+          if (r.status && !['active', 'trial', 'suspended'].includes(r.status.trim())) return `Row ${rowNum}: bad status "${r.status}".`;
+          if (clients.some((c) => c.slug === slug)) return `Row ${rowNum}: client "${slug}" already exists.`;
+          return null;
         }}
-        onImport={(rows) => {
-          const existing = new Set(clients.map((c) => c.slug));
+        onImport={async (rows) => {
           const next = [...clients];
-          let added = 0;
           rows.forEach((r) => {
-            if (existing.has(r.slug)) return;
-            next.push({ slug: r.slug, name: r.name, planId: r.planId, seats: Number(r.seats) || 3, status: r.status as ClientStatus, created_at: new Date().toISOString(), notes: '' });
-            added++;
+            next.push({
+              slug: r.slug.trim().toLowerCase(),
+              name: r.name.trim(),
+              planId: r.planId?.trim() || 'starter',
+              seats: Number(r.seats) || 3,
+              status: (r.status?.trim() || 'trial') as ClientStatus,
+              created_at: new Date().toISOString(),
+              notes: '',
+            });
           });
           persist(next);
-          toast.success(`Imported ${added} client${added === 1 ? '' : 's'}.`);
+          toast(`Imported ${rows.length} client${rows.length === 1 ? '' : 's'}.`);
           setImportOpen(false);
         }}
       />
@@ -851,7 +822,7 @@ function PropertiesTab({ highlightId, nonce }: { highlightId?: string; nonce: nu
 // --- plans & billing -------------------------------------------------------------------
 
 function PlansTab({ highlightId, nonce }: { highlightId?: string; nonce: number }) {
-  const toast = useToast();
+  const { toast, toastError } = useToast();
   const { confirm, dialog } = useConfirm();
   const [plans, setPlans] = useState<PlanRecord[]>([]);
   const [clients, setClients] = useState<ClientRecord[]>([]);
@@ -879,12 +850,12 @@ function PlansTab({ highlightId, nonce }: { highlightId?: string; nonce: number 
     setError('');
     if (editing.id) {
       persist(plans.map((p) => (p.id === editing.id ? { ...p, name: editing.name!.trim(), price, seats: Number(editing.seats) || 1, features } : p)));
-      toast.success(`Plan “${editing.name!.trim()}” updated.`);
+      toast(`Plan “${editing.name!.trim()}” updated.`);
     } else {
       const id = editing.name!.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-');
       if (plans.some((p) => p.id === id)) { setError('A plan with that name already exists.'); return; }
       persist([...plans, { id, name: editing.name!.trim(), price, seats: Number(editing.seats) || 1, features, created_at: new Date().toISOString() }]);
-      toast.success(`Plan “${editing.name!.trim()}” created.`);
+      toast(`Plan “${editing.name!.trim()}” created.`);
     }
     setEditing(null);
   };
@@ -892,12 +863,12 @@ function PlansTab({ highlightId, nonce }: { highlightId?: string; nonce: number 
   const remove = (p: PlanRecord) => {
     const users = clients.filter((c) => c.planId === p.id);
     if (users.length > 0) {
-      toast.error(`Cannot delete — ${users.length} client${users.length > 1 ? 's' : ''} on this plan. Move them first.`);
+      toastError(`Cannot delete — ${users.length} client${users.length > 1 ? 's' : ''} on this plan. Move them first.`);
       return;
     }
     confirm({
       title: 'Delete plan?', body: `“${p.name}” will be removed from the catalog.`,
-      action: () => { persist(plans.filter((x) => x.id !== p.id)); toast.success('Plan deleted.'); },
+      action: () => { persist(plans.filter((x) => x.id !== p.id)); toast('Plan deleted.'); },
     });
   };
 
@@ -1048,7 +1019,7 @@ function providerKeys(): Record<string, string> {
 }
 
 function SystemTab() {
-  const toast = useToast();
+  const { toast } = useToast();
   const { confirm, dialog } = useConfirm();
   const [errors, setErrors] = useState(getPlatformErrors());
   const [keys, setKeys] = useState<Record<string, string>>(providerKeys());
@@ -1057,7 +1028,7 @@ function SystemTab() {
 
   const doExport = () => {
     exportJSON(`brix-platform-export-${new Date().toISOString().slice(0, 10)}.json`, exportAllData());
-    toast.success('Platform export downloaded.');
+    toast('Platform export downloaded.');
   };
 
   const doReset = () => {
@@ -1075,7 +1046,7 @@ function SystemTab() {
     try { localStorage.setItem(PROVIDER_KEYS_LS, JSON.stringify(next)); } catch { /* ignore */ }
     setKeys(next);
     setDrafts((d) => ({ ...d, [id]: '' }));
-    toast.success(v ? 'Provider key saved locally.' : 'Provider key removed.');
+    toast(v ? 'Provider key saved locally.' : 'Provider key removed.');
   };
 
   const masked = (v: string) => (v.length <= 8 ? '••••' : `${v.slice(0, 4)}••••${v.slice(-4)}`);
@@ -1104,7 +1075,7 @@ function SystemTab() {
         <Card className="p-5">
           <div className="flex items-center justify-between mb-1">
             <h3 className="font-bold text-slate-900">Error log</h3>
-            {errors.length > 0 && <Button variant="ghost" size="sm" onClick={() => { clearPlatformErrors(); setErrors([]); toast.success('Error log cleared.'); }}>Clear</Button>}
+            {errors.length > 0 && <Button variant="ghost" size="sm" onClick={() => { clearPlatformErrors(); setErrors([]); toast('Error log cleared.'); }}>Clear</Button>}
           </div>
           <p className="text-xs text-slate-500 mb-3">Client-side errors captured in this browser. Server-side logging arrives with the backend phase.</p>
           {errors.length === 0 ? (
@@ -1291,7 +1262,7 @@ function AuditTab() {
 // --- settings (platform) -------------------------------------------------------------------
 
 function SettingsTab() {
-  const toast = useToast();
+  const { toast } = useToast();
   const [draft, setDraft] = useState(getPlatformSettings());
   const [error, setError] = useState('');
 
@@ -1301,7 +1272,7 @@ function SettingsTab() {
     if (draft.passcode_min_length < 4 || draft.passcode_min_length > 12) { setError('Passcode length must be 4–12.'); return; }
     setError('');
     savePlatformSettings({ ...draft, platform_name: draft.platform_name.trim() });
-    toast.success('Platform settings saved.');
+    toast('Platform settings saved.');
   };
 
   const onLogo = (f: File | undefined) => {

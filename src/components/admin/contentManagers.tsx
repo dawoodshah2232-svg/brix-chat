@@ -7,14 +7,21 @@ import { useEffect, useMemo, useState } from 'react';
 import { useStore } from '../../lib/store';
 import { getApi, ApiError } from '../../lib/api';
 import type {
-  ApiBlogPost2,
-  ApiHelpArticle2,
-  ApiContactMessage2,
-  ApiStatusEntry2,
-  BlogSeed,
-  HelpSeed,
-} from '../../lib/contentSeed';
+  ApiBlogPost,
+  ApiHelpArticle,
+  ApiContactMessage,
+  ApiStatusEntry,
+} from '../../lib/api';
 import { fmtTs } from '../../lib/contentSeed';
+
+// Local form seeds (mirror the API create inputs).
+interface BlogSeed {
+  slug: string; title: string; excerpt: string; body: string;
+  tags: string[]; author: string; published: boolean; reading_mins: number;
+}
+interface HelpSeed {
+  slug: string; title: string; body: string; category: string; order: number;
+}
 import { Badge, Button, Card, EmptyState, Input, Label, Modal, Select, Textarea, Toggle, useConfirm } from '../ui';
 import { cx } from '../../lib/utils';
 
@@ -44,7 +51,7 @@ const emptyHelp: HelpSeed = { slug: '', title: '', body: '', category: 'General'
 function BlogManager({ readOnly }: { readOnly: boolean }) {
   const p2 = useP2();
   const { confirm, dialog } = useConfirm();
-  const [posts, setPosts] = useState<ApiBlogPost2[]>([]);
+  const [posts, setPosts] = useState<ApiBlogPost[]>([]);
   const [editing, setEditing] = useState<(BlogSeed & { id?: string }) | null>(null);
   const [error, setError] = useState('');
 
@@ -66,7 +73,7 @@ function BlogManager({ readOnly }: { readOnly: boolean }) {
     } catch (e) { setError(errMsg(e)); }
   };
 
-  const remove = (p: ApiBlogPost2) => {
+  const remove = (p: ApiBlogPost) => {
     confirm({
       title: 'Delete post?', body: `"${p.title}" will be removed from /blog.`,
       action: async () => { await p2.blog.delete(p.id); await load(); },
@@ -134,7 +141,7 @@ function BlogManager({ readOnly }: { readOnly: boolean }) {
 function HelpManager({ readOnly }: { readOnly: boolean }) {
   const p2 = useP2();
   const { confirm, dialog } = useConfirm();
-  const [articles, setArticles] = useState<ApiHelpArticle2[]>([]);
+  const [articles, setArticles] = useState<ApiHelpArticle[]>([]);
   const [editing, setEditing] = useState<(HelpSeed & { id?: string }) | null>(null);
   const [error, setError] = useState('');
 
@@ -156,7 +163,7 @@ function HelpManager({ readOnly }: { readOnly: boolean }) {
     } catch (e) { setError(errMsg(e)); }
   };
 
-  const remove = (a: ApiHelpArticle2) => {
+  const remove = (a: ApiHelpArticle) => {
     confirm({
       title: 'Delete article?', body: `"${a.title}" will be removed from /help.`,
       action: async () => { await p2.helpDocs.delete(a.id); await load(); },
@@ -227,7 +234,7 @@ function HelpManager({ readOnly }: { readOnly: boolean }) {
 
 function ContactInbox({ readOnly }: { readOnly: boolean }) {
   const p2 = useP2();
-  const [msgs, setMsgs] = useState<ApiContactMessage2[]>([]);
+  const [msgs, setMsgs] = useState<ApiContactMessage[]>([]);
   const [error, setError] = useState('');
 
   const load = async () => {
@@ -238,7 +245,7 @@ function ContactInbox({ readOnly }: { readOnly: boolean }) {
   };
   useEffect(() => { void load(); }, []);
 
-  const markRead = async (m: ApiContactMessage2) => {
+  const markRead = async (m: ApiContactMessage) => {
     try {
       await p2.contactMessages.markRead(m.id);
       await load();
@@ -284,10 +291,10 @@ function ContactInbox({ readOnly }: { readOnly: boolean }) {
 function StatusManager({ readOnly }: { readOnly: boolean }) {
   const p2 = useP2();
   const { confirm, dialog } = useConfirm();
-  const [entries, setEntries] = useState<ApiStatusEntry2[]>([]);
+  const [entries, setEntries] = useState<ApiStatusEntry[]>([]);
   const [title, setTitle] = useState('');
   const [detail, setDetail] = useState('');
-  const [state, setState] = useState<ApiStatusEntry2['state']>('operational');
+  const [state, setState] = useState<ApiStatusEntry['state']>('operational');
   const [error, setError] = useState('');
 
   const load = async () => {
@@ -307,14 +314,14 @@ function StatusManager({ readOnly }: { readOnly: boolean }) {
     } catch (e) { setError(errMsg(e)); }
   };
 
-  const remove = (e: ApiStatusEntry2) => {
+  const remove = (e: ApiStatusEntry) => {
     confirm({
       title: 'Delete status entry?', body: `"${e.title}" will be removed from /status.`,
       action: async () => { await p2.statusEntries.delete(e.id); await load(); },
     });
   };
 
-  const tone = (s: ApiStatusEntry2['state']) => (s === 'operational' ? 'green' : s === 'degraded' ? 'amber' : 'rose') as 'green' | 'amber' | 'rose';
+  const tone = (s: ApiStatusEntry['state']) => (s === 'operational' ? 'green' : s === 'degraded' ? 'amber' : 'rose') as 'green' | 'amber' | 'rose';
 
   return (
     <div>
@@ -327,7 +334,7 @@ function StatusManager({ readOnly }: { readOnly: boolean }) {
             <div><Label>Title</Label><Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Scheduled maintenance" /></div>
             <div>
               <Label>State</Label>
-              <Select value={state} onChange={(e) => setState(e.target.value as ApiStatusEntry2['state'])}>
+              <Select value={state} onChange={(e) => setState(e.target.value as ApiStatusEntry['state'])}>
                 <option value="operational">Operational</option>
                 <option value="degraded">Degraded</option>
                 <option value="incident">Incident</option>

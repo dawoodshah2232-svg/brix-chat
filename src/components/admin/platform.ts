@@ -182,17 +182,20 @@ export async function clientMetrics(slug: string): Promise<ClientMetrics> {
   const api = getApi(slug, 'platform');
   const empty: ClientMetrics = { chatsToday: 0, messagesTotal: 0, openChats: 0, unassigned: 0, csat: null };
   try {
-    const [{ items }, summary] = await Promise.all([
-      api.conversations.list({ limit: 200 }).catch(() => ({ items: [] as never[] })),
-      api.ratings.summary().catch(() => null),
+    const [{ data }, propsRes] = await Promise.all([
+      api.conversations.list({ limit: 200 }),
+      api.properties.list().catch(() => ({ data: [] as { id: string }[] })),
     ]);
-    const convs = (items ?? []) as Array<{ status: string; created_at: string; messages: unknown[]; agent_id: string | null }>;
+    const propId = (propsRes as { data?: { id: string }[] }).data?.[0]?.id;
+    let summary: { data?: { csat_avg: number | null } } | null = null;
+    if (propId) summary = await api.ratings.summary(propId).catch(() => null);
+    const convs = ((data?.items ?? []) as Array<{ status: string; created_at: string; messages: unknown[]; agent_id: string | null }>);
     return {
       chatsToday: convs.filter((c) => isToday(c.created_at)).length,
       messagesTotal: convs.reduce((n, c) => n + (Array.isArray(c.messages) ? c.messages.length : 0), 0),
       openChats: convs.filter((c) => c.status === 'open').length,
       unassigned: convs.filter((c) => c.status === 'open' && !c.agent_id).length,
-      csat: summary && typeof summary.avg === 'number' ? summary.avg : null,
+      csat: summary && typeof summary.data?.csat_avg === 'number' ? summary.data.csat_avg : null,
     };
   } catch {
     return empty;
@@ -229,20 +232,14 @@ export async function aggregateAudit(clients: ClientRecord[], perWorkspaceLimit 
     try {
       const api = getApi(c.slug, 'platform');
       const { data } = await api.auditLog.list({ limit: perWorkspaceLimit });
-      const items = Array.isArray((data as { items?: unknown })?.items)
-        ? (data as { items: AuditEntry[] }).items
-        : Array.isArray(data) ? (data as AuditEntry[]) : [];
-      items.forEach((e) => out.push({ ...e, workspaceSlug: c.slug, workspaceName: c.name }));
+      (data?.items ?? []).forEach((e) => out.push({ ...e, workspaceSlug: c.slug, workspaceName: c.name }));
     } catch { /* skip */ }
   }));
   // Also include the operator workspace's own audit trail.
   try {
     const api = getApi('demo', 'platform');
     const { data } = await api.auditLog.list({ limit: perWorkspaceLimit });
-    const items = Array.isArray((data as { items?: unknown })?.items)
-      ? (data as { items: AuditEntry[] }).items
-      : Array.isArray(data) ? (data as AuditEntry[]) : [];
-    items.forEach((e) => out.push({ ...e, workspaceSlug: 'demo', workspaceName: 'Brix (operator)' }));
+    (data?.items ?? []).forEach((e) => out.push({ ...e, workspaceSlug: 'demo', workspaceName: 'Brix (operator)' }));
   } catch { /* skip */ }
   return out.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
 }
@@ -342,11 +339,9 @@ export async function collectPlatformSearchItems(): Promise<SearchItem[]> {
     });
   } catch { /* search stays useful without properties */ }
   try {
-    const p2 = getApi('demo', 'platform') as unknown as {
-      helpDocs: { list: () => Promise<{ data: unknown }> };
-    };
-    const { data } = await p2.helpDocs.list();
-    const docs = Array.isArray(data) ? data as Array<{ id: string; title: string; slug: string }> : [];
+    const api = getApi('demo', 'platform');
+    const { data } = await api.helpDocs.list();
+    const docs = (data ?? []) as Array<{ id: string; title: string; slug: string }>;
     docs.slice(0, 50).forEach((d) => {
       items.push({ kind: 'Article', id: d.id, title: d.title, subtitle: `/help/${d.slug}`, tab: 'content' });
     });

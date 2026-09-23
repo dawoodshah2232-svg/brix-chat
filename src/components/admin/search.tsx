@@ -1,12 +1,11 @@
-// Brix Chat — admin-scoped global search (⌘/Ctrl+K, /).
-// Searches properties, members, webhooks, API keys, KB articles, canned
-// replies, tickets, and contacts. Enter jumps to the right tab and
-// highlights the row.
+// Brix Chat — platform-admin global search (⌘/Ctrl+K, /).
+// The index is built by collectPlatformSearchItems() in ./platform.ts
+// (clients, plans, properties, help articles). Enter jumps to the right
+// tab and highlights the row.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Modal, Badge } from '../ui';
 import { cx } from '../../lib/utils';
-import type { BrixApi, ApiTicket, ApiContact, ApiCanned } from '../../lib/api';
 
 export type AdminTabId =
   | 'overview' | 'clients' | 'properties' | 'plans' | 'content'
@@ -24,50 +23,6 @@ const KIND_TONE: Record<string, 'indigo' | 'green' | 'amber' | 'rose' | 'cyan' |
   Property: 'indigo', Member: 'green', Webhook: 'amber', 'API key': 'rose',
   Article: 'cyan', Canned: 'slate', Ticket: 'rose', Contact: 'indigo',
 };
-
-export async function collectAdminSearchItems(api: BrixApi, p2: any): Promise<SearchItem[]> {
-  const items: SearchItem[] = [];
-  const push = (i: SearchItem) => items.push(i);
-  const results = await Promise.allSettled([
-    api.properties.list(),
-    api.agents.list(),
-    api.webhooks.list(),
-    api.apiKeys.list(),
-    api.canned.list(),
-    api.tickets.list({ limit: 200 }),
-    api.contacts.list({ limit: 200 }),
-    p2.helpDocs.list().catch(() => ({ data: [] as unknown[] })),
-  ]);
-  const ok = <T,>(r: PromiseSettledResult<{ data: T }>, fallback: T): T =>
-    r.status === 'fulfilled' ? r.value.data : fallback;
-  const arr = <T,>(d: { items: T[] } | T[]): T[] => (Array.isArray(d) ? d : d.items ?? []);
-
-  for (const p of ok(results[0], [])) {
-    push({ kind: 'Property', id: p.id, title: p.name, subtitle: p.domain || p.public_key, tab: 'properties' });
-  }
-  for (const a of ok(results[1], [])) {
-    push({ kind: 'Member', id: a.id, title: a.display_name, subtitle: `${a.role}${a.active === false ? ' · deactivated' : ''}`, tab: 'team' });
-  }
-  for (const w of ok(results[2], [])) {
-    push({ kind: 'Webhook', id: w.id, title: w.url, subtitle: `${w.events.length} events${w.enabled ? '' : ' · disabled'}`, tab: 'webhooks' });
-  }
-  for (const k of ok(results[3], [])) {
-    push({ kind: 'API key', id: k.id, title: k.name, subtitle: `${k.prefix}…${k.revoked ? ' · revoked' : ''}`, tab: 'keys' });
-  }
-  for (const c of ok(results[4], [])) {
-    push({ kind: 'Canned', id: c.id, title: c.title, subtitle: c.shortcut || c.body.slice(0, 60), tab: 'content' });
-  }
-  for (const t of arr(ok(results[5], { items: [] as ApiTicket[] }))) {
-    push({ kind: 'Ticket', id: t.id, title: t.subject, subtitle: `${t.status} · ${t.priority}`, tab: 'team' });
-  }
-  for (const c of arr(ok(results[6], { items: [] as ApiContact[] }))) {
-    push({ kind: 'Contact', id: c.id, title: c.name || c.email, subtitle: c.email || c.phone || '', tab: 'content' });
-  }
-  for (const a of arr(ok(results[7], [] as Array<{ id: string; title: string; category?: string }>))) {
-    push({ kind: 'Article', id: a.id, title: a.title, subtitle: a.category ?? '', tab: 'content' });
-  }
-  return items;
-}
 
 export function AdminCommandPalette({
   open,
