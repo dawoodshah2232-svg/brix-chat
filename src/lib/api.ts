@@ -275,7 +275,7 @@ export interface ApiRating {
   property_id: string;
   conversation_id: string | null;
   agent_id: string | null;
-  kind: 'csat' | 'nps';
+  kind: 'csat' | 'nps' | 'ces';
   score: number;
   comment: string;
   created_at: number;
@@ -704,19 +704,22 @@ function seedUnanswered(): ApiUnanswered[] {
   ];
 }
 
-/** Demo CSAT + NPS ratings for the demo property (numeric created_at timestamps). */
+/** Demo CSAT + NPS + CES ratings for the demo property (numeric created_at timestamps). */
 function seedRatings(propId: string, convs: ApiConversation[], agents: ApiAgent[]): ApiRating[] {
   const DAY = 86400000;
   const base = Date.now();
-  const rows: Array<[number, 'csat' | 'nps', number, string, number, number | null]> = [
+  const rows: Array<[number, 'csat' | 'nps' | 'ces', number, string, number, number | null]> = [
     // [daysAgo, kind, score, comment, convIdx (-1 = none), agentIdx (null = none)]
     [1, 'csat', 5, 'Super helpful, solved in minutes!', 2, 0],
     [2, 'nps', 9, 'Great product, telling my team.', -1, null],
+    [3, 'ces', 6, 'Got it sorted without repeating myself.', 2, 0],
     [4, 'csat', 4, '', 2, 0],
     [6, 'nps', 10, '', -1, null],
     [8, 'csat', 5, 'Fast and friendly.', 0, 0],
+    [10, 'ces', 3, 'Had to ask twice for the refund link.', 1, null],
     [11, 'csat', 2, 'Waited too long for a reply.', 1, null],
     [14, 'nps', 6, 'Good but onboarding was confusing.', -1, null],
+    [16, 'ces', 7, 'Effortless — done in one chat.', 0, 1],
     [18, 'csat', 5, '', 2, 1],
     [23, 'nps', 8, '', -1, null],
     [29, 'csat', 3, 'Okay, but took a while.', 0, 0],

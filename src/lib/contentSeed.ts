@@ -629,12 +629,12 @@ export interface CategoryInput2 { name: string; color?: string; }
 // ---------------------------------------------------------------------------
 export interface ApiRating2 {
   id: string; property_id: string; conversation_id: string | null;
-  agent_id: string | null; kind: 'csat' | 'nps'; score: number;
+  agent_id: string | null; kind: 'csat' | 'nps' | 'ces'; score: number;
   comment: string; created_at: number;
 }
 export interface RatingInput2 {
   property_id: string; conversation_id?: string | null; agent_id?: string | null;
-  kind: 'csat' | 'nps'; score: number; comment?: string;
+  kind: 'csat' | 'nps' | 'ces'; score: number; comment?: string;
 }
 export interface RatingsSummary2 {
   csat_avg: number | null; csat_count: number;

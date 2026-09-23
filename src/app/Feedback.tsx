@@ -8,11 +8,12 @@ import { Badge, Button, Card, EmptyState, PageHeader, Select } from '../componen
 import { toast } from '../components/dashboard/Toasts';
 import { cx } from '../lib/utils';
 
-type KindFilter = 'all' | 'csat' | 'nps';
+type KindFilter = 'all' | 'csat' | 'nps' | 'ces';
 type Sentiment = 'all' | 'low' | 'neutral' | 'high';
 
 function bucket(r: ApiRating): 'low' | 'neutral' | 'high' {
   if (r.kind === 'csat') return r.score <= 2 ? 'low' : r.score === 3 ? 'neutral' : 'high';
+  if (r.kind === 'ces') return r.score <= 3 ? 'low' : r.score <= 5 ? 'neutral' : 'high'; // CES is 1–7
   return r.score <= 6 ? 'low' : r.score <= 8 ? 'neutral' : 'high';
 }
 
@@ -128,13 +129,14 @@ export default function Feedback() {
     <div className="space-y-5">
       <PageHeader
         title="Feedback"
-        subtitle={`${ratings.length} ratings · CSAT & NPS · newest first`}
+        subtitle={`${ratings.length} ratings · CSAT, NPS & CES · newest first`}
         actions={
           <div className="flex gap-2">
             <Select value={kind} onChange={(e) => setKind(e.target.value as KindFilter)} aria-label="Filter by kind">
               <option value="all">All kinds</option>
               <option value="csat">CSAT</option>
               <option value="nps">NPS</option>
+              <option value="ces">CES</option>
             </Select>
             <Select value={sentiment} onChange={(e) => setSentiment(e.target.value as Sentiment)} aria-label="Filter by sentiment">
               <option value="all">All scores</option>
@@ -176,7 +178,7 @@ export default function Feedback() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <Badge tone={r.kind === 'csat' ? 'indigo' : 'cyan'}>{r.kind.toUpperCase()}</Badge>
+                      <Badge tone={r.kind === 'csat' ? 'indigo' : r.kind === 'nps' ? 'cyan' : 'slate'}>{r.kind.toUpperCase()}</Badge>
                       <Badge tone={BUCKET_TONE[b]}>{b}</Badge>
                       <span className="text-xs text-slate-400">{fmtDate(r.created_at)}</span>
                       <span className="text-xs text-slate-400">· agent: {memberName(r.agent_id)}</span>
