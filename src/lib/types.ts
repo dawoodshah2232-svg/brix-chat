@@ -149,6 +149,8 @@ export interface TriggerRule {
   conditions: string[];
   action: string;
   enabled: boolean;
+  /** P4-19: plain-language description of what the rule does (for future NL parsing). */
+  description?: string;
   // phase 2: visual step-builder fields (legacy rules keep conditions/action)
   event?: TriggerEvent;
   conditionGroups?: TriggerConditionGroup[];

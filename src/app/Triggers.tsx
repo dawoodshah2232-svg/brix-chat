@@ -6,6 +6,8 @@ import type { TriggerAction, TriggerCondition, TriggerConditionGroup, TriggerEve
 import { uid } from '../lib/utils';
 import { Badge, Button, Card, EmptyState, Input, Label, Modal, Select, Tabs, Textarea, Toggle, useConfirm } from '../components/ui';
 import { cx } from '../lib/utils';
+import { TRIGGER_TEMPLATES, instantiateTemplate } from '../lib/triggerTemplates';
+import { toast } from '../components/dashboard/Toasts';
 
 type Tab = 'proactive' | 'routing';
 
@@ -150,6 +152,17 @@ export default function Triggers() {
   const [editor, setEditor] = useState<TriggerRule | null>(null);
   const [legacyText, setLegacyText] = useState('');
   const [simRule, setSimRule] = useState<TriggerRule | null>(null);
+  const [gallery, setGallery] = useState(false);
+
+  const installTemplate = (tplId: string) => {
+    const tpl = TRIGGER_TEMPLATES.find((t) => t.id === tplId);
+    if (!tpl) return;
+    const rule = instantiateTemplate(tpl);
+    store.saveTrigger(rule);
+    setGallery(false);
+    setTab(rule.kind);
+    toast.success('Template installed', rule.name);
+  };
   const [simCtx, setSimCtx] = useState<SimCtx>({
     page_url: '/pricing', time_on_page: '45', cart_value: '0',
     message_contains: '', contact_tag: '', department: 'Sales',
@@ -206,7 +219,10 @@ export default function Triggers() {
           <h1 className="text-xl font-display font-extrabold text-slate-900">Triggers</h1>
           <p className="text-sm text-slate-500 mt-0.5">Automate engagement and routing</p>
         </div>
-        <Button onClick={() => openEditor(blankRule(tab))}>+ New rule</Button>
+        <div className="flex gap-2">
+          <Button variant="secondary" onClick={() => setGallery(true)}>📚 Templates</Button>
+          <Button onClick={() => openEditor(blankRule(tab))}>+ New rule</Button>
+        </div>
       </div>
 
       <Tabs<Tab>
@@ -236,6 +252,7 @@ export default function Triggers() {
                     <Badge tone={t.kind === 'proactive' ? 'indigo' : 'cyan'}>{t.kind}</Badge>
                     {!t.enabled && <Badge tone="slate">disabled</Badge>}
                   </div>
+                  {t.description && <p className="text-xs text-slate-500 mt-1 italic">“{t.description}”</p>}
                   <p className="text-xs text-slate-500 mt-1.5 font-mono leading-relaxed">{ruleSummary(t)}</p>
                 </div>
                 <Toggle checked={t.enabled} onChange={() => store.toggleTrigger(t.id)} label={t.name} />
@@ -255,6 +272,26 @@ export default function Triggers() {
         </div>
       )}
 
+      {/* P4-19: template gallery */}
+      <Modal open={gallery} onClose={() => setGallery(false)} wide title="📚 Trigger templates">
+        <p className="text-sm text-slate-500 mb-4">One-click starting points — install one, then tweak the conditions to taste. All wording is original to Brix Chat.</p>
+        <div className="grid md:grid-cols-2 gap-3">
+          {TRIGGER_TEMPLATES.map((t) => (
+            <div key={t.id} className="rounded-xl border border-slate-200 p-4 flex flex-col gap-2 hover:border-brix-300 transition">
+              <div className="flex items-center gap-2">
+                <span className="font-semibold text-slate-900 text-sm">{t.name}</span>
+                <Badge tone={t.kind === 'proactive' ? 'indigo' : 'cyan'}>{t.kind}</Badge>
+              </div>
+              <p className="text-xs text-slate-500 italic">“{t.description}”</p>
+              <p className="text-xs text-slate-600 font-mono leading-relaxed">{t.conditions.join(' · ')}</p>
+              <div className="mt-auto pt-1">
+                <Button size="sm" variant="secondary" onClick={() => installTemplate(t.id)}>Install template</Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </Modal>
+
       {/* Rule builder modal */}
       <Modal open={editor !== null} onClose={() => setEditor(null)} wide
         title={editor && store.data.triggers.some((t) => t.id === editor.id) ? 'Edit rule' : 'New rule'}>
@@ -262,6 +299,11 @@ export default function Triggers() {
           <div className="space-y-5">
             <div className="grid grid-cols-2 gap-4">
               <div><Label>Rule name</Label><Input value={editor.name} onChange={(e) => setRule({ name: e.target.value })} placeholder="Pricing page greeter" /></div>
+              <div className="col-span-2">
+                <Label>Description <span className="font-normal text-slate-400">(plain language — what does this rule do?)</span></Label>
+                <Input value={editor.description ?? ''} onChange={(e) => setRule({ description: e.target.value })}
+                  placeholder="Greet visitors who idle 60s on pricing" />
+              </div>
               <div>
                 <Label>Kind</Label>
                 <Select value={editor.kind} onChange={(e) => setRule({ kind: e.target.value as Tab })} className="w-full">
