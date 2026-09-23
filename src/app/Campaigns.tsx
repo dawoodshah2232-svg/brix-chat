@@ -96,10 +96,26 @@ export default function Campaigns() {
   const estimatedReach = (c: Campaign): number => audienceVisitors(c).length;
 
   /** P4-9: deterministic simulated send — splits recipients, generates labeled simulated stats. */
+  const declareWinner = (c: Campaign, v: 'A' | 'B') => {
+    if (!c.abTest?.enabled) return;
+    store.saveCampaign({
+      ...c,
+      abTest: { ...c.abTest, winner: v, winnerDeclaredAt: Date.now(), declaredBy: session?.displayName ?? 'admin' },
+    });
+    toast.success(`Variant ${v} declared the winner`, 'All future sends will use this variant');
+  };
+
   const simulateSend = (c: Campaign) => {
     const ab = c.abTest?.enabled ? c.abTest : undefined;
     const ids = audienceVisitors(c).map((v) => v.id);
-    const split = ab ? splitCounts(ids, c.id, ab.splitPct) : { a: ids.length, b: 0 };
+    // P4-1: a declared winner takes 100% of future sends.
+    const split = ab
+      ? ab.winner === 'A'
+        ? { a: ids.length, b: 0 }
+        : ab.winner === 'B'
+          ? { a: 0, b: ids.length }
+          : splitCounts(ids, c.id, ab.splitPct)
+      : { a: ids.length, b: 0 };
     const results = simulateResults(c.id, split.a, split.b);
     store.saveCampaign({
       ...c,
@@ -178,6 +194,18 @@ export default function Campaigns() {
                           {!w.confident && ' · small sample — treat as directional.'}
                           <span className="text-slate-400"> Simulated results (local demo).</span>
                         </div>
+                        {c.abTest!.winner ? (
+                          <div className="mt-2 rounded-lg bg-emerald-50 border border-emerald-200 px-2.5 py-1.5 text-xs text-emerald-800">
+                            🏆 Variant <strong>{c.abTest!.winner}</strong> declared the winner
+                            {c.abTest!.declaredBy ? ` by ${c.abTest!.declaredBy}` : ''} — all future sends use this variant.
+                          </div>
+                        ) : (
+                          <div className="mt-2 flex items-center gap-2 text-xs text-slate-500">
+                            <span>Declare winner:</span>
+                            <Button size="sm" variant="secondary" onClick={() => declareWinner(c, 'A')}>A wins</Button>
+                            <Button size="sm" variant="secondary" onClick={() => declareWinner(c, 'B')}>B wins</Button>
+                          </div>
+                        )}
                       </>
                     );
                   })() : (

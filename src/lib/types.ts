@@ -184,12 +184,15 @@ export interface Campaign {
   scheduleAt?: number; // timestamp for "send later"
   audienceRules?: { urlContains?: string; visitorType?: 'any' | 'new' | 'returning'; tags?: string[] };
   goalId?: string;
-  // phase 4 (P4-9): A/B test config + simulated results
+  // phase 4 (P4-1): A/B test config + simulated results
   abTest?: {
     enabled: boolean;
     variantBMessage: string;
     splitPct: number; // % of recipients going to B (0–100)
     results?: import('./ab').AbResults;
+    winner?: 'A' | 'B'; // declared winner — all future sends route to this variant
+    winnerDeclaredAt?: number;
+    declaredBy?: string;
   };
 }
 
