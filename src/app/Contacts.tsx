@@ -1,7 +1,7 @@
 // Brix Chat — Contacts mini-CRM: timelines, duplicate merge.
 
 import { useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useStore } from '../lib/store';
 import type { Contact } from '../lib/types';
 import { cx, timeAgo, uid } from '../lib/utils';
@@ -49,25 +49,40 @@ function blankContact(): Contact {
 }
 
 /** Chronological timeline events for a contact, built from their conversations. */
-function contactTimeline(contact: Contact, conversations: ReturnType<typeof useStore>['data']['conversations']) {
+export type TimelineKind = 'chat' | 'note' | 'rating' | 'resolved';
+export interface TimelineEvent { ts: number; kind: TimelineKind; text: string; convId: string }
+function contactTimeline(contact: Contact, conversations: ReturnType<typeof useStore>['data']['conversations']): TimelineEvent[] {
   const mine = conversations.filter((c) => c.visitor.toLowerCase() === contact.name.toLowerCase());
-  const events: Array<{ ts: number; kind: 'chat' | 'note'; text: string; convId: string }> = [];
+  const events: TimelineEvent[] = [];
   mine.forEach((c) => {
     const first = c.messages.find((m) => m.text.trim());
+    const msgCount = c.messages.filter((m) => m.text.trim()).length;
     events.push({
       ts: c.createdAt,
       kind: 'chat',
-      text: `💬 Chat ${c.status}${first ? ` — “${first.text.slice(0, 80)}${first.text.length > 80 ? '…' : ''}”` : ''}`,
+      text: `💬 Chat ${c.status} · ${msgCount} message${msgCount === 1 ? '' : 's'}${first ? ` — “${first.text.slice(0, 80)}${first.text.length > 80 ? '…' : ''}”` : ''}`,
       convId: c.id,
     });
+    if (c.status === 'closed') {
+      events.push({ ts: c.updatedAt, kind: 'resolved', text: '✅ Chat resolved', convId: c.id });
+    }
+    const ratingMsg = c.messages.find((m) => m.kind === 'rating' && m.rating);
+    const rating = ratingMsg?.rating ?? c.rating;
+    if (rating) {
+      events.push({ ts: ratingMsg?.ts ?? c.updatedAt, kind: 'rating', text: `⭐ Rated ${rating}/5`, convId: c.id });
+    }
     c.notes.forEach((n) => events.push({ ts: n.ts, kind: 'note', text: `📝 ${n.author}: ${n.text.slice(0, 100)}`, convId: c.id }));
   });
   events.sort((a, b) => b.ts - a.ts);
   return events;
 }
+const TIMELINE_DOT: Record<TimelineKind, string> = {
+  chat: 'bg-brix-500', note: 'bg-amber-400', rating: 'bg-emerald-500', resolved: 'bg-slate-400',
+};
 
 export default function Contacts() {
   const store = useStore();
+  const navigate = useNavigate();
   const { confirm, dialog } = useConfirm();
   const [params] = useSearchParams();
   const [q, setQ] = useState(params.get('search') ?? '');
@@ -365,9 +380,15 @@ export default function Contacts() {
                 <ol className="relative border-l-2 border-slate-100 ml-1.5 space-y-4 mt-2">
                   {timeline.map((e, i) => (
                     <li key={i} className="ml-4">
-                      <span className={cx('absolute -left-[7px] mt-1 w-3 h-3 rounded-full border-2 border-white', e.kind === 'chat' ? 'bg-brix-500' : 'bg-amber-400')} />
+                      <span className={cx('absolute -left-[7px] mt-1 w-3 h-3 rounded-full border-2 border-white', TIMELINE_DOT[e.kind])} />
                       <div className="text-sm text-slate-700">{e.text}</div>
-                      <div className="text-[11px] text-slate-400 mt-0.5">{timeAgo(e.ts)}</div>
+                      <div className="text-[11px] text-slate-400 mt-0.5 flex items-center gap-2">
+                        {timeAgo(e.ts)}
+                        {e.kind !== 'note' && (
+                          <button onClick={() => { setDetail(null); navigate(`/app?c=${e.convId}`); }}
+                            className="font-semibold text-brix-600 hover:underline">Open chat →</button>
+                        )}
+                      </div>
                     </li>
                   ))}
                 </ol>

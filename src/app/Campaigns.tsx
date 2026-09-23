@@ -188,7 +188,7 @@ export default function Campaigns() {
               <div className="flex justify-end gap-2">
                 {(c.status === 'draft' || c.status === 'scheduled') && (
                   <Button size="sm" onClick={() => simulateSend(c)}>
-                    {c.abTest?.enabled ? '🧪 Simulate A/B send' : '📤 Send now'}
+                    {c.abTest?.enabled ? '🧪 Simulate A/B send' : '📤 Send (simulated)'}
                   </Button>
                 )}
                 <Button size="sm" variant="secondary" onClick={() => openEditor({ ...c })}>Edit</Button>
