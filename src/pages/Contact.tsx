@@ -5,6 +5,7 @@ import type { FormEvent } from 'react';
 import { getApi, ApiError } from '../lib/api';
 import { useStore } from '../lib/store';
 import { asP2 } from '../lib/contentSeed';
+import { MailIcon } from '../components/icons';
 import { Seo, jsonLdBreadcrumb } from '../lib/seo';
 import { PageHero } from '../components/marketing';
 
@@ -50,7 +51,7 @@ export default function Contact() {
       <div className="mx-auto max-w-2xl px-4 sm:px-6 py-16">
         {sent ? (
           <div className="rounded-3xl border border-emerald-200 bg-emerald-50 p-10 text-center" role="status">
-            <div className="text-5xl mb-4" aria-hidden>✉️</div>
+            <div className="w-14 h-14 mx-auto mb-4 rounded-2xl bg-emerald-100 grid place-items-center"><MailIcon className="w-7 h-7 text-emerald-600" /></div>
             <h2 className="font-display text-2xl font-extrabold text-slate-900">Message received.</h2>
             <p className="mt-3 text-slate-600">
               Thanks, {name.split(' ')[0] || 'there'} — your note is in our inbox. We reply to every message,

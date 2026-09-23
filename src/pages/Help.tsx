@@ -5,6 +5,7 @@ import { Link } from 'react-router-dom';
 import { getApi } from '../lib/api';
 import { useStore } from '../lib/store';
 import { asP2, seedHelpIfEmpty, type ApiHelpArticle2 } from '../lib/contentSeed';
+import { SearchIcon } from '../components/icons';
 import { Seo, jsonLdFaq, jsonLdBreadcrumb } from '../lib/seo';
 import { PageHero, CtaBand } from '../components/marketing';
 
@@ -66,7 +67,7 @@ export default function Help() {
 
       <div className="mx-auto max-w-5xl px-4 sm:px-6 py-14">
         <div className="relative max-w-xl mx-auto -mt-2 mb-12">
-          <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" aria-hidden>🔍</span>
+          <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"><SearchIcon className="w-5 h-5" /></span>
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}

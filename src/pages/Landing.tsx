@@ -7,6 +7,11 @@ import { botReply } from '../lib/bot';
 import { cx } from '../lib/utils';
 import { Button } from '../components/ui';
 import { Seo, jsonLdOrganization, jsonLdWebSite } from '../lib/seo';
+import {
+  BellIcon, BoltIcon, BookIcon, ChatIcon, EyeIcon, GlobeIcon,
+  PenIcon, PulseIcon, ReplyIcon, ShieldIcon, SparkIcon,
+} from '../components/icons';
+import type { ComponentType } from 'react';
 
 // ---------------------------------------------------------------- live demo
 
@@ -129,15 +134,15 @@ function LiveDemo() {
 
 // ---------------------------------------------------------------- data
 
-const FEATURES = [
-  { icon: '💬', title: 'A widget your brand would wear', desc: 'Every color, corner and label is yours. No dated bubble, no forced branding — it matches your site pixel for pixel.' },
-  { icon: '🤖', title: 'AI that answers first', desc: 'A chatbot trained on your help docs greets visitors, resolves the easy stuff and hands off with a full transcript.' },
-  { icon: '👀', title: 'See visitors live', desc: 'Watch who is on your site, what page they are reading and what they are typing — then jump in before they bounce.' },
-  { icon: '⚡', title: 'Proactive triggers', desc: 'Smart rules start the right conversation: exit-intent, cart value, time on pricing — with quick-reply buttons built in.' },
-  { icon: '🌍', title: 'Speak their language', desc: 'Both sides type in their own language. Messages translate instantly, in over 50 languages.' },
-  { icon: '📚', title: 'Help center included', desc: 'A hosted knowledge base with drafts, categories and custom URLs — so answers exist before anyone asks.' },
-  { icon: '🔔', title: 'Alerts that actually arrive', desc: 'Granular notification rules with push and SMS failover. Missed chats become tickets automatically.' },
-  { icon: '🛡️', title: 'Trust by default', desc: 'Verified-business badges, visitor bans, country controls and honest analytics you can check against GA.' },
+const FEATURES: Array<{ icon: ComponentType<{ className?: string }>; title: string; desc: string }> = [
+  { icon: ChatIcon, title: 'A widget your brand would wear', desc: 'Every color, corner and label is yours. No dated bubble, no forced branding — it matches your site pixel for pixel.' },
+  { icon: SparkIcon, title: 'AI that answers first', desc: 'A chatbot trained on your help docs greets visitors, resolves the easy stuff and hands off with a full transcript.' },
+  { icon: EyeIcon, title: 'See visitors live', desc: 'Watch who is on your site, what page they are reading and what they are typing — then jump in before they bounce.' },
+  { icon: BoltIcon, title: 'Proactive triggers', desc: 'Smart rules start the right conversation: exit-intent, cart value, time on pricing — with quick-reply buttons built in.' },
+  { icon: GlobeIcon, title: 'Speak their language', desc: 'Both sides type in their own language. Messages translate instantly, in over 50 languages.' },
+  { icon: BookIcon, title: 'Help center included', desc: 'A hosted knowledge base with drafts, categories and custom URLs — so answers exist before anyone asks.' },
+  { icon: BellIcon, title: 'Alerts that actually arrive', desc: 'Granular notification rules with push and SMS failover. Missed chats become tickets automatically.' },
+  { icon: ShieldIcon, title: 'Trust by default', desc: 'Verified-business badges, visitor bans, country controls and honest analytics you can check against GA.' },
 ];
 
 const STEPS = [
@@ -331,9 +336,9 @@ export default function Landing() {
           />
           <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-5">
             {FEATURES.map((f) => (
-              <article key={f.title} className="rounded-2xl border border-slate-200 bg-white p-6 hover:shadow-xl hover:shadow-brix-600/10 hover:-translate-y-1 transition group">
-                <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-brix-100 to-aqua-100 grid place-items-center text-2xl group-hover:scale-110 transition">
-                  {f.icon}
+              <article key={f.title} className="rounded-2xl border border-slate-200 bg-white p-6 hover:shadow-xl hover:shadow-brix-600/10 hover:-translate-y-1 transition group max-sm:text-center">
+                <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-brix-100 to-aqua-100 grid place-items-center group-hover:scale-110 transition max-sm:mx-auto">
+                  <f.icon className="w-6 h-6 text-brix-600" />
                 </div>
                 <h3 className="mt-4 font-display font-bold text-slate-900">{f.title}</h3>
                 <p className="mt-2 text-sm text-slate-600 leading-relaxed">{f.desc}</p>
@@ -383,12 +388,14 @@ export default function Landing() {
           />
           <div className="grid md:grid-cols-3 gap-6">
             {[
-              { icon: '✍️', t: 'Drafts that sound like you', d: 'The copilot proposes replies in your tone, translates on the fly and rewrites rough notes into polished answers.' },
-              { icon: '💡', t: 'Sentiment radar', d: 'Every thread gets a live mood read. Frustrated visitors get flagged and auto-escalated before they ask to cancel.' },
-              { icon: '⚡', t: 'Smart replies & summaries', d: 'One click inserts a context-aware reply; one click condenses a 40-message thread into five lines for handoffs.' },
+              { icon: PenIcon, t: 'Drafts that sound like you', d: 'The copilot proposes replies in your tone, translates on the fly and rewrites rough notes into polished answers.' },
+              { icon: PulseIcon, t: 'Sentiment radar', d: 'Every thread gets a live mood read. Frustrated visitors get flagged and auto-escalated before they ask to cancel.' },
+              { icon: ReplyIcon, t: 'Smart replies & summaries', d: 'One click inserts a context-aware reply; one click condenses a 40-message thread into five lines for handoffs.' },
             ].map((c) => (
-              <article key={c.t} className="rounded-3xl border border-white/10 bg-white/[0.04] backdrop-blur p-7">
-                <div className="text-3xl">{c.icon}</div>
+              <article key={c.t} className="rounded-3xl border border-white/10 bg-white/[0.04] backdrop-blur p-7 max-sm:text-center">
+                <div className="w-11 h-11 rounded-xl bg-brix-500/15 border border-brix-400/20 grid place-items-center max-sm:mx-auto">
+                  <c.icon className="w-5 h-5 text-aqua-300" />
+                </div>
                 <h3 className="mt-4 font-display text-lg font-bold text-white">{c.t}</h3>
                 <p className="mt-2 text-slate-400 leading-relaxed">{c.d}</p>
               </article>

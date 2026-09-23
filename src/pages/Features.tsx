@@ -3,9 +3,11 @@
 import { cx } from '../lib/utils';
 import { Seo, jsonLdSoftwareApp, jsonLdBreadcrumb } from '../lib/seo';
 import { CtaBand } from '../components/marketing';
+import { ChatIcon, MonitorIcon, SparkIcon, ChartIcon, ShieldIcon } from '../components/icons';
+import type { ComponentType } from 'react';
 
 interface Group {
-  icon: string;
+  icon: ComponentType<{ className?: string }>;
   title: string;
   blurb: string;
   items: string[];
@@ -13,7 +15,7 @@ interface Group {
 
 const GROUPS: Group[] = [
   {
-    icon: '💬',
+    icon: ChatIcon,
     title: 'Chat widget',
     blurb: 'The thing your visitors actually touch. Designed to disappear into your brand.',
     items: [
@@ -28,7 +30,7 @@ const GROUPS: Group[] = [
     ],
   },
   {
-    icon: '🖥️',
+    icon: MonitorIcon,
     title: 'Agent dashboard',
     blurb: 'A fast inbox your team will open every morning without sighing.',
     items: [
@@ -45,7 +47,7 @@ const GROUPS: Group[] = [
     ],
   },
   {
-    icon: '🤖',
+    icon: SparkIcon,
     title: 'AI & automation',
     blurb: 'Your team multiplied. The AI does the repetitive work; humans do the human work.',
     items: [
@@ -59,7 +61,7 @@ const GROUPS: Group[] = [
     ],
   },
   {
-    icon: '📊',
+    icon: ChartIcon,
     title: 'Analytics',
     blurb: 'Numbers you can trust, presented like they were made for decisions.',
     items: [
@@ -72,7 +74,7 @@ const GROUPS: Group[] = [
     ],
   },
   {
-    icon: '🛡️',
+    icon: ShieldIcon,
     title: 'Trust & controls',
     blurb: 'The unglamorous stuff that keeps you sleeping at night.',
     items: [
@@ -127,9 +129,9 @@ export default function Features() {
       <div className="mx-auto max-w-7xl px-4 sm:px-6 py-20 space-y-20">
         {GROUPS.map((g, gi) => (
           <section key={g.title} aria-labelledby={`feat-${gi}`}>
-            <div className="flex items-start gap-4 mb-8">
-              <div className={cx('w-14 h-14 rounded-2xl grid place-items-center text-3xl shrink-0', gi % 2 ? 'bg-gradient-to-br from-aqua-100 to-brix-100' : 'bg-gradient-to-br from-brix-100 to-aqua-100')}>
-                {g.icon}
+            <div className="flex items-start gap-4 mb-8 max-sm:flex-col max-sm:items-center max-sm:text-center">
+              <div className={cx('w-14 h-14 rounded-2xl grid place-items-center shrink-0', gi % 2 ? 'bg-gradient-to-br from-aqua-100 to-brix-100' : 'bg-gradient-to-br from-brix-100 to-aqua-100')}>
+                <g.icon className="w-7 h-7 text-brix-600" />
               </div>
               <div>
                 <h2 id={`feat-${gi}`} className="font-display text-2xl sm:text-3xl font-extrabold text-slate-900">{g.title}</h2>
