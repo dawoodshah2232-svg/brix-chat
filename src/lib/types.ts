@@ -232,6 +232,8 @@ export interface Settings {
   qualityRubric?: QualityWeights;
   /** SLA policies per ticket priority (P4-16). Falls back to DEFAULT_SLA_POLICIES. */
   slaPolicies?: SlaPolicy[];
+  /** Saved analytics reports (P4-15). */
+  savedReports?: SavedReport[];
   /** Bot & handoff config (P4-18). */
   bot?: {
     /** Auto-reply confidence below this (0–100) → route to a human instead. */
@@ -239,6 +241,16 @@ export interface Settings {
     /** Minutes an AI-handled chat may wait for agent pickup before escalation. */
     handoffTimeoutMins: number;
   };
+}
+
+/** P4-15: a reusable analytics report definition. */
+export interface SavedReport {
+  id: string;
+  name: string;
+  preset: string;
+  sections: string[];
+  createdAt: number;
+  createdBy: string;
 }
 
 export interface DistressSettings {

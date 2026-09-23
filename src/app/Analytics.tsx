@@ -4,13 +4,26 @@ import { useEffect, useMemo, useState } from 'react';
 import { useStore } from '../lib/store';
 import { getApi } from '../lib/api';
 import type { ApiGoal, ApiTicket } from '../lib/api';
-import { downloadCsv, fmtDuration, timeAgo } from '../lib/utils';
-import { Card, StatCard } from '../components/ui';
+import type { SavedReport } from '../lib/types';
+import { downloadCsv, fmtDuration, timeAgo, uid } from '../lib/utils';
+import { Button, Card, Input, Label, Modal, Select, StatCard } from '../components/ui';
 import { cx } from '../lib/utils';
 
 const DAY_MS = 86400000;
 
 type Preset = '7d' | '30d' | '90d' | 'all';
+/** P4-15: sections a report can include. */
+const REPORT_SECTIONS = [
+  { id: 'overview', label: 'Overview stats' },
+  { id: 'funnel', label: 'Conversion funnel' },
+  { id: 'leaderboard', label: 'Agent leaderboard' },
+  { id: 'sla', label: 'SLA & response' },
+  { id: 'csat', label: 'CSAT breakdown' },
+  { id: 'bot', label: 'Bot & drop-off' },
+  { id: 'daily', label: 'Conversations per day' },
+  { id: 'dept', label: 'Conversations by department' },
+] as const;
+
 const PRESETS: Array<{ id: Preset; label: string; days: number | null }> = [
   { id: '7d', label: '7 days', days: 7 },
   { id: '30d', label: '30 days', days: 30 },
@@ -102,6 +115,7 @@ function FunnelBar({ label, value, pct, tone }: { label: string; value: number; 
       <div className="h-3 rounded-full bg-slate-100 overflow-hidden">
         <div className={cx('h-full rounded-full transition-all', tone)} style={{ width: `${Math.max(2, pct)}%` }} />
       </div>
+
     </div>
   );
 }
@@ -124,6 +138,11 @@ export default function Analytics() {
   const store = useStore();
   const { session, effectiveWorkspaceId } = store;
   const [preset, setPreset] = useState<Preset>('30d');
+  const [builderOpen, setBuilderOpen] = useState(false);
+  const [draftName, setDraftName] = useState('');
+  const [draftPreset, setDraftPreset] = useState<Preset>('30d');
+  const [draftSections, setDraftSections] = useState<string[]>(REPORT_SECTIONS.map((r) => r.id));
+  const [activeReport, setActiveReport] = useState<SavedReport | null>(null);
   const [goals, setGoals] = useState<ApiGoal[]>([]);
   const [tickets, setTickets] = useState<ApiTicket[]>([]);
 
@@ -290,6 +309,51 @@ export default function Analytics() {
   };
 
   const presetLabel = PRESETS.find((p) => p.id === preset)?.label ?? '';
+  const visible = (id: string) => !activeReport || activeReport.sections.includes(id);
+
+  const savedReports = store.data.settings.savedReports ?? [];
+  const saveReport = () => {
+    if (!draftName.trim() || draftSections.length === 0) return;
+    const r: SavedReport = {
+      id: uid('rep'), name: draftName.trim(), preset: draftPreset,
+      sections: draftSections, createdAt: Date.now(), createdBy: session?.displayName ?? 'Unknown',
+    };
+    store.updateSettings({ savedReports: [r, ...savedReports] });
+    setDraftName('');
+    setDraftPreset('30d');
+    setDraftSections(REPORT_SECTIONS.map((x) => x.id));
+  };
+  const deleteReport = (id: string) => {
+    store.updateSettings({ savedReports: savedReports.filter((r) => r.id !== id) });
+    if (activeReport?.id === id) setActiveReport(null);
+  };
+  const runReport = (r: SavedReport) => {
+    setPreset(r.preset as Preset);
+    setActiveReport(r);
+    setBuilderOpen(false);
+  };
+  /** P4-15: one summary CSV covering the report's sections. */
+  const reportCsv = (r: SavedReport) => {
+    const rows: string[][] = [['section', 'metric', 'value']];
+    const push = (section: string, metric: string, value: string | number) => rows.push([section, metric, String(value)]);
+    if (r.sections.includes('overview')) {
+      push('overview', 'conversations', convs.length);
+      push('overview', 'missed', convs.filter((c) => c.status === 'missed').length);
+      push('overview', 'satisfaction_pct', csat.rated ? csat.pct : '');
+    }
+    if (r.sections.includes('funnel')) funnel.forEach((x) => push('funnel', x.label, x.value));
+    if (r.sections.includes('leaderboard')) leaderboard.forEach((l) => push('leaderboard', `${l.name} chats`, l.chats));
+    if (r.sections.includes('sla')) {
+      push('sla', 'breached', sla.breached); push('sla', 'at_risk', sla.atRisk); push('sla', 'on_track', sla.onTrack);
+    }
+    if (r.sections.includes('csat')) push('csat', 'overall_pct', csat.rated ? csat.pct : '');
+    if (r.sections.includes('bot')) {
+      push('bot', 'ai_handled', botStats.aiHandled);
+      push('bot', 'dropoffs', botStats.dropoffs.length);
+      push('bot', 'dropoff_rate_pct', botStats.dropRate);
+    }
+    downloadCsv(`brix-report-${r.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.csv`, rows);
+  };
 
   return (
     <div className="space-y-5">
@@ -305,10 +369,23 @@ export default function Analytics() {
               {p.label}
             </button>
           ))}
+          <button onClick={() => setBuilderOpen(true)}
+            className="px-3.5 py-1.5 rounded-lg font-semibold text-brix-700 hover:bg-brix-50 transition">
+            📊 Reports
+          </button>
         </div>
       </div>
+      {activeReport && (
+        <div className="flex items-center gap-2 rounded-xl bg-brix-50 border border-brix-200 px-4 py-2.5">
+          <span className="text-sm font-semibold text-brix-800">📊 Viewing report: {activeReport.name}</span>
+          <span className="text-xs text-brix-600">({PRESETS.find((p) => p.id === activeReport.preset)?.label}, {activeReport.sections.length} sections)</span>
+          <button onClick={() => reportCsv(activeReport)} className="text-xs font-bold text-brix-700 hover:underline ml-2">⬇ CSV</button>
+          <button onClick={() => setActiveReport(null)} className="ml-auto text-xs font-semibold text-slate-500 hover:text-slate-800">✕ Clear</button>
+        </div>
+      )}
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      {visible('overview') && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard label="Total conversations" value={String(convs.length)} icon="💬" tone="indigo" />
         <StatCard label="Avg first response" value={response.n ? fmtDuration(response.avg) : '—'} icon="⚡" tone="cyan"
           delta={response.n ? `median ${fmtDuration(response.median)}` : undefined} />
@@ -317,9 +394,11 @@ export default function Analytics() {
         <StatCard label="Missed chats" value={String(convs.filter((c) => c.status === 'missed').length)} icon="📵" tone="rose" />
         <StatCard label="Chat drop-offs" value={String(botStats.dropoffs.length)} icon="🏃" tone="amber"
           delta={botStats.dropRate ? `${botStats.dropRate}% of chats` : undefined} />
-      </div>
+        </div>
+      )}
 
       <div className="grid lg:grid-cols-2 gap-4">
+        {visible('funnel') && (
         <Card className="p-5">
           <SectionHead title="Conversion funnel" hint="Visitors → chats → resolved → rated" onCsv={csv.funnel} />
           <div className="space-y-4">
@@ -343,8 +422,9 @@ export default function Analytics() {
               </div>
             </div>
           )}
-        </Card>
+        </Card>)}
 
+        {visible('leaderboard') && (
         <Card className="p-5">
           <SectionHead title="Agent leaderboard" hint="Chats, resolution rate, CSAT, response" onCsv={csv.leaderboard} />
           {leaderboard.length === 0 ? (
@@ -377,8 +457,9 @@ export default function Analytics() {
               </table>
             </div>
           )}
-        </Card>
+        </Card>)}
 
+        {visible('sla') && (
         <Card className="p-5">
           <SectionHead title="SLA & response" hint="Ticket SLA status + first-response distribution" onCsv={csv.sla} />
           <div className="grid grid-cols-3 gap-3 mb-4">
@@ -400,8 +481,9 @@ export default function Analytics() {
             <div className="flex justify-between"><span>Median first response</span><span className="font-bold">{response.n ? fmtDuration(response.median) : '—'}</span></div>
             <div className="flex justify-between"><span>Tickets with SLA set</span><span className="font-bold">{sla.total}</span></div>
           </div>
-        </Card>
+        </Card>)}
 
+        {visible('csat') && (
         <Card className="p-5">
           <SectionHead title="CSAT breakdown" hint="Post-chat satisfaction ratings" onCsv={csv.csat} />
           {csat.rated === 0 ? (
@@ -420,8 +502,9 @@ export default function Analytics() {
               <div className="text-sm text-slate-500 pt-1">Overall satisfaction: <span className="font-bold text-slate-900">{csat.pct}%</span> from {csat.rated} ratings</div>
             </div>
           )}
-        </Card>
+        </Card>)}
 
+        {visible('bot') && (
         <Card className="p-5">
           <SectionHead title="Bot & drop-off" hint="AI-handled chats, handoff, and visitors who left unanswered" onCsv={csv.dropoff} />
           <div className="grid grid-cols-3 gap-3 mb-4">
@@ -460,16 +543,77 @@ export default function Analytics() {
               )}
             </div>
           )}
-        </Card>
+        </Card>)}
 
+        {visible('daily') && (
         <Card className="p-5">
           <SectionHead title="Conversations per day" hint={`Last ${Math.min(days ?? 30, 30)} days`} onCsv={csv.conversations} />
           <LineChart values={daily.values} labels={daily.labels} />
-        </Card>
+        </Card>)}
+        {visible('dept') && (
         <Card className="p-5">
           <SectionHead title="Conversations by department" hint={presetLabel} onCsv={csv.conversations} />
           {byDept.length ? <BarChart entries={byDept} /> : <div className="text-sm text-slate-400 py-8 text-center">No data yet.</div>}
-        </Card>
+        </Card>)}
+      {/* P4-15: report builder + saved reports */}
+      <Modal open={builderOpen} onClose={() => setBuilderOpen(false)} title="Analytics reports" wide>
+        <div className="grid sm:grid-cols-2 gap-6">
+          <div>
+            <h3 className="text-sm font-bold text-slate-900 mb-3">Build a report</h3>
+            <div className="space-y-3">
+              <div><Label>Report name</Label><Input value={draftName} onChange={(e) => setDraftName(e.target.value)} placeholder="Weekly support summary" /></div>
+              <div>
+                <Label>Date range</Label>
+                <Select value={draftPreset} onChange={(e) => setDraftPreset(e.target.value as Preset)} className="w-full">
+                  {PRESETS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+                </Select>
+              </div>
+              <div>
+                <Label>Sections</Label>
+                <div className="space-y-1.5 mt-1">
+                  {REPORT_SECTIONS.map((r) => (
+                    <label key={r.id} className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
+                      <input type="checkbox" checked={draftSections.includes(r.id)}
+                        onChange={() => setDraftSections((xs) => xs.includes(r.id) ? xs.filter((x) => x !== r.id) : [...xs, r.id])}
+                        className="w-4 h-4 rounded accent-brix-600" />
+                      {r.label}
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <Button onClick={saveReport} disabled={!draftName.trim() || draftSections.length === 0}>Save report</Button>
+            </div>
+          </div>
+          <div>
+            <h3 className="text-sm font-bold text-slate-900 mb-3">Saved reports ({savedReports.length})</h3>
+            {savedReports.length === 0 ? (
+              <div className="text-sm text-slate-400 py-6 text-center border border-dashed border-slate-200 rounded-xl">
+                No saved reports yet — build one on the left.
+              </div>
+            ) : (
+              <div className="space-y-2 max-h-80 overflow-y-auto slim-scroll">
+                {savedReports.map((r) => (
+                  <div key={r.id} className="rounded-xl border border-slate-200 p-3">
+                    <div className="flex items-center gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-bold text-slate-900 truncate">{r.name}</div>
+                        <div className="text-xs text-slate-500">
+                          {PRESETS.find((p) => p.id === r.preset)?.label} · {r.sections.length} sections · {r.createdBy} · {timeAgo(r.createdAt)}
+                        </div>
+                      </div>
+                      <button onClick={() => deleteReport(r.id)} className="text-xs text-slate-400 hover:text-rose-600" title="Delete report">🗑</button>
+                    </div>
+                    <div className="flex gap-2 mt-2">
+                      <Button size="sm" onClick={() => runReport(r)}>▶ Run</Button>
+                      <Button size="sm" variant="secondary" onClick={() => reportCsv(r)}>⬇ CSV</Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </Modal>
       </div>
     </div>
   );
