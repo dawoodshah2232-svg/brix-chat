@@ -11,6 +11,7 @@ import { ToastHost } from '../components/dashboard/Toasts';
 import { DistressWatcher } from '../components/dashboard/DistressWatcher';
 import { Topbar } from '../components/dashboard/Topbar';
 import { CommandPalette } from '../components/dashboard/CommandPalette';
+import { getTheme, applyTheme } from '../lib/theme';
 import { DashboardSidebar } from '../components/dashboard/Sidebar';
 import type { SidebarGroup } from '../components/dashboard/Sidebar';
 import {
@@ -20,6 +21,7 @@ import {
   ChartIcon,
   ChatIcon,
   CogIcon,
+  ClockIcon,
   ContactsIcon,
   CodeIcon,
   GlobeIcon,
@@ -27,6 +29,7 @@ import {
   MegaphoneIcon,
   MenuIcon,
   PaletteIcon,
+  SparkleIcon,
   StarIcon,
   TagIcon,
   TeamIcon,
@@ -119,6 +122,7 @@ function ViewAsBanner() {
 export default function AppShell() {
   const { session, effectiveWorkspaceId } = useStore();
   const location = useLocation();
+  const navigate = useNavigate();
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -149,6 +153,24 @@ export default function AppShell() {
     setMobileOpen(false);
     setPaletteOpen(false);
   }, [location.pathname]);
+
+  // First-run onboarding: send agents who haven't finished the welcome tour
+  // to /app/welcome (skippable, non-blocking). Also (re)applies the agent's
+  // saved dashboard theme.
+  useEffect(() => {
+    const name = session?.displayName;
+    if (!name) return;
+    applyTheme(getTheme(name));
+    if (location.pathname === '/app/welcome') return;
+    try {
+      if (!localStorage.getItem(`brixchat_onboarded_${effectiveWorkspaceId()}`)) {
+        navigate('/app/welcome', { replace: true });
+      }
+    } catch {
+      /* ignore */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.displayName, location.pathname]);
 
   // Global keyboard shortcuts (ignored while typing, except ⌘K).
   useEffect(() => {
@@ -211,7 +233,10 @@ export default function AppShell() {
     },
     {
       label: 'Automate',
-      items: [{ to: '/app/triggers', label: 'Triggers', icon: <TriggerIcon /> }],
+      items: [
+        { to: '/app/triggers', label: 'Triggers', icon: <TriggerIcon /> },
+        { to: '/app/flows', label: 'Flows', icon: <SparkleIcon /> },
+      ],
     },
   ];
 
@@ -224,8 +249,10 @@ export default function AppShell() {
         { to: '/app/install', label: 'Install', icon: <CodeIcon /> },
         { to: '/app/team', label: 'Team', icon: <TeamIcon /> },
         { to: '/app/departments', label: 'Departments', icon: <BuildingIcon /> },
+        { to: '/app/schedules', label: 'Schedules', icon: <ClockIcon /> },
         { to: '/app/categories', label: 'Categories', icon: <TagIcon /> },
         { to: '/app/developers', label: 'Developers', icon: <TerminalIcon /> },
+        { to: '/app/import', label: 'Import', icon: <ContactsIcon /> },
         { to: '/app/settings', label: 'Settings', icon: <CogIcon /> },
       ],
     },
@@ -352,7 +379,7 @@ export default function AppShell() {
                 className={({ isActive }) =>
                   cx(
                     'relative flex flex-col items-center gap-0.5 py-2.5 text-[10px] font-semibold transition',
-                    isActive ? 'text-brix-700' : 'text-slate-400',
+                    isActive ? 'text-brix-700' : 'text-slate-500',
                   )
                 }
               >
@@ -369,7 +396,7 @@ export default function AppShell() {
             ))}
             <button
               onClick={() => setMobileOpen(true)}
-              className="flex flex-col items-center gap-0.5 py-2.5 text-[10px] font-semibold text-slate-400"
+              className="flex flex-col items-center gap-0.5 py-2.5 text-[10px] font-semibold text-slate-500"
             >
               <MenuIcon />
               More
@@ -389,7 +416,7 @@ export default function AppShell() {
             </div>
           ))}
         </div>
-        <p className="text-xs text-slate-400 mt-4">
+        <p className="text-xs text-slate-500 mt-4">
           Tip: press <kbd className="font-mono font-bold">⌘K</kbd> anywhere to jump to any page or run an action.
         </p>
         <div className="flex justify-end mt-5">
