@@ -1,7 +1,9 @@
 // Brix Chat — shared domain types (demo mode: localStorage-backed, no backend)
 
 export type MsgFrom = 'visitor' | 'agent' | 'ai' | 'system';
-export type MsgKind = 'text' | 'file' | 'voice' | 'rating';
+// phase 4 (P4-17): 'audio' = widget/dashboard voice-note message (HTML5 player,
+// blob persisted in localStorage size-capped; ChatThread renders its side).
+export type MsgKind = 'text' | 'file' | 'voice' | 'audio' | 'rating';
 
 export interface ChatMessage {
   id: string;
@@ -14,6 +16,8 @@ export interface ChatMessage {
   fileSize?: string;
   durationSec?: number;
   rating?: number; // 1..5 for kind === 'rating'
+  audio_url?: string; // P4-17: playback URL for kind === 'audio' (object URL or data URL)
+  audio_duration_secs?: number; // P4-17: voice-note length in seconds
 }
 
 export interface InternalNote {
@@ -90,6 +94,27 @@ export interface Article {
   views: number;
   helpful?: number; // phase 2: "was this helpful" up-votes
   notHelpful?: number; // phase 2: down-votes
+  // phase 4 (P4-4): guided troubleshooting trees. kind defaults to 'article'
+  // when unset; 'guide' articles carry ordered guide_steps.
+  kind?: ArticleKind;
+  guide_steps?: GuideStep[];
+}
+
+// phase 4 (P4-4) — shared contract for guided troubleshooting trees.
+// A guide is an ordered list of steps; each step's options branch to another
+// step by id. A step with no options is terminal (resolution reached).
+export type ArticleKind = 'article' | 'guide';
+
+export interface GuideOption {
+  label: string;
+  next_step_id: string;
+}
+
+export interface GuideStep {
+  id: string;
+  title: string;
+  body?: string;
+  options: GuideOption[];
 }
 
 export interface Canned {

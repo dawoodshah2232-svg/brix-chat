@@ -50,6 +50,7 @@ import { useSearchParams } from 'react-router-dom';
 import { getApi } from '../lib/api';
 import type { ApiArticle, ApiConversation, ApiProperty } from '../lib/api';
 import { botReply } from '../lib/bot';
+import type { GuideStep } from '../lib/types';
 import { uid, fmtTime, cx } from '../lib/utils';
 
 const NS = 'brixchat';
@@ -98,6 +99,19 @@ interface P2Api {
       id: string; display_name?: string; name?: string; title?: string; job_title?: string;
     } }>;
   };
+  // Phase 4 (P4-2): proactive triggers — the dashboard worker adds
+  // event_config {event, idle_secs, scroll_pct} + frequency_cap {mode, max}
+  // to api.triggers; read defensively, the widget works without them.
+  triggers?: {
+    list(propertyId: string): Promise<{ data: unknown }>;
+  };
+  // Phase 4 (P4-13): survey config from api feedback settings (dashboard
+  // worker adds); read defensively — legacy two-step CSAT→NPS is the fallback.
+  feedback?: {
+    settings?: {
+      get(propertyId: string): Promise<{ data: unknown }>;
+    };
+  };
 }
 const p2 = (api: unknown): P2Api => (api ?? {}) as P2Api;
 
@@ -109,6 +123,163 @@ const DEFAULT_SETTINGS: P2PropertySettings = {
   widget_color: '', widget_position: 'bottom-right', launcher_style: 'bubble',
   language: 'en', booking_url: '',
 };
+
+/* ------------------------------------------------------------------ */
+/* Phase 4 — widget-side feature helpers                                */
+/* ------------------------------------------------------------------ */
+
+/* P4-2: proactive trigger normalization. Trigger config comes from api
+ * triggers (dashboard worker adds event_config + frequency_cap); legacy
+ * TriggerEvent values ('visitor.idle', 'page.viewed') are mapped so older
+ * rules keep working. The loader (public/widget.js) owns the detectors and
+ * the localStorage frequency caps — the widget only forwards normalized defs. */
+interface P4TriggerNorm {
+  id: string;
+  event: 'page_view' | 'exit_intent' | 'idle' | 'scroll_depth';
+  text: string;
+  idle_secs: number;
+  scroll_pct: number;
+  frequency_cap: { mode: 'once_session' | 'once_day' | 'max_count'; max: number };
+  delay: number;
+  max_prompts_per_visit?: number;
+}
+function normalizeTriggers(raw: unknown): P4TriggerNorm[] {
+  const list = Array.isArray(raw) ? raw : [];
+  const out: P4TriggerNorm[] = [];
+  for (const item of list) {
+    const r = (item ?? {}) as Record<string, unknown>;
+    if (r.enabled === false) continue;
+    const ec = (r.event_config ?? {}) as Record<string, unknown>;
+    let event = typeof ec.event === 'string' ? ec.event : '';
+    if (!event) {
+      const leg = String(r.event ?? '');
+      if (leg === 'visitor.idle') event = 'idle';
+      else if (leg === 'page.viewed') event = 'page_view';
+      else continue; // chat-scoped events never fire from the parent page
+    }
+    if (event !== 'page_view' && event !== 'exit_intent' && event !== 'idle' && event !== 'scroll_depth') continue;
+    let text = '';
+    if (Array.isArray(r.actions)) {
+      const m = (r.actions as Array<Record<string, unknown>>).find((a) => a && a.kind === 'message');
+      if (m) text = String(m.value ?? '');
+    }
+    if (!text && typeof r.action === 'string') {
+      const mm = r.action.match(/^(?:show message|open chat with)\s*:\s*[“"']?(.+?)[”"']?\s*$/i);
+      text = (mm ? mm[1] : r.action).slice(0, 300).trim();
+    }
+    if (!text) continue;
+    const fcap = (r.frequency_cap ?? {}) as Record<string, unknown>;
+    const mode = fcap.mode === 'once_day' || fcap.mode === 'max_count' ? fcap.mode : 'once_session';
+    const mpv = (r as { max_prompts_per_visit?: unknown }).max_prompts_per_visit;
+    out.push({
+      id: String(r.id ?? ''),
+      event: event as P4TriggerNorm['event'],
+      text,
+      idle_secs: Math.max(5, Math.min(Number(ec.idle_secs ?? 30) || 30, 3600)),
+      scroll_pct: Math.max(5, Math.min(Number(ec.scroll_pct ?? 50) || 50, 100)),
+      frequency_cap: { mode, max: Math.max(1, Number(fcap.max ?? 1) || 1) },
+      delay: Math.max(0, Math.min(Number((r as { delay?: unknown }).delay ?? 0) || 0, 120000)),
+      max_prompts_per_visit: mpv != null ? Math.max(1, Number(mpv) || 3) : undefined,
+    });
+  }
+  return out.filter((t) => t.id.length > 0);
+}
+
+/* P4-3: client-side KB ranking — title matches weigh 3× body matches. */
+interface RankedKb { a: ApiArticle; score: number; snippet: string }
+function kbSnippet(body: string, idx: number): string {
+  const clean = body.replace(/\s+/g, ' ').trim();
+  if (idx < 0) return clean.length > 140 ? clean.slice(0, 140) + '…' : clean;
+  const start = Math.max(0, idx - 55);
+  const end = Math.min(clean.length, start + 150);
+  return (start > 0 ? '…' : '') + clean.slice(start, end) + (end < clean.length ? '…' : '');
+}
+function rankKb(arts: ApiArticle[], q: string): RankedKb[] {
+  const terms = q.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length > 1);
+  if (!terms.length) return [];
+  const out: RankedKb[] = [];
+  for (const a of arts) {
+    const title = a.title.toLowerCase();
+    const body = (a.body || '').toLowerCase();
+    let score = 0;
+    let first = -1;
+    let titleHit = false;
+    for (const term of terms) {
+      const th = title.split(term).length - 1;
+      const bh = body.split(term).length - 1;
+      if (th > 0) { titleHit = true; score += th * 3; }
+      if (bh > 0) {
+        score += bh;
+        const i = body.indexOf(term);
+        if (first < 0 || i < first) first = i;
+      }
+    }
+    if (score <= 0) continue;
+    out.push({ a, score: score + (titleHit ? 0.5 : 0), snippet: kbSnippet(a.body || a.title, first) });
+  }
+  return out.sort((x, y) => y.score - x.score).slice(0, 5);
+}
+
+/* P4-4: guided troubleshooting trees. Article kind/guide_steps are part of
+ * the shared types.ts contract; read defensively until the dashboard worker's
+ * api.ts pass lands them on ApiArticle. */
+function articleKindOf(a: ApiArticle): 'article' | 'guide' {
+  return (a as ApiArticle & { kind?: unknown }).kind === 'guide' ? 'guide' : 'article';
+}
+function guideStepsOf(a: ApiArticle): GuideStep[] {
+  const s = (a as ApiArticle & { guide_steps?: unknown }).guide_steps;
+  return Array.isArray(s)
+    ? (s as GuideStep[]).filter((x) => x && typeof x.id === 'string' && Array.isArray(x.options))
+    : [];
+}
+interface GuideRun {
+  article: ApiArticle;
+  steps: GuideStep[];
+  idx: number;
+  trail: number[];
+  choices: Array<{ stepId: string; label: string }>;
+}
+
+/* P4-13: post-chat survey config (csat 1–5 / nps 0–10 / ces 1–7) with optional
+ * comment, suppression cooldown, and delay after resolve. */
+interface SurveyConfig {
+  type: 'csat' | 'nps' | 'ces';
+  comment_enabled: boolean;
+  delay_secs: number;
+  cooldown_days: number;
+}
+function normalizeSurvey(raw: unknown): SurveyConfig | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  const type = r.type === 'nps' ? 'nps' : r.type === 'ces' ? 'ces' : r.type === 'csat' ? 'csat' : null;
+  if (!type) return null;
+  return {
+    type,
+    comment_enabled: r.comment_enabled !== false,
+    delay_secs: Math.max(0, Math.min(Number(r.delay_secs ?? r.delay_after_resolve_secs ?? 0) || 0, 600)),
+    cooldown_days: Math.max(0, Number(r.cooldown_days ?? 7) || 7),
+  };
+}
+
+/* P4-17: voice notes — blob persisted in localStorage, size-capped. */
+interface ActiveRecorder { rec: MediaRecorder; startedAt: number; tickId: number; stream: MediaStream }
+interface AudioPreview { url: string; blob: Blob; secs: number }
+const AUDIO_PREFIX = 'brixchat_audio_v1:';
+
+/** Resolve the persisted playback URL for a voice-note message id (falls back
+ *  to an inline URL, e.g. one rendered by the dashboard worker). */
+function audioUrlForMessage(messageId: string, fallback: string): string | undefined {
+  if (messageId) {
+    try {
+      const raw = localStorage.getItem(`${AUDIO_PREFIX}${messageId}`);
+      if (raw) {
+        const u = String((JSON.parse(raw) as { u?: unknown }).u ?? '');
+        if (u) return u;
+      }
+    } catch { /* ignore */ }
+  }
+  return fallback || undefined;
+}
 
 /* ------------------------------------------------------------------ */
 /* Language packs — original short UI strings (phase 2, T2.11)         */
@@ -142,6 +313,17 @@ const STR: Record<Lang, Record<string, string>> = {
     sendBtn: 'Send', minimizeBtn: 'Minimize chat', dismiss: 'Dismiss', closeChat: 'Close chat', openChat: 'Open chat',
     chatPanel: 'Brix chat panel', onlineNow: 'Online — replies instantly', offlineNow: 'Currently away',
     fileNote: '— file sharing arrives with the backend phase; your file note was added to this chat.',
+    kbSearchPh: 'Search help articles…', kbResults: 'Top matches', kbNoResults: 'No matches found',
+    kbNoResultsHint: 'Try different words — or start a chat and we’ll help directly.',
+    kbBackToResults: 'Back to results', kbGuide: 'Guide',
+    guideBack: 'Back', guideRestart: 'Start over',
+    guideStillStuck: 'Still stuck? Start a chat and we’ll pick up where you left off.',
+    guideYourPath: 'Your path',
+    cesTitle: 'How easy was it to get help?', cesHint: '1 = very difficult · 7 = very easy',
+    audioRec: 'Record a voice note', audioRecording: 'Recording…', audioStop: 'Stop',
+    audioSend: 'Send voice note', audioCancel: 'Cancel', audioPreview: 'Preview',
+    audioDenied: 'Microphone access was denied — check your browser permissions.',
+    audioQuotaWarn: 'Voice-note storage is full — the oldest notes were removed.',
   },
   es: {
     welcome: '¡Hola! 👋', startChat: 'Iniciar chat', leaveMessage: 'Dejar un mensaje', startChatAnyway: 'Iniciar chat igualmente',
@@ -164,6 +346,17 @@ const STR: Record<Lang, Record<string, string>> = {
     sendBtn: 'Enviar', minimizeBtn: 'Minimizar chat', dismiss: 'Descartar', closeChat: 'Cerrar chat', openChat: 'Abrir chat',
     chatPanel: 'Panel de chat de Brix', onlineNow: 'En línea — respuesta inmediata', offlineNow: 'Ausentes ahora mismo',
     fileNote: '— el envío de archivos llega con la fase backend; tu nota se añadió a este chat.',
+    kbSearchPh: 'Buscar en los artículos de ayuda…', kbResults: 'Mejores resultados', kbNoResults: 'Sin resultados',
+    kbNoResultsHint: 'Prueba con otras palabras — o inicia un chat y te ayudamos directamente.',
+    kbBackToResults: 'Volver a los resultados', kbGuide: 'Guía',
+    guideBack: 'Atrás', guideRestart: 'Empezar de nuevo',
+    guideStillStuck: '¿Sigues atascado? Inicia un chat y retomamos donde lo dejaste.',
+    guideYourPath: 'Tu recorrido',
+    cesTitle: '¿Qué tan fácil fue obtener ayuda?', cesHint: '1 = muy difícil · 7 = muy fácil',
+    audioRec: 'Grabar una nota de voz', audioRecording: 'Grabando…', audioStop: 'Detener',
+    audioSend: 'Enviar nota de voz', audioCancel: 'Cancelar', audioPreview: 'Vista previa',
+    audioDenied: 'Se denegó el acceso al micrófono — revisa los permisos de tu navegador.',
+    audioQuotaWarn: 'El almacenamiento de notas de voz está lleno — se eliminaron las más antiguas.',
   },
   fr: {
     welcome: 'Bonjour 👋', startChat: 'Démarrer le chat', leaveMessage: 'Laisser un message', startChatAnyway: 'Démarrer quand même',
@@ -186,6 +379,17 @@ const STR: Record<Lang, Record<string, string>> = {
     sendBtn: 'Envoyer', minimizeBtn: 'Réduire le chat', dismiss: 'Ignorer', closeChat: 'Fermer le chat', openChat: 'Ouvrir le chat',
     chatPanel: 'Panneau de chat Brix', onlineNow: 'En ligne — réponse immédiate', offlineNow: 'Actuellement absents',
     fileNote: '— le partage de fichiers arrive avec la phase backend ; votre note a été ajoutée à ce chat.',
+    kbSearchPh: 'Rechercher dans les articles d’aide…', kbResults: 'Meilleurs résultats', kbNoResults: 'Aucun résultat',
+    kbNoResultsHint: 'Essayez d’autres mots — ou démarrez un chat, nous vous aiderons directement.',
+    kbBackToResults: 'Retour aux résultats', kbGuide: 'Guide',
+    guideBack: 'Retour', guideRestart: 'Recommencer',
+    guideStillStuck: 'Toujours bloqué ? Démarrez un chat, nous reprendrons où vous en étiez.',
+    guideYourPath: 'Votre parcours',
+    cesTitle: 'Était-il facile d’obtenir de l’aide ?', cesHint: '1 = très difficile · 7 = très facile',
+    audioRec: 'Enregistrer un message vocal', audioRecording: 'Enregistrement…', audioStop: 'Arrêter',
+    audioSend: 'Envoyer le message vocal', audioCancel: 'Annuler', audioPreview: 'Aperçu',
+    audioDenied: 'Accès au microphone refusé — vérifiez les autorisations de votre navigateur.',
+    audioQuotaWarn: 'Le stockage des messages vocaux est plein — les plus anciens ont été supprimés.',
   },
   de: {
     welcome: 'Hallo 👋', startChat: 'Chat starten', leaveMessage: 'Nachricht hinterlassen', startChatAnyway: 'Trotzdem chatten',
@@ -208,6 +412,17 @@ const STR: Record<Lang, Record<string, string>> = {
     sendBtn: 'Senden', minimizeBtn: 'Chat minimieren', dismiss: 'Verwerfen', closeChat: 'Chat schließen', openChat: 'Chat öffnen',
     chatPanel: 'Brix-Chat-Fenster', onlineNow: 'Online — antwortet sofort', offlineNow: 'Gerade abwesend',
     fileNote: '— Dateifreigabe kommt mit der Backend-Phase; Ihre Notiz wurde diesem Chat hinzugefügt.',
+    kbSearchPh: 'Hilfeartikel durchsuchen…', kbResults: 'Top-Treffer', kbNoResults: 'Keine Treffer',
+    kbNoResultsHint: 'Versuchen Sie es mit anderen Wörtern — oder starten Sie einen Chat, wir helfen direkt.',
+    kbBackToResults: 'Zurück zu den Ergebnissen', kbGuide: 'Anleitung',
+    guideBack: 'Zurück', guideRestart: 'Von vorn beginnen',
+    guideStillStuck: 'Kommen Sie nicht weiter? Starten Sie einen Chat — wir machen dort weiter, wo Sie aufgehört haben.',
+    guideYourPath: 'Ihr Weg',
+    cesTitle: 'Wie einfach war es, Hilfe zu bekommen?', cesHint: '1 = sehr schwierig · 7 = sehr einfach',
+    audioRec: 'Sprachnotiz aufnehmen', audioRecording: 'Aufnahme…', audioStop: 'Stopp',
+    audioSend: 'Sprachnotiz senden', audioCancel: 'Abbrechen', audioPreview: 'Vorschau',
+    audioDenied: 'Mikrofonzugriff verweigert — prüfen Sie die Browser-Berechtigungen.',
+    audioQuotaWarn: 'Der Sprachnotiz-Speicher ist voll — die ältesten Notizen wurden entfernt.',
   },
   ar: {
     welcome: 'مرحبًا 👋', startChat: 'بدء المحادثة', leaveMessage: 'اترك رسالة', startChatAnyway: 'بدء المحادثة على أي حال',
@@ -230,6 +445,17 @@ const STR: Record<Lang, Record<string, string>> = {
     sendBtn: 'إرسال', minimizeBtn: 'تصغير المحادثة', dismiss: 'تجاهل', closeChat: 'إغلاق المحادثة', openChat: 'فتح المحادثة',
     chatPanel: 'لوحة محادثة بريكس', onlineNow: 'متصل — يرد فورًا', offlineNow: 'غير متاح حاليًا',
     fileNote: '— مشاركة الملفات قادمة مع مرحلة الخادم؛ تمت إضافة ملاحظتك إلى هذه المحادثة.',
+    kbSearchPh: 'ابحث في مقالات المساعدة…', kbResults: 'أفضل النتائج', kbNoResults: 'لا توجد نتائج',
+    kbNoResultsHint: 'جرّب كلمات مختلفة — أو ابدأ محادثة وسنساعدك مباشرة.',
+    kbBackToResults: 'العودة إلى النتائج', kbGuide: 'دليل',
+    guideBack: 'رجوع', guideRestart: 'البدء من جديد',
+    guideStillStuck: 'ما زلت عالقًا؟ ابدأ محادثة وسنكمل من حيث توقفت.',
+    guideYourPath: 'مسارك',
+    cesTitle: 'ما مدى سهولة الحصول على المساعدة؟', cesHint: '1 = صعب جدًا · 7 = سهل جدًا',
+    audioRec: 'تسجيل ملاحظة صوتية', audioRecording: 'جارٍ التسجيل…', audioStop: 'إيقاف',
+    audioSend: 'إرسال الملاحظة الصوتية', audioCancel: 'إلغاء', audioPreview: 'معاينة',
+    audioDenied: 'تم رفض الوصول إلى الميكروفون — تحقق من أذونات المتصفح.',
+    audioQuotaWarn: 'مساحة تخزين الملاحظات الصوتية ممتلئة — تمت إزالة أقدم الملاحظات.',
   },
   ur: {
     welcome: 'سلام 👋', startChat: 'چیٹ شروع کریں', leaveMessage: 'پیغام چھوڑیں', startChatAnyway: 'بہر حال چیٹ شروع کریں',
@@ -252,6 +478,17 @@ const STR: Record<Lang, Record<string, string>> = {
     sendBtn: 'بھیجیں', minimizeBtn: 'چیٹ چھوٹا کریں', dismiss: 'نظر انداز کریں', closeChat: 'چیٹ بند کریں', openChat: 'چیٹ کھولیں',
     chatPanel: 'برکس چیٹ پینل', onlineNow: 'آن لائن — فوری جواب', offlineNow: 'فی الحال دستیاب نہیں',
     fileNote: '— فائل شیئرنگ بیک اینڈ مرحلے کے ساتھ آئے گی؛ آپ کا نوٹ اس چیٹ میں شامل کر دیا گیا ہے۔',
+    kbSearchPh: 'مدد کے مضامین تلاش کریں…', kbResults: 'بہترین نتائج', kbNoResults: 'کوئی نتیجہ نہیں ملا',
+    kbNoResultsHint: 'مختلف الفاظ آزمائیں — یا چیٹ شروع کریں، ہم براہِ راست مدد کریں گے۔',
+    kbBackToResults: 'نتائج پر واپس', kbGuide: 'رہنما',
+    guideBack: 'واپس', guideRestart: 'نئے سرے سے شروع کریں',
+    guideStillStuck: 'اب بھی پھنسے ہیں؟ چیٹ شروع کریں، ہم وہیں سے جاری رکھیں گے جہاں آپ رکے تھے۔',
+    guideYourPath: 'آپ کا راستہ',
+    cesTitle: 'مدد حاصل کرنا کتنا آسان تھا؟', cesHint: '1 = بہت مشکل · 7 = بہت آسان',
+    audioRec: 'صوتی نوٹ ریکارڈ کریں', audioRecording: 'ریکارڈ ہو رہا ہے…', audioStop: 'روکیں',
+    audioSend: 'صوتی نوٹ بھیجیں', audioCancel: 'منسوخ کریں', audioPreview: 'پیش نظارہ',
+    audioDenied: 'مائیکروفون تک رسائی مسترد کر دی گئی — براؤزر کی اجازتیں چیک کریں۔',
+    audioQuotaWarn: 'صوتی نوٹوں کی اسٹوریج بھر گئی ہے — قدیم ترین نوٹ ہٹا دیے گئے۔',
   },
 };
 
@@ -260,7 +497,8 @@ const STR: Record<Lang, Record<string, string>> = {
 /* ------------------------------------------------------------------ */
 interface WMsg {
   id: string; from: 'visitor' | 'agent' | 'system'; text: string; ts: number;
-  kind?: 'transfer'; transferTo?: string; transferNote?: string;
+  kind?: 'transfer' | 'audio'; transferTo?: string; transferNote?: string;
+  audioUrl?: string; audioSecs?: number; // phase 4 (P4-17): voice-note playback
 }
 interface Prompt { id: string; text: string; dismissAfter: number }
 interface HostOverride { enabled?: boolean; fields?: string[] }
@@ -345,6 +583,21 @@ export default function WidgetPage() {
   const [depts, setDepts] = useState<Array<{ id: string; name: string }>>([]);
   const [deptId, setDeptId] = useState('');
   const [assignedAgent, setAssignedAgent] = useState<{ name: string; title: string } | null>(null);
+  // Phase 4 widget features (P4-2/P4-3/P4-4/P4-13/P4-17)
+  const [kbArticles, setKbArticles] = useState<ApiArticle[]>([]);
+  const [kbQ, setKbQ] = useState('');
+  const [kbArticle, setKbArticle] = useState<ApiArticle | null>(null);
+  const [guideRun, setGuideRun] = useState<GuideRun | null>(null);
+  const [guideStuck, setGuideStuck] = useState(false);
+  const [surveyCfg, setSurveyCfg] = useState<SurveyConfig | null>(null);
+  const [surveyReady, setSurveyReady] = useState(true);
+  const [surveySuppressed, setSurveySuppressed] = useState(false);
+  const [surveyKey, setSurveyKey] = useState('');
+  const [surveyScore, setSurveyScore] = useState(-1); // -1 = no selection (NPS 0 is valid)
+  const [recorder, setRecorder] = useState<ActiveRecorder | null>(null);
+  const [recSecs, setRecSecs] = useState(0);
+  const [audioPreview, setAudioPreview] = useState<AudioPreview | null>(null);
+  const [audioWarn, setAudioWarn] = useState('');
   const [lang, setLang] = useState<Lang>(() => {
     try {
       const s = localStorage.getItem('brixchat_widget_lang_v1');
@@ -388,6 +641,11 @@ export default function WidgetPage() {
   const convRef = useRef<ApiConversation | null>(null);
   const chatStartedRef = useRef(false);
   const stageRef = useRef<Stage>('loading');
+  const surveyCfgRef = useRef<SurveyConfig | null>(null);
+  const recRef = useRef<ActiveRecorder | null>(null);
+  // Phase 4: chat-start context (search tag / guide path) — set synchronously
+  // before beginChat so pre-chat forms don't lose it across re-renders.
+  const pendingCtxRef = useRef<{ tag?: string | null; firstVisitorMessage?: string | null } | null>(null);
   stageRef.current = stage;
   convRef.current = conv;
 
@@ -463,11 +721,37 @@ export default function WidgetPage() {
           if (!list && s.departments?.length) list = s.departments.map((d) => ({ id: String(d.id), name: String(d.name) }));
           if (!cancelled && list) setDepts(list);
         } catch { /* departments are optional */ }
-        // FAQ quick-links: top 3 published articles
+        // KB articles: top 3 feed the FAQ quick-links, the full published set
+        // feeds the phase-4 in-widget search (P4-3) + guide stepper (P4-4).
         try {
-          const { data: kb } = await api.kb.list({ status: 'published', limit: 3 });
-          if (!cancelled) setFaq(kb.items);
+          const { data: kb } = await api.kb.list({ status: 'published', limit: 200 });
+          if (!cancelled) { setFaq(kb.items.slice(0, 3)); setKbArticles(kb.items); }
         } catch { /* optional */ }
+        // Phase 4 (P4-13): survey config — legacy two-step CSAT→NPS stays the
+        // fallback until the dashboard worker lands the api feedback settings.
+        try {
+          const fb = p2(api).feedback;
+          let raw: unknown = null;
+          if (fb?.settings?.get) {
+            const { data } = await fb.settings.get(p.id);
+            raw = data;
+          }
+          if (!raw) raw = (s as unknown as { survey?: unknown }).survey ?? null;
+          const sc = normalizeSurvey(raw);
+          if (!cancelled && sc) { setSurveyCfg(sc); surveyCfgRef.current = sc; }
+        } catch { /* legacy two-step fallback */ }
+        // Phase 4 (P4-2): proactive triggers → forwarded to the loader (parent
+        // page), which owns the exit-intent / idle / scroll-depth detectors and
+        // the localStorage frequency caps (key brixchat_trigcap_<triggerId>).
+        try {
+          const tg = p2(api).triggers;
+          if (tg?.list) {
+            const { data } = await tg.list(p.id);
+            const items = Array.isArray(data) ? data : ((data as { items?: unknown }).items ?? []);
+            const norm = normalizeTriggers(items);
+            if (!cancelled && norm.length) postToParent('proactiveTriggers', { triggers: norm });
+          }
+        } catch { /* triggers land with the dashboard worker's api pass */ }
         if (cancelled) return;
         setStage('home');
         postToParent('ready', { property: propertyKey, secureHash: Boolean(visitorHash) });
@@ -595,7 +879,7 @@ export default function WidgetPage() {
     return name ? { name, title } : null;
   };
 
-  const beginChat = async () => {
+  const beginChat = async (opts?: { tag?: string | null; firstVisitorMessage?: string | null }) => {
     const p = property;
     if (!p) return;
     setStage('chat');
@@ -624,20 +908,52 @@ export default function WidgetPage() {
       const resolved = await resolveAgent(agentId, agentName);
       if (resolved) setAssignedAgent(resolved);
     }
-    setConv({ ...c, agent_id: agentId, agent_name: agentName, department: deptName ?? c.department });
+    // P4-3: tag the new conversation (e.g. the searched query) — best-effort.
+    const extraTags = [...new Set([...tags, ...(opts?.tag ? [opts.tag] : [])])];
+    let convTags = c.tags;
+    if (extraTags.length) {
+      try {
+        const { data: updated } = await api.conversations.setTags(c.id, extraTags);
+        convTags = updated.tags;
+      } catch { /* tags are best-effort */ }
+    }
+    setConv({ ...c, agent_id: agentId, agent_name: agentName, department: deptName ?? c.department, tags: convTags });
     setMsgs(c.messages.map((m) => {
       // transfer notices (Worker A may mark them kind:'transfer' or metadata.transfer)
       const raw = m as unknown as { kind?: string; metadata?: Record<string, unknown> };
       const isTransfer = raw.kind === 'transfer' || Boolean(raw.metadata?.transfer);
+      // phase 4 (P4-17): voice notes arrive as kind 'audio' with the playback
+      // URL / duration in metadata (dashboard worker's ChatThread pass).
+      const isAudio = raw.kind === 'audio';
+      const meta = raw.metadata ?? {};
       return {
         id: m.id,
         from: m.sender === 'visitor' ? 'visitor' : m.sender === 'system' ? 'system' : 'agent',
         text: m.text, ts: new Date(m.created_at).getTime(),
-        kind: isTransfer ? ('transfer' as const) : undefined,
-        transferTo: isTransfer ? String(raw.metadata?.transfer_to ?? raw.metadata?.to ?? '') || undefined : undefined,
-        transferNote: isTransfer ? String(raw.metadata?.note ?? '') || undefined : undefined,
+        kind: isTransfer ? ('transfer' as const) : isAudio ? ('audio' as const) : undefined,
+        transferTo: isTransfer ? String(meta.transfer_to ?? meta.to ?? '') || undefined : undefined,
+        transferNote: isTransfer ? String(meta.note ?? '') || undefined : undefined,
+        audioUrl: isAudio ? audioUrlForMessage(String(meta.audio_message_id ?? ''), String(meta.audio_url ?? '')) : undefined,
+        audioSecs: isAudio ? Number(meta.audio_duration_secs ?? 0) || undefined : undefined,
       } as WMsg;
     }));
+    const firstMsg = opts?.firstVisitorMessage;
+    if (firstMsg) {
+      // P4-4: escalated guide path — posted as the visitor's first message so
+      // the transcript shows exactly where they were in the guide.
+      const text = firstMsg.slice(0, 500);
+      pushLocal({ from: 'visitor', text });
+      postToParent('message', { dir: 'out', message: { text } });
+      void api.conversations.sendMessage(c.id, { sender: 'visitor', text }).catch(() => {});
+      if (!chatStartedRef.current) {
+        chatStartedRef.current = true;
+        postToParent('chatStarted', {
+          conversation_id: c.id,
+          visitor: { name: c.visitor_name, attributes, tags: convTags },
+          identity_hash: Boolean(visitorHash),
+        });
+      }
+    }
     window.setTimeout(() => inputRef.current?.focus(), 60);
   };
 
@@ -683,6 +999,30 @@ export default function WidgetPage() {
     } else {
       postToParent('chatEnded', {});
     }
+    // P4-13: suppression (no re-survey of the same contact within the
+    // cooldown) + configurable delay after resolve before the survey shows.
+    const sc = surveyCfgRef.current;
+    if (sc) {
+      const contactKey = (visitorEmail || formVals.email || visitorHash || 'anon').toLowerCase();
+      const key = `brixchat_survey_last_v1:${propertyKey}:${contactKey}`;
+      let last = 0;
+      try { last = Number(localStorage.getItem(key)) || 0; } catch { /* ignore */ }
+      if (last && Date.now() - last < (sc.cooldown_days || 7) * 86400000) {
+        setSurveySuppressed(true);
+      } else {
+        setSurveySuppressed(false);
+        setSurveyKey(key);
+      }
+      const delayMs = Math.max(0, Math.min((sc.delay_secs || 0) * 1000, 300000));
+      setSurveyReady(delayMs === 0);
+      if (delayMs > 0) timers.current.push(window.setTimeout(() => setSurveyReady(true), delayMs));
+    } else {
+      setSurveySuppressed(false);
+      setSurveyReady(true);
+      setSurveyKey('');
+    }
+    setSurveyScore(0);
+    setRatingComment('');
     setStage('ended');
   };
 
@@ -722,11 +1062,237 @@ export default function WidgetPage() {
     setRateStep('done');
   };
 
+  /* ---------- phase 4: configured survey (P4-13: csat | nps | ces) ---------- */
+  // ratings.create (api §9) only models csat/nps; a CES answer is emitted via
+  // ratingSubmitted and logged locally until the backend phase models it.
+  const submitSurvey = () => {
+    const sc = surveyCfgRef.current;
+    if (!sc || surveyScore < 0) return;
+    const c = convRef.current;
+    const comment = ratingComment.trim();
+    if (c && sc.type === 'csat') void api.conversations.setRating(c.id, surveyScore).catch(() => {});
+    if (c && sc.type !== 'ces') {
+      postRating(sc.type, surveyScore, comment);
+    } else {
+      postToParent('ratingSubmitted', { kind: sc.type, score: surveyScore, ...(c ? { conversation_id: c.id } : {}) });
+    }
+    if (sc.type === 'csat') postToParent('satisfaction', { rating: surveyScore, comment });
+    if (surveyKey) {
+      try { localStorage.setItem(surveyKey, String(Date.now())); } catch { /* ignore */ }
+    }
+    setRateStep('done');
+  };
+
+  /* ---------- phase 4: in-widget KB search (P4-3) + guide trees (P4-4) ---------- */
+  const kbResults = useMemo(() => rankKb(kbArticles, kbQ), [kbArticles, kbQ]);
+
+  const openKbArticle = (a: ApiArticle) => {
+    const steps = guideStepsOf(a);
+    if (articleKindOf(a) === 'guide' && steps.length) {
+      setGuideRun({ article: a, steps, idx: 0, trail: [0], choices: [] });
+      setGuideStuck(false);
+      setKbArticle(null);
+    } else {
+      setKbArticle(a);
+      setGuideRun(null);
+    }
+  };
+
+  const closeKb = () => {
+    setKbArticle(null);
+    setGuideRun(null);
+    setGuideStuck(false);
+  };
+
+  /** "Still need help → start chat": the searched query lands on the new
+   *  conversation as a tag (P4-3 acceptance). */
+  const startChatFromSearch = () => {
+    const q = kbQ.trim().slice(0, 40);
+    setKbQ('');
+    closeKb();
+    startFromHome(q ? { tag: `search:${q.toLowerCase()}` } : undefined);
+  };
+
+  const chooseGuideOption = (i: number) => {
+    setGuideStuck(false);
+    setGuideRun((g) => {
+      if (!g) return g;
+      const step = g.steps[g.idx];
+      const opt = step?.options[i];
+      if (!opt) return g;
+      const ni = g.steps.findIndex((s) => s.id === opt.next_step_id);
+      if (ni < 0) return g;
+      return {
+        ...g,
+        idx: ni,
+        trail: [...g.trail, ni],
+        choices: [...g.choices, { stepId: step.id, label: opt.label }],
+      };
+    });
+  };
+
+  const guideBack = () => {
+    setGuideStuck(false);
+    setGuideRun((g) => {
+      if (!g || g.trail.length < 2) return g;
+      const trail = g.trail.slice(0, -1);
+      return { ...g, idx: trail[trail.length - 1], trail, choices: g.choices.slice(0, -1) };
+    });
+  };
+
+  /** Abandon mid-guide → suggest chat with the visited path attached (P4-4). */
+  const escalateFromGuide = () => {
+    const g = guideRun;
+    if (!g) return;
+    const path = g.choices.map((c) => c.label).join(' → ');
+    const firstVisitorMessage =
+      `I followed the guide “${g.article.title}”` +
+      (path ? ` (my path: ${path})` : '') +
+      ' and I still need help.';
+    closeKb();
+    setKbQ('');
+    startFromHome({ tag: `guide:${g.article.slug}`, firstVisitorMessage });
+  };
+
+  /* ---------- phase 4: voice notes (P4-17) ---------- */
+  const startRecording = async () => {
+    setAudioWarn('');
+    if (recRef.current) return;
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) throw new Error('no-mic');
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const rec = new MediaRecorder(stream);
+      const chunks: Blob[] = [];
+      rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+      const startedAt = Date.now();
+      rec.onstop = () => {
+        stream.getTracks().forEach((tr) => tr.stop());
+        const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' });
+        const secs = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
+        setAudioPreview({ url: URL.createObjectURL(blob), blob, secs });
+      };
+      rec.start();
+      const tickId = window.setInterval(() => {
+        const s = Math.round((Date.now() - startedAt) / 1000);
+        setRecSecs(s);
+        if (s >= 120) void stopRecording(); // 2-minute cap per note
+      }, 500);
+      const active: ActiveRecorder = { rec, startedAt, tickId, stream };
+      recRef.current = active;
+      setRecorder(active);
+      setRecSecs(0);
+    } catch {
+      setAudioWarn(t('audioDenied'));
+    }
+  };
+
+  const stopRecording = () => {
+    const r = recRef.current;
+    if (!r) return;
+    window.clearInterval(r.tickId);
+    recRef.current = null;
+    setRecorder(null);
+    if (r.rec.state !== 'inactive') r.rec.stop(); // onstop builds the preview
+    else r.stream.getTracks().forEach((tr) => tr.stop());
+  };
+
+  const cancelRecording = () => {
+    const r = recRef.current;
+    if (r) {
+      window.clearInterval(r.tickId);
+      recRef.current = null;
+      setRecorder(null);
+      r.rec.onstop = null; // don't build a preview for a cancelled take
+      try { if (r.rec.state !== 'inactive') r.rec.stop(); } catch { /* ignore */ }
+      r.stream.getTracks().forEach((tr) => tr.stop());
+    }
+    setAudioPreview(null);
+    setRecSecs(0);
+  };
+
+  /** Persist the blob in localStorage, size-capped: oldest notes are evicted
+   *  first; a clear warning shows when nothing more fits. */
+  const persistAudioBlob = (id: string, blob: Blob, secs: number) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result || '');
+      if (!dataUrl) return;
+      const key = `${AUDIO_PREFIX}${id}`;
+      const entry = JSON.stringify({ u: dataUrl, s: secs, at: Date.now() });
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          localStorage.setItem(key, entry);
+          // swap the in-memory object URL for the persisted data URL
+          setMsgs((prev) => prev.map((m) => (m.id === id ? { ...m, audioUrl: dataUrl } : m)));
+          return;
+        } catch {
+          try {
+            let oldest: string | null = null;
+            let oldestAt = Infinity;
+            for (let i = 0; i < localStorage.length; i++) {
+              const k = localStorage.key(i);
+              if (k && k.startsWith(AUDIO_PREFIX) && k !== key) {
+                try {
+                  const at = Number((JSON.parse(localStorage.getItem(k) || '{}') as { at?: unknown }).at) || 0;
+                  if (at < oldestAt) { oldestAt = at; oldest = k; }
+                } catch { /* ignore */ }
+              }
+            }
+            if (oldest) {
+              localStorage.removeItem(oldest);
+              setAudioWarn(t('audioQuotaWarn'));
+              continue; // retry the write once after evicting
+            }
+          } catch { /* ignore */ }
+          setAudioWarn(t('audioQuotaWarn'));
+          return;
+        }
+      }
+      setAudioWarn(t('audioQuotaWarn'));
+    };
+    reader.onerror = () => setAudioWarn(t('audioQuotaWarn'));
+    reader.readAsDataURL(blob);
+  };
+
+  const sendAudio = () => {
+    const pv = audioPreview;
+    const c = convRef.current;
+    if (!pv || !c) return;
+    const id = uid('w');
+    const label = `[voice note · ${pv.secs}s]`;
+    setMsgs((prev) => [...prev, {
+      id, from: 'visitor', text: label, ts: Date.now(),
+      kind: 'audio' as const, audioUrl: pv.url, audioSecs: pv.secs,
+    }]);
+    postToParent('message', { dir: 'out', message: { text: label, kind: 'audio', audio_duration_secs: pv.secs } });
+    // Shared contract (types.ts) adds kind 'audio'; api.ts MsgKind gains it on
+    // the dashboard worker's pass — sendMessage stores kind verbatim (no validation).
+    void api.conversations.sendMessage(c.id, {
+      sender: 'visitor',
+      text: label,
+      kind: 'audio' as 'voice',
+      metadata: { audio_duration_secs: pv.secs, audio_message_id: id },
+    }).catch(() => { /* voice metadata is best-effort; the note already rendered locally */ });
+    if (!chatStartedRef.current) {
+      chatStartedRef.current = true;
+      postToParent('chatStarted', {
+        conversation_id: c.id,
+        visitor: { name: c.visitor_name, attributes, tags },
+        identity_hash: Boolean(visitorHash),
+      });
+    }
+    persistAudioBlob(id, pv.blob, pv.secs);
+    setAudioPreview(null);
+    setRecSecs(0);
+    setAudioWarn('');
+  };
+
   /* ---------- pre-chat form ---------- */
-  const startFromHome = () => {
+  const startFromHome = (opts?: { tag?: string | null; firstVisitorMessage?: string | null }) => {
     setFormVals({}); setFormErr(''); setDeptId('');
+    pendingCtxRef.current = opts ?? null;
     if (prechatCfg.enabled) setStage('prechat');
-    else void beginChat();
+    else void beginChat(pendingCtxRef.current ?? undefined);
   };
 
   const submitPrechat = (e: React.FormEvent) => {
@@ -738,7 +1304,8 @@ export default function WidgetPage() {
     }
     setFormErr('');
     postToParent('prechatSubmitted', { values: formVals });
-    void beginChat();
+    void beginChat(pendingCtxRef.current ?? undefined);
+    pendingCtxRef.current = null;
   };
 
   /* ---------- offline form → ticket (defensive) ---------- */
@@ -884,6 +1451,87 @@ export default function WidgetPage() {
   const radius = w.bubble === 'pill' ? 24 : w.bubble === 'square' ? 6 : 16;
   const showAgentTyping = typing || typingExt;
 
+  /* P4-4: guided troubleshooting stepper — options branch between steps,
+   *  Back walks the visited trail, and abandoning mid-guide offers chat with
+   *  the visited path attached. */
+  const renderGuide = () => {
+    const g = guideRun;
+    if (!g) return null;
+    const step = g.steps[g.idx];
+    if (!step) return null;
+    const terminal = step.options.length === 0;
+    const exitGuide = () => {
+      if (g.choices.length > 0 && !terminal) setGuideStuck(true);
+      else closeKb();
+    };
+    return (
+      <div>
+        <button onClick={exitGuide}
+          className="mb-3 text-xs font-semibold text-slate-500 dark:text-slate-400 hover:underline">
+          ← {t('kbBackToResults')}
+        </button>
+        <div className="flex items-center gap-2 mb-1">
+          <span className="shrink-0 text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-md text-white" style={{ background: accent }}>{t('kbGuide')}</span>
+          <h1 className="text-base font-bold text-slate-900 dark:text-slate-50 truncate">{g.article.title}</h1>
+        </div>
+        {guideStuck ? (
+          <div className="mt-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl p-4">
+            <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">{t('guideStillStuck')}</p>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+              {t('guideYourPath')}: {g.choices.map((c) => c.label).join(' → ')}
+            </p>
+            <button onClick={escalateFromGuide}
+              className="mt-3 w-full py-2.5 rounded-xl text-white text-sm font-semibold" style={{ background: accent }}>
+              💬 {t('startChat')}
+            </button>
+            <button onClick={() => setGuideStuck(false)}
+              className="mt-2 w-full text-xs text-slate-400 dark:text-slate-500 underline">{t('dismiss')}</button>
+          </div>
+        ) : (
+          <div className="mt-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl p-4">
+            <h2 className="text-sm font-bold text-slate-900 dark:text-slate-50">{step.title}</h2>
+            {step.body && (
+              <p className="text-[13px] text-slate-600 dark:text-slate-300 mt-1 leading-relaxed whitespace-pre-wrap">{step.body}</p>
+            )}
+            {!terminal ? (
+              <div className="mt-3 space-y-2" role="group" aria-label={step.title}>
+                {step.options.map((o, i) => (
+                  <button key={i} onClick={() => chooseGuideOption(i)}
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-sm font-medium text-slate-700 dark:text-slate-200 text-start hover:border-brix-400">
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <button onClick={escalateFromGuide}
+                className="mt-3 w-full py-2.5 rounded-xl text-white text-sm font-semibold" style={{ background: accent }}>
+                💬 {t('startChat')}
+              </button>
+            )}
+            <div className="mt-3 flex items-center gap-2">
+              {g.trail.length > 1 && (
+                <button onClick={guideBack}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
+                  ← {t('guideBack')}
+                </button>
+              )}
+              <button
+                onClick={() => { setGuideStuck(false); setGuideRun({ ...g, idx: 0, trail: [0], choices: [] }); }}
+                className="px-3 py-1.5 rounded-lg text-xs text-slate-500 dark:text-slate-400 underline">
+                {t('guideRestart')}
+              </button>
+            </div>
+            {g.choices.length > 0 && (
+              <p className="mt-3 text-[11px] text-slate-400 dark:text-slate-500">
+                {t('guideYourPath')}: {g.choices.map((c) => c.label).join(' → ')}
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   /* branded header strip for pre-chat / offline forms (only when branding set) */
   const BrandStrip = () => hasBranding ? (
     <div className="-mx-5 -mt-6 mb-4 px-5 py-2.5 flex items-center gap-2.5" style={{ background: headerGradient }}>
@@ -1010,7 +1658,7 @@ export default function WidgetPage() {
 
       {/* ============================ HOME ============================ */}
       {stage === 'home' && (
-        <div className="flex-1 overflow-y-auto slim-scroll px-5 py-6 bg-slate-50 dark:bg-slate-950">
+        <div className="relative flex-1 overflow-y-auto slim-scroll px-5 py-6 bg-slate-50 dark:bg-slate-950">
           <div className="text-center mb-5">
             {logoUrl ? (
               <img src={logoUrl} alt="" className="w-14 h-14 mx-auto rounded-full object-cover mb-3 shadow-lg" />
@@ -1031,13 +1679,13 @@ export default function WidgetPage() {
                   className="w-full py-3 rounded-2xl text-white font-semibold text-sm shadow-lg" style={{ background: accent }}>
                   ✉️ {t('leaveMessage')}
                 </button>
-                <button onClick={startFromHome}
+                <button onClick={() => startFromHome()}
                   className="w-full py-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 font-semibold text-sm text-slate-700 dark:text-slate-200">
                   {t('startChatAnyway')}
                 </button>
               </>
             ) : (
-              <button onClick={startFromHome} autoFocus
+              <button onClick={() => startFromHome()} autoFocus
                 className="w-full py-3 rounded-2xl text-white font-semibold text-sm shadow-lg" style={{ background: accent }}>
                 💬 {t('startChat')}
               </button>
@@ -1049,6 +1697,50 @@ export default function WidgetPage() {
               </a>
             )}
           </div>
+
+          {/* P4-3: in-widget KB search — client-side ranked, top 5 answer cards */}
+          {kbArticles.length > 0 && (
+            <div className="mt-5" role="search">
+              <input
+                value={kbQ}
+                onChange={(e) => setKbQ(e.target.value)}
+                placeholder={t('kbSearchPh')}
+                aria-label={t('kbSearchPh')}
+                className="w-full px-3.5 py-2.5 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 outline-none focus:ring-2 focus:ring-brix-500/40 focus:border-brix-500"
+              />
+              {kbQ.trim().length > 0 && (kbResults.length > 0 ? (
+                <div className="mt-3">
+                  <h2 className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400 dark:text-slate-500 mb-2">{t('kbResults')}</h2>
+                  <div className="space-y-2">
+                    {kbResults.map((r) => (
+                      <button key={r.a.id} onClick={() => openKbArticle(r.a)}
+                        className="w-full text-start bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-700/70 rounded-xl px-3.5 py-2.5">
+                        <span className="flex items-center gap-2">
+                          <span className="truncate text-sm font-semibold text-slate-800 dark:text-slate-100">{r.a.title}</span>
+                          {articleKindOf(r.a) === 'guide' && (
+                            <span className="shrink-0 text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-md text-white" style={{ background: accent }}>{t('kbGuide')}</span>
+                          )}
+                        </span>
+                        <span className="block text-xs text-slate-500 dark:text-slate-400 mt-0.5"
+                          style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                          {r.snippet}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-3 bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-700/70 rounded-xl p-4 text-center">
+                  <div className="text-sm font-semibold text-slate-800 dark:text-slate-100">{t('kbNoResults')}</div>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">{t('kbNoResultsHint')}</p>
+                  <button onClick={startChatFromSearch}
+                    className="mt-3 px-4 py-2 rounded-xl text-white text-sm font-semibold" style={{ background: accent }}>
+                    💬 {t('startChat')}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
 
           {faq.length > 0 && (
             <div className="mt-6">
@@ -1083,6 +1775,27 @@ export default function WidgetPage() {
           </div>
           {w.show_branding && (
             <p className="text-center text-[10px] text-slate-400 dark:text-slate-500 mt-4">Powered by <span className="font-semibold text-slate-500 dark:text-slate-400 dark:text-slate-500">Brix Chat</span></p>
+          )}
+          {/* P4-3/P4-4: in-widget article view + guided troubleshooting stepper */}
+          {(kbArticle || guideRun) && (
+            <div className="absolute inset-0 bg-slate-50 dark:bg-slate-950 overflow-y-auto slim-scroll px-5 py-6">
+              {kbArticle ? (
+                <div>
+                  <button onClick={closeKb}
+                    className="mb-3 text-xs font-semibold text-slate-500 dark:text-slate-400 hover:underline">
+                    ← {t('kbBackToResults')}
+                  </button>
+                  <h1 className="text-base font-bold text-slate-900 dark:text-slate-50">{kbArticle.title}</h1>
+                  <div className="mt-2 text-[13px] text-slate-600 dark:text-slate-300 leading-relaxed whitespace-pre-wrap">
+                    {kbArticle.body || kbArticle.title}
+                  </div>
+                  <button onClick={() => { closeKb(); startFromHome(); }}
+                    className="mt-5 w-full py-3 rounded-2xl text-white font-semibold text-sm shadow-lg" style={{ background: accent }}>
+                    💬 {t('startChat')}
+                  </button>
+                </div>
+              ) : renderGuide()}
+            </div>
           )}
         </div>
       )}
@@ -1153,7 +1866,15 @@ export default function WidgetPage() {
                 <div className="max-w-[82%]">
                   <div className={cx('px-3.5 py-2.5 text-[13.5px] leading-relaxed shadow-sm break-words', m.from === 'visitor' ? 'text-white' : 'bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 border border-slate-100 dark:border-slate-800')}
                     style={{ borderRadius: radius, background: m.from === 'visitor' ? accent : undefined }}>
-                    {m.text}
+                    {m.kind === 'audio' && m.audioUrl ? (
+                      <span className="block">
+                        <audio controls preload="metadata" src={m.audioUrl} className="w-52 max-w-full"
+                          aria-label={`${t('audioPreview')} · ${m.audioSecs ?? 0}s`} />
+                        <span className="block text-[10px] opacity-70 mt-1">🎙️ {m.audioSecs ?? 0}s</span>
+                      </span>
+                    ) : (
+                      m.text
+                    )}
                   </div>
                   <div className={cx('text-[10px] text-slate-400 dark:text-slate-500 mt-1', m.from === 'visitor' ? 'text-right' : 'text-left')}>
                     {fmtTime(m.ts)}
@@ -1188,6 +1909,38 @@ export default function WidgetPage() {
 
           {/* input */}
           <div className="p-3 border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 shrink-0">
+            {recorder && (
+              <div className="mb-2 flex items-center gap-2.5 px-3 py-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900" role="status">
+                <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping-soft shrink-0" aria-hidden />
+                <span className="text-sm font-semibold text-rose-700 dark:text-rose-300">{t('audioRecording')} {recSecs}s</span>
+                <span className="flex-1" />
+                <button onClick={stopRecording}
+                  className="px-3.5 py-1.5 rounded-lg text-white text-xs font-semibold" style={{ background: accent }}>
+                  {t('audioStop')}
+                </button>
+                <button onClick={cancelRecording}
+                  className="px-3 py-1.5 rounded-lg text-xs text-slate-500 dark:text-slate-400 hover:underline">
+                  {t('audioCancel')}
+                </button>
+              </div>
+            )}
+            {audioPreview && (
+              <div className="mb-2 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700" role="group" aria-label={t('audioPreview')}>
+                <audio controls src={audioPreview.url} className="w-full"
+                  aria-label={`${t('audioPreview')} · ${audioPreview.secs}s`} />
+                <div className="flex gap-2 mt-2">
+                  <button onClick={sendAudio}
+                    className="flex-1 py-2 rounded-xl text-white text-sm font-semibold" style={{ background: accent }}>
+                    {t('audioSend')} · {audioPreview.secs}s
+                  </button>
+                  <button onClick={cancelRecording}
+                    className="px-4 py-2 rounded-xl text-sm text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">
+                    {t('audioCancel')}
+                  </button>
+                </div>
+              </div>
+            )}
+            {audioWarn && <p className="mb-2 text-xs font-medium text-amber-700 dark:text-amber-400" role="alert">{audioWarn}</p>}
             {showEmoji && (
               <div className="grid grid-cols-8 gap-1 mb-2 p-2 bg-slate-50 dark:bg-slate-950 rounded-xl">
                 {EMOJIS.map((e) => (
@@ -1197,6 +1950,9 @@ export default function WidgetPage() {
               </div>
             )}
             <div className="flex items-center gap-2">
+              <button onClick={() => void startRecording()} disabled={recorder !== null || audioPreview !== null}
+                className="w-9 h-9 grid place-items-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 dark:bg-slate-800 text-lg shrink-0 disabled:opacity-40"
+                aria-label={t('audioRec')}>🎙️</button>
               <button onClick={() => setShowEmoji((v) => !v)} className="w-9 h-9 grid place-items-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 dark:bg-slate-800 text-lg shrink-0" aria-label={t('emojiBtn')} aria-expanded={showEmoji}>😊</button>
               <button onClick={() => fileRef.current?.click()} className="w-9 h-9 grid place-items-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 dark:bg-slate-800 text-slate-500 dark:text-slate-400 dark:text-slate-500 shrink-0" aria-label={t('attachFile')}>📎</button>
               <input ref={fileRef} type="file" className="hidden" onChange={onFile} aria-hidden tabIndex={-1} />
@@ -1232,8 +1988,68 @@ export default function WidgetPage() {
             <h1 className="text-lg font-bold text-slate-900 dark:text-slate-50">{t('chatEnded')}</h1>
             <p className="text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500 mt-1">{t('chatEndedHint')}</p>
           </div>
-          {rateStep !== 'done' ? (
+          {rateStep !== 'done' && !surveySuppressed && surveyReady ? (
             <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
+              {surveyCfg ? (
+                /* P4-13: configured survey — CSAT 1–5, NPS 0–10, or CES 1–7 */
+                <>
+                  <h2 className="text-sm font-bold text-slate-900 dark:text-slate-50 text-center">
+                    {t(surveyCfg.type === 'ces' ? 'cesTitle' : surveyCfg.type === 'nps' ? 'npsTitle' : 'csatTitle')}
+                  </h2>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500 text-center mt-1 mb-4">
+                    {t(surveyCfg.type === 'ces' ? 'cesHint' : surveyCfg.type === 'nps' ? 'npsHint' : 'csatHint')}
+                  </p>
+                  {surveyCfg.type === 'csat' ? (
+                    <div className="flex justify-center gap-2 mb-4" role="radiogroup" aria-label={t('csatTitle')}>
+                      {[1, 2, 3, 4, 5].map((n) => (
+                        <button key={n} onClick={() => setSurveyScore(n)} role="radio" aria-checked={surveyScore === n}
+                          className={cx('text-3xl transition-transform hover:scale-125 rounded-lg', surveyScore >= n && surveyScore >= 0 ? '' : 'grayscale opacity-40')}
+                          style={hasBranding && surveyScore >= n && surveyScore >= 0 ? { boxShadow: `0 0 0 2px ${accent}` } : undefined}
+                          aria-label={`${n} / 5`}>⭐</button>
+                      ))}
+                    </div>
+                  ) : surveyCfg.type === 'nps' ? (
+                    <div className="grid grid-cols-11 gap-1 mb-4" role="radiogroup" aria-label={t('npsTitle')}>
+                      {Array.from({ length: 11 }, (_, n) => (
+                        <button key={n} onClick={() => setSurveyScore(n)} role="radio" aria-checked={surveyScore === n}
+                          className={cx('h-9 rounded-lg text-sm font-bold transition-colors',
+                            surveyScore === n ? 'text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700')}
+                          style={surveyScore === n ? { background: accent } : undefined}
+                          aria-label={String(n)}>{n}</button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-7 gap-1 mb-4" role="radiogroup" aria-label={t('cesTitle')}>
+                      {Array.from({ length: 7 }, (_, i) => {
+                        const n = i + 1;
+                        return (
+                          <button key={n} onClick={() => setSurveyScore(n)} role="radio" aria-checked={surveyScore === n}
+                            className={cx('h-9 rounded-lg text-sm font-bold transition-colors',
+                              surveyScore === n ? 'text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700')}
+                            style={surveyScore === n ? { background: accent } : undefined}
+                            aria-label={String(n)}>{n}</button>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {surveyCfg.comment_enabled && (
+                    <textarea value={ratingComment} onChange={(e) => setRatingComment(e.target.value)} rows={2}
+                      placeholder={t('commentPh')} aria-label={t('commentPh')}
+                      className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-sm outline-none focus:ring-2 focus:ring-brix-500/40 resize-none mb-3" />
+                  )}
+                  <div className="flex gap-2">
+                    <button onClick={submitSurvey} disabled={surveyScore < 0}
+                      className="flex-1 py-2.5 rounded-xl text-white text-sm font-semibold disabled:opacity-40" style={{ background: accent }}>
+                      {t('submit')}
+                    </button>
+                    <button onClick={() => setRateStep('done')} className="px-4 py-2.5 rounded-xl text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 dark:bg-slate-800">
+                      {t('skip')}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                /* legacy two-step CSAT → NPS (fallback while no survey config exists) */
+                <>
               <p className="text-[11px] font-bold uppercase tracking-widest text-slate-400 dark:text-slate-500 text-center mb-2">
                 {t(rateStep === 'csat' ? 'step1of2' : 'step2of2')}
               </p>
@@ -1286,10 +2102,12 @@ export default function WidgetPage() {
                   </div>
                 </>
               )}
+                </>
+              )}
             </div>
-          ) : (
+          ) : rateStep === 'done' ? (
             <div className="text-center text-sm font-semibold text-emerald-700 dark:text-emerald-400 mb-5">{t('csatThanks')}</div>
-          )}
+          ) : null}
           <button onClick={() => window.location.reload()}
             className="w-full py-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 font-semibold text-sm text-slate-700 dark:text-slate-200">
             💬 {t('newChat')}
