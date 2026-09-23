@@ -247,6 +247,7 @@ function seedSettings(): Settings {
     whiteLabel: false,
     aiEnabled: true,
     notifySound: true,
+    distress: { enabled: true, customWords: [] },
   };
 }
 
@@ -407,6 +408,7 @@ function seedAcmeSettings(): Settings {
     whiteLabel: false,
     aiEnabled: true,
     notifySound: true,
+    distress: { enabled: true, customWords: [] },
   };
 }
 

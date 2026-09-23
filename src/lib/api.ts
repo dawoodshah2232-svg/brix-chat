@@ -2482,6 +2482,11 @@ export class BrixApi {
 
   // ---- audit search -------------------------------------------------------------------------------------------
   audit = {
+    log: async (action: string, entity: string, entityId = '', meta: Record<string, unknown> = {}): Promise<void> => {
+      const db = this.db();
+      this.logAudit(db, action, entity, entityId, meta);
+      this.save(db);
+    },
     search: async (opts: { actor?: string; action?: string; from?: string; to?: string } & ListOpts = {}): Promise<Envelope<Page<AuditEntry>>> => {
       let items = [...this.db().audit].sort((a, b) => b.created_at.localeCompare(a.created_at));
       if (opts.actor) items = items.filter((e) => e.actor.toLowerCase().includes(opts.actor!.toLowerCase()));

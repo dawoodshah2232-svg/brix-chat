@@ -211,6 +211,15 @@ export interface Settings {
   aiEnabled: boolean;
   notifySound: boolean;
   notifyPrefs?: NotifyPrefs; // phase 2
+  /** Distress alerts (P4-6): heuristic visitor-distress detection on new messages. */
+  distress?: DistressSettings;
+}
+
+export interface DistressSettings {
+  /** When false, no distress detection runs. Default true. */
+  enabled: boolean;
+  /** Extra words/phrases (comma input in Settings) that trigger a distress alert. */
+  customWords: string[];
 }
 
 export type MemberRole = 'owner' | 'admin' | 'agent' | 'developer' | 'viewer';

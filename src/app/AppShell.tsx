@@ -8,6 +8,7 @@ import { getApi } from '../lib/api';
 import { Modal, Button } from '../components/ui';
 import { cx } from '../lib/utils';
 import { ToastHost } from '../components/dashboard/Toasts';
+import { DistressWatcher } from '../components/dashboard/DistressWatcher';
 import { Topbar } from '../components/dashboard/Topbar';
 import { CommandPalette } from '../components/dashboard/CommandPalette';
 import { DashboardSidebar } from '../components/dashboard/Sidebar';
@@ -276,6 +277,7 @@ export default function AppShell() {
   return (
     <div className="h-screen flex bg-slate-50 text-slate-900 overflow-hidden">
       <ToastHost />
+      <DistressWatcher />
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} onHelp={() => setHelpOpen(true)} />
 
       <DashboardSidebar

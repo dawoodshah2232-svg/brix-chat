@@ -558,6 +558,44 @@ export default function Settings() {
         </div>
       </Card>
 
+      {/* Sentiment & distress alerts */}
+      <Card className="p-6">
+        <SectionTitle>Sentiment & distress alerts</SectionTitle>
+        <p className="text-sm text-slate-500 mt-1 mb-4">
+          A keyword heuristic watches new visitor messages. Sentiment shown everywhere is an{' '}
+          <span className="font-semibold">auto estimate</span> — not AI analysis.
+        </p>
+        <div className="divide-y divide-slate-100">
+          <div className="flex items-center justify-between py-3">
+            <div>
+              <div className="text-sm font-semibold text-slate-900">⚠ Distress alerts</div>
+              <div className="text-xs text-slate-500">
+                When triggered: auto-tag “distress”, raise priority to high, show a warning toast, write an audit entry
+              </div>
+            </div>
+            <Toggle
+              checked={s.distress?.enabled ?? true}
+              onChange={(v) => store.updateSettings({ distress: { enabled: v, customWords: s.distress?.customWords ?? [] } })}
+              label="Distress alerts"
+            />
+          </div>
+          <div className="py-3">
+            <Label>Custom distress words</Label>
+            <p className="text-xs text-slate-500 mb-2">Comma-separated words or phrases that always trigger an alert, e.g. <code className="font-mono bg-slate-100 px-1 rounded">refund now, manager, terrible</code>.</p>
+            <Input
+              value={(s.distress?.customWords ?? []).join(', ')}
+              onChange={(e) => store.updateSettings({
+                distress: {
+                  enabled: s.distress?.enabled ?? true,
+                  customWords: e.target.value.split(',').map((w) => w.trim()).filter(Boolean),
+                },
+              })}
+              placeholder="refund now, manager, …"
+            />
+          </div>
+        </div>
+      </Card>
+
       {/* Product toggles */}
       <Card className="p-6">
         <SectionTitle>Product</SectionTitle>

@@ -6,17 +6,12 @@ import type { ApiSavedView } from '../lib/api';
 import type { Conversation, ConvPriority, ConvStatus } from '../lib/types';
 import { Avatar, Badge, Button, EmptyState, Input, SearchInput, Select, Tabs } from '../components/ui';
 import { cx, timeAgo } from '../lib/utils';
-import { threadSentiment } from '../lib/bot';
+import { analyzeSentiment, type QualitySentiment } from '../lib/quality';
+import { SentimentDot, SentimentPill, SENTIMENT_META } from '../components/dashboard/Sentiment';
 import ChatThread from './ChatThread';
 import Copilot from './Copilot';
 
 type Tab = ConvStatus;
-
-const SENT_DOT = {
-  positive: 'bg-emerald-500',
-  neutral: 'bg-slate-300',
-  negative: 'bg-rose-500',
-} as const;
 
 const STATUS_TONE = {
   open: 'green',
@@ -56,6 +51,7 @@ export default function Inbox() {
   const [priority, setPriority] = useState<'all' | ConvPriority>('all');
   const [assignee, setAssignee] = useState('all');
   const [tag, setTag] = useState('all');
+  const [sentimentFilter, setSentimentFilter] = useState<'all' | QualitySentiment>('all');
   const [unreadOnly, setUnreadOnly] = useState(false);
   const [unreadFirst, setUnreadFirst] = useState(false);
   const [showSnoozed, setShowSnoozed] = useState(false);
@@ -118,6 +114,7 @@ export default function Inbox() {
         return c.agent === assignee;
       })
       .filter((c) => tag === 'all' || c.tags.includes(tag))
+      .filter((c) => sentimentFilter === 'all' || analyzeSentiment(c.messages.filter((m) => m.from === 'visitor').map((m) => m.text)).label === sentimentFilter)
       .filter((c) => !unreadOnly || c.unread > 0)
       .filter((c) => showSnoozed || !(c.snoozeUntil && c.snoozeUntil > Date.now()))
       .filter(
@@ -132,7 +129,7 @@ export default function Inbox() {
       return b.updatedAt - a.updatedAt;
     });
     return filtered;
-  }, [data.conversations, tab, dept, q, priority, assignee, tag, unreadOnly, unreadFirst, showSnoozed, session?.displayName]);
+  }, [data.conversations, tab, dept, q, priority, assignee, tag, sentimentFilter, unreadOnly, unreadFirst, showSnoozed, session?.displayName]);
 
   const select = (id: string | null) => {
     if (id) setParams({ c: id }, { replace: true });
@@ -292,6 +289,17 @@ export default function Inbox() {
               <option value="all">Tag: all</option>
               {allTags.map((t) => <option key={t} value={t}>#{t}</option>)}
             </Select>
+            <Select
+              value={sentimentFilter}
+              onChange={(e) => setSentimentFilter(e.target.value as 'all' | QualitySentiment)}
+              className="text-xs max-w-32"
+              title="Visitor sentiment (auto estimate)"
+            >
+              <option value="all">Sentiment: all</option>
+              {(Object.keys(SENTIMENT_META) as QualitySentiment[]).map((k) => (
+                <option key={k} value={k}>{SENTIMENT_META[k].emoji} {k}</option>
+              ))}
+            </Select>
             <button
               onClick={() => setUnreadOnly((v) => !v)}
               className={cx('px-2.5 py-1.5 rounded-lg border text-xs font-semibold transition',
@@ -343,6 +351,8 @@ export default function Inbox() {
           )}
           {list.map((c) => {
             const snoozed = c.snoozeUntil && c.snoozeUntil > Date.now();
+            const cTexts = c.messages.filter((m) => m.from === 'visitor').map((m) => m.text);
+            const cSent = analyzeSentiment(cTexts).label;
             return (
               <div
                 key={c.id}
@@ -368,7 +378,7 @@ export default function Inbox() {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-baseline gap-2">
                       <span className="font-semibold text-sm text-slate-900 truncate">{c.visitor}</span>
-                      <span className={cx('w-2 h-2 rounded-full shrink-0', SENT_DOT[threadSentiment(c.messages)])} title={threadSentiment(c.messages)} />
+                      <SentimentDot texts={cTexts} />
                       <span className="ml-auto text-[11px] text-slate-400 shrink-0">{timeAgo(c.updatedAt)}</span>
                     </div>
                     <div className="text-[13px] text-slate-500 truncate mt-0.5">{snippet(c)}</div>
@@ -376,6 +386,7 @@ export default function Inbox() {
                       <Badge tone={STATUS_TONE[c.status]}>{c.status}</Badge>
                       <Badge tone="indigo">{c.department}</Badge>
                       <Badge tone={PRIORITY_TONE[c.priority ?? 'medium']}>⚑ {c.priority ?? 'medium'}</Badge>
+                      {cSent !== 'neutral' && <SentimentPill texts={cTexts} />}
                       {snoozed && <Badge tone="amber">⏰ snoozed</Badge>}
                       {c.unread > 0 && (
                         <span className="ml-auto min-w-5 h-5 px-1 grid place-items-center rounded-full bg-brix-600 text-white text-[11px] font-bold">

@@ -21,6 +21,7 @@ import type {
 import { getApi, ApiError } from './api';
 import type { ApiMember } from './api';
 import { seedData, seedDataForWorkspace, seedWorkspaces } from './seed';
+import { detectDistress } from './quality';
 import { uid } from './utils';
 
 const LS_KEY = 'brixchat_v1';
@@ -354,19 +355,33 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const getVisitor = (id: string) => data.visitors.find((v) => v.id === id);
 
     const addMessage: Store['addMessage'] = (convId, msg) => {
-      patchData((d) => ({
-        ...d,
-        conversations: d.conversations.map((c) =>
-          c.id === convId
-            ? {
-                ...c,
-                messages: [...c.messages, { ...msg, id: uid('m'), ts: msg.ts ?? Date.now() } as ChatMessage],
-                updatedAt: Date.now(),
-                unread: msg.from === 'visitor' ? c.unread + 1 : c.unread,
+      // P4-6 distress alert: heuristic check on live visitor messages.
+      let distress: { convId: string; visitor: string; words: string[] } | null = null;
+      patchData((d) => {
+        const cfg = d.settings.distress ?? { enabled: true, customWords: [] };
+        return {
+          ...d,
+          conversations: d.conversations.map((c) => {
+            if (c.id !== convId) return c;
+            const updated: Conversation = {
+              ...c,
+              messages: [...c.messages, { ...msg, id: uid('m'), ts: msg.ts ?? Date.now() } as ChatMessage],
+              updatedAt: Date.now(),
+              unread: msg.from === 'visitor' ? c.unread + 1 : c.unread,
+            };
+            if (msg.from === 'visitor' && msg.kind === 'text' && cfg.enabled && !c.tags.includes('distress')) {
+              const { distressed, hits } = detectDistress(msg.text, cfg.customWords);
+              if (distressed) {
+                updated.tags = [...c.tags, 'distress'];
+                if (c.priority !== 'urgent' && c.priority !== 'high') updated.priority = 'high';
+                distress = { convId, visitor: c.visitor, words: hits };
               }
-            : c,
-        ),
-      }));
+            }
+            return updated;
+          }),
+        };
+      });
+      if (distress) window.dispatchEvent(new CustomEvent('brix:distress', { detail: distress }));
     };
 
     const updateConversation: Store['updateConversation'] = (convId, patch) => {

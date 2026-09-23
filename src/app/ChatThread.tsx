@@ -6,7 +6,8 @@ import type { ApiPlay } from '../lib/api';
 import type { Canned, ChatMessage, ConvPriority, ConvStatus } from '../lib/types';
 import { Avatar, Badge, Button, EmptyState, Input, Label, Select, Tabs, Textarea, Toggle } from '../components/ui';
 import { cx, fmtDuration, timeAgo } from '../lib/utils';
-import { botReply, OPENERS, threadSentiment } from '../lib/bot';
+import { botReply, OPENERS } from '../lib/bot';
+import { SentimentPill, QualityBadge } from '../components/dashboard/Sentiment';
 
 interface Props {
   convId: string;
@@ -15,8 +16,6 @@ interface Props {
 }
 
 const EMOJIS = ['😀','😂','👍','👋','🙏','❤️','😊','🎉','✅','❌','⚠️','📌','📎','🔗','💡','🚀','⭐','🔥','💬','📞','📧','🕒','💰','🎯'];
-
-const SENT_TONE = { positive: 'green', neutral: 'slate', negative: 'rose' } as const;
 
 /** Canned-response template variables: {{name}} {{visitor}} {{workspace}} {{department}} */
 function fillVars(body: string, ctx: Record<string, string>): string {
@@ -209,7 +208,7 @@ export default function ChatThread({ convId, input, setInput }: Props) {
     );
   }
 
-  const sentiment = threadSentiment(conv.messages);
+  const visitorTexts = conv.messages.filter((m) => m.from === 'visitor').map((m) => m.text);
   const agentName = session?.displayName ?? 'Agent';
 
   // ---- canned slash menu + variables -----------------------------------------
@@ -377,7 +376,8 @@ export default function ChatThread({ convId, input, setInput }: Props) {
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="font-display font-bold text-slate-900">{conv.visitor}</span>
                 <Badge tone={statusTone[conv.status]}>{conv.status}</Badge>
-                <Badge tone={SENT_TONE[sentiment]}>{sentiment}</Badge>
+                <SentimentPill texts={visitorTexts} />
+                <QualityBadge conv={conv} />
                 {conv.rating && <Badge tone="amber">⭐ {conv.rating}/5</Badge>}
               </div>
               <div className="text-xs text-slate-500 mt-0.5 truncate">

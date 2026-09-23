@@ -4,7 +4,7 @@
 import { useEffect, useState } from 'react';
 import { cx, uid } from '../../lib/utils';
 
-export type ToastTone = 'success' | 'error' | 'info';
+export type ToastTone = 'success' | 'error' | 'info' | 'warning';
 
 export interface Toast {
   id: string;
@@ -31,12 +31,14 @@ export const toast = {
   success: (title: string, body?: string) => push(title, body, 'success'),
   error: (title: string, body?: string) => push(title, body, 'error'),
   info: (title: string, body?: string) => push(title, body, 'info'),
+  warning: (title: string, body?: string) => push(title, body, 'warning'),
 };
 
 const TONE_STYLE: Record<ToastTone, { bar: string; icon: string; iconBg: string }> = {
   success: { bar: 'bg-emerald-500', icon: '✓', iconBg: 'bg-emerald-100 text-emerald-700' },
   error: { bar: 'bg-rose-500', icon: '!', iconBg: 'bg-rose-100 text-rose-700' },
   info: { bar: 'bg-brix-500', icon: 'i', iconBg: 'bg-brix-100 text-brix-700' },
+  warning: { bar: 'bg-amber-500', icon: '⚠', iconBg: 'bg-amber-100 text-amber-700' },
 };
 
 export function ToastHost() {
