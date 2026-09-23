@@ -4,6 +4,10 @@
 // meeting-booking block, FAQ quick-links, language selector (en/es/fr/de/ar/ur,
 // original translations), business-hours-aware greeting, typing both ways, local
 // file-note attachments (no fake upload), full ARIA + keyboard support.
+// Worker D: branding (brand_name/tagline/logo/accent_color), two-step CSAT+NPS
+// with ratings.create + ratingSubmitted event, pre-chat department chooser with
+// routing.routeChat, agent identity in chat header via members.get, transfer
+// notices rendered distinctly in the timeline.
 //
 // ---------------------------------------------------------------------------
 // postMessage protocol (all messages: { t: 'brixchat:<type>', cmd?, payload? })
@@ -19,6 +23,7 @@
 //   emailTranscript { email }                     — request transcript (phase 2)
 //   typing { active }                             — host-driven agent typing (phase 2)
 //   language { code }                             — UI language override (phase 2)
+//   transfer { to?, agent?, department?, note? }   — Worker D: transfer notice in timeline + agent identity
 //   endChat | reset                               — unchanged (phase 1)
 // Widget → loader events (brixchat:<type>):
 //   ready { property, secureHash } | open | close
@@ -28,7 +33,8 @@
 //   typing { active }                             — visitor typing (phase 2)
 //   prechatSubmitted { values }                   — phase 2
 //   offlineSubmitted { queued, values, ticket? }   — phase 2
-//   satisfaction { rating, comment }              — phase 2 (CSAT)
+//   satisfaction { rating, comment }              — phase 2 (CSAT, kept for back-compat)
+//   ratingSubmitted { kind: 'csat'|'nps', score } — phase 2 (Worker D: two-step rating)
 //   transcriptRequested { email, chars, saved }   — phase 2
 //   promptShown { id } | promptDismissed { id, reason } — phase 2
 //   languageChanged { code }                      — phase 2
@@ -61,11 +67,37 @@ interface P2PropertySettings {
   timezone: string; blocked: string[];
   widget_color: string; widget_position: 'bottom-right' | 'bottom-left';
   launcher_style: 'bubble' | 'bar'; language: string; booking_url: string;
+  // Worker D branding fields (§9 contract via Worker A; optional — defensive
+  // until landed; plain widget look is kept when none are set)
+  brand_name?: string; tagline?: string; logo_data_url?: string | null;
+  theme?: string; accent_color?: string;
 }
 interface P2Api {
   propertySettings?: { get(propertyId: string): Promise<{ data: P2PropertySettings }> };
   tickets?: { create(input: Record<string, unknown>): Promise<{ data: { id?: string } }> };
   notifications?: { push(type: string, title: string, body: string, link?: string | null): Promise<{ data: unknown }> };
+  // §9 ratings (Worker A); defensive until landed — widget keeps working without it
+  ratings?: {
+    create(input: {
+      property_id: string; conversation_id: string; agent_id: string | null;
+      kind: 'csat' | 'nps'; score: number; comment?: string;
+    }): Promise<{ data: unknown }>;
+  };
+  // Worker D follow-up: departments, routing, members (Worker A §9) — defensive until landed
+  departments?: {
+    list(propertyId: string): Promise<{ data: Array<{ id: string; name: string }> | { items: Array<{ id: string; name: string }> } }>;
+  };
+  routing?: {
+    routeChat(propertyId: string, departmentId: string): Promise<{ data: {
+      agent_id?: string | null; agent_name?: string | null;
+      department_id?: string | null; department_name?: string | null;
+    } }>;
+  };
+  members?: {
+    get(agentId: string): Promise<{ data: {
+      id: string; display_name?: string; name?: string; title?: string; job_title?: string;
+    } }>;
+  };
 }
 const p2 = (api: unknown): P2Api => (api ?? {}) as P2Api;
 
@@ -97,6 +129,10 @@ const STR: Record<Lang, Record<string, string>> = {
     offlineTitle: "We're away", offlineHint: 'Leave a message and we will get back to you soon.',
     offlineDone: 'Message received', offlineDoneHint: 'Thanks — we will reply as soon as we are back.',
     csatTitle: 'How was this chat?', csatHint: 'Your feedback helps us improve.', csatThanks: 'Thanks for your feedback!',
+    step1of2: 'Step 1 of 2', step2of2: 'Step 2 of 2',
+    npsTitle: 'How likely are you to recommend us?', npsHint: '0 = not at all · 10 = definitely',
+    chooseTeam: 'Choose a team', chattingWith: 'Chatting with',
+    transferredTo: 'Chat transferred to', transferNote: 'note',
     commentPh: 'Anything we should know? (optional)', skip: 'Skip',
     transcriptTitle: 'Email transcript', transcriptPh: 'you@example.com', transcriptSend: 'Send',
     transcriptDone: 'Saved ✓', transcriptHint: 'Saved on this device — we will email it once email sending is enabled (backend phase).',
@@ -115,6 +151,10 @@ const STR: Record<Lang, Record<string, string>> = {
     offlineTitle: 'No estamos disponibles', offlineHint: 'Deja un mensaje y te responderemos pronto.',
     offlineDone: 'Mensaje recibido', offlineDoneHint: 'Gracias — te responderemos en cuanto volvamos.',
     csatTitle: '¿Cómo fue este chat?', csatHint: 'Tu opinión nos ayuda a mejorar.', csatThanks: '¡Gracias por tu opinión!',
+    step1of2: 'Paso 1 de 2', step2of2: 'Paso 2 de 2',
+    npsTitle: '¿Qué probabilidad hay de que nos recomiendes?', npsHint: '0 = nada · 10 = seguro',
+    chooseTeam: 'Elige un equipo', chattingWith: 'Hablando con',
+    transferredTo: 'Chat transferido a', transferNote: 'nota',
     commentPh: '¿Algo que debamos saber? (opcional)', skip: 'Omitir',
     transcriptTitle: 'Enviar conversación por correo', transcriptPh: 'tu@ejemplo.com', transcriptSend: 'Enviar',
     transcriptDone: 'Guardado ✓', transcriptHint: 'Guardado en este dispositivo — lo enviaremos cuando el correo esté activado (fase backend).',
@@ -133,6 +173,10 @@ const STR: Record<Lang, Record<string, string>> = {
     offlineTitle: 'Nous sommes absents', offlineHint: 'Laissez un message, nous vous répondrons vite.',
     offlineDone: 'Message reçu', offlineDoneHint: 'Merci — nous répondrons dès notre retour.',
     csatTitle: 'Comment s’est passé ce chat ?', csatHint: 'Votre avis nous aide à progresser.', csatThanks: 'Merci pour votre avis !',
+    step1of2: 'Étape 1 sur 2', step2of2: 'Étape 2 sur 2',
+    npsTitle: 'Quelle est la probabilité que vous nous recommandiez ?', npsHint: '0 = pas du tout · 10 = tout à fait',
+    chooseTeam: 'Choisir une équipe', chattingWith: 'En discussion avec',
+    transferredTo: 'Chat transféré à', transferNote: 'note',
     commentPh: 'Quelque chose à nous signaler ? (facultatif)', skip: 'Passer',
     transcriptTitle: 'Recevoir la conversation par e-mail', transcriptPh: 'vous@exemple.com', transcriptSend: 'Envoyer',
     transcriptDone: 'Enregistré ✓', transcriptHint: 'Enregistré sur cet appareil — envoyé par e-mail dès l’activation (phase backend).',
@@ -151,6 +195,10 @@ const STR: Record<Lang, Record<string, string>> = {
     offlineTitle: 'Wir sind gerade nicht da', offlineHint: 'Hinterlassen Sie eine Nachricht — wir melden uns bald.',
     offlineDone: 'Nachricht erhalten', offlineDoneHint: 'Danke — wir antworten, sobald wir zurück sind.',
     csatTitle: 'Wie war dieser Chat?', csatHint: 'Ihr Feedback hilft uns, besser zu werden.', csatThanks: 'Danke für Ihr Feedback!',
+    step1of2: 'Schritt 1 von 2', step2of2: 'Schritt 2 von 2',
+    npsTitle: 'Wie wahrscheinlich würden Sie uns weiterempfehlen?', npsHint: '0 = gar nicht · 10 = auf jeden Fall',
+    chooseTeam: 'Team wählen', chattingWith: 'Im Gespräch mit',
+    transferredTo: 'Chat übertragen an', transferNote: 'Notiz',
     commentPh: 'Gibt es etwas, das wir wissen sollten? (optional)', skip: 'Überspringen',
     transcriptTitle: 'Chatverlauf per E-Mail', transcriptPh: 'sie@beispiel.de', transcriptSend: 'Senden',
     transcriptDone: 'Gespeichert ✓', transcriptHint: 'Auf diesem Gerät gespeichert — Versand per E-Mail folgt mit der Backend-Phase.',
@@ -169,6 +217,10 @@ const STR: Record<Lang, Record<string, string>> = {
     offlineTitle: 'نحن غير متاحين', offlineHint: 'اترك رسالة وسنرد عليك قريبًا.',
     offlineDone: 'تم استلام الرسالة', offlineDoneHint: 'شكرًا — سنرد عليك فور عودتنا.',
     csatTitle: 'كيف كانت هذه المحادثة؟', csatHint: 'ملاحظاتك تساعدنا على التحسن.', csatThanks: 'شكرًا لملاحظاتك!',
+    step1of2: 'الخطوة 1 من 2', step2of2: 'الخطوة 2 من 2',
+    npsTitle: 'ما مدى احتمال أن توصي بنا؟', npsHint: '0 = إطلاقًا · 10 = بالتأكيد',
+    chooseTeam: 'اختر الفريق', chattingWith: 'تتحدث مع',
+    transferredTo: 'تم تحويل المحادثة إلى', transferNote: 'ملاحظة',
     commentPh: 'هل هناك ما يجب أن نعرفه؟ (اختياري)', skip: 'تخطي',
     transcriptTitle: 'إرسال نسخة بالبريد', transcriptPh: 'you@example.com', transcriptSend: 'إرسال',
     transcriptDone: 'تم الحفظ ✓', transcriptHint: 'محفوظة على هذا الجهاز — سنرسلها بالبريد عند تفعيل الإرسال (مرحلة الخادم).',
@@ -187,6 +239,10 @@ const STR: Record<Lang, Record<string, string>> = {
     offlineTitle: 'ہم دستیاب نہیں ہیں', offlineHint: 'پیغام چھوڑیں، ہم جلد جواب دیں گے۔',
     offlineDone: 'پیغام موصول ہوا', offlineDoneHint: 'شکریہ — واپسی پر ہم جواب دیں گے۔',
     csatTitle: 'یہ چیٹ کیسی رہی؟', csatHint: 'آپ کی رائے ہمیں بہتر بناتی ہے۔', csatThanks: 'آپ کی رائے کا شکریہ!',
+    step1of2: 'مرحلہ 1 از 2', step2of2: 'مرحلہ 2 از 2',
+    npsTitle: 'آپ ہماری سفارش کرنے کا کتنا امکان ہے؟', npsHint: '0 = بالکل نہیں · 10 = یقیناً',
+    chooseTeam: 'ٹیم منتخب کریں', chattingWith: 'سے بات کر رہے ہیں',
+    transferredTo: 'چیٹ منتقل کر دی گئی', transferNote: 'نوٹ',
     commentPh: 'کیا ہمیں کچھ معلوم ہونا چاہیے؟ (اختیاری)', skip: 'چھوڑیں',
     transcriptTitle: 'ای میل ٹرانسکرپٹ', transcriptPh: 'you@example.com', transcriptSend: 'بھیجیں',
     transcriptDone: 'محفوظ ✓', transcriptHint: 'اس ڈیوائس پر محفوظ — ای میل بھیجنا بیک اینڈ مرحلے میں فعال ہوگا۔',
@@ -202,7 +258,10 @@ const STR: Record<Lang, Record<string, string>> = {
 /* ------------------------------------------------------------------ */
 /* helpers                                                             */
 /* ------------------------------------------------------------------ */
-interface WMsg { id: string; from: 'visitor' | 'agent' | 'system'; text: string; ts: number }
+interface WMsg {
+  id: string; from: 'visitor' | 'agent' | 'system'; text: string; ts: number;
+  kind?: 'transfer'; transferTo?: string; transferNote?: string;
+}
 interface Prompt { id: string; text: string; dismissAfter: number }
 interface HostOverride { enabled?: boolean; fields?: string[] }
 
@@ -272,9 +331,13 @@ export default function WidgetPage() {
   const [formErr, setFormErr] = useState('');
   const [sendingForm, setSendingForm] = useState(false);
   const [offlineDone, setOfflineDone] = useState(false);
-  const [rating, setRating] = useState(0);
   const [ratingComment, setRatingComment] = useState('');
-  const [csatDone, setCsatDone] = useState(false);
+  const [rateStep, setRateStep] = useState<'csat' | 'nps' | 'done'>('csat');
+  const [csat, setCsat] = useState(0);
+  const [nps, setNps] = useState(-1);
+  const [depts, setDepts] = useState<Array<{ id: string; name: string }>>([]);
+  const [deptId, setDeptId] = useState('');
+  const [assignedAgent, setAssignedAgent] = useState<{ name: string; title: string } | null>(null);
   const [lang, setLang] = useState<Lang>(() => {
     try {
       const s = localStorage.getItem('brixchat_widget_lang_v1');
@@ -296,6 +359,16 @@ export default function WidgetPage() {
   const t = (k: string) => STR[lang][k] ?? STR.en[k] ?? k;
   const accent = paramColor || settings.widget_color || property?.widget_config.color || '#4f46e5';
   const w = property?.widget_config;
+  // Worker D: branding — primary = widget_color, secondary = accent_color.
+  // When no branding is set the pre-existing default theme is untouched.
+  const hasBranding = Boolean(settings.brand_name || settings.logo_data_url || settings.accent_color);
+  const agentDisplayName = w?.agent_name ?? 'Support';
+  const brandName = settings.brand_name || agentDisplayName;
+  const tagline = settings.tagline || '';
+  const logoUrl = settings.logo_data_url || null;
+  const accent2 = settings.accent_color || '#06b6d4';
+  const agentInitials = agentDisplayName.split(' ').map((x) => x[0]).slice(0, 2).join('');
+  const headerGradient = `linear-gradient(135deg, ${accent}, ${accent2})`;
 
   const prechatCfg = useMemo(() => ({
     enabled: hostPrechat?.enabled ?? settings.prechat_enabled,
@@ -343,6 +416,18 @@ export default function WidgetPage() {
         setSettings(s);
         if (validLang(paramLocale)) { setLang(paramLocale); }
         else if (!localStorage.getItem('brixchat_widget_lang_v1') && validLang(s.language)) { setLang(s.language); }
+        // Departments (Worker D follow-up): prefer api.departments.list, fall back to settings.departments
+        try {
+          const dep = p2(api).departments;
+          let list: Array<{ id: string; name: string }> | null = null;
+          if (dep) {
+            const { data } = await dep.list(p.id);
+            const items = Array.isArray(data) ? data : data.items;
+            if (Array.isArray(items) && items.length) list = items.map((d) => ({ id: String(d.id), name: String(d.name) }));
+          }
+          if (!list && s.departments?.length) list = s.departments.map((d) => ({ id: String(d.id), name: String(d.name) }));
+          if (!cancelled && list) setDepts(list);
+        } catch { /* departments are optional */ }
         // FAQ quick-links: top 3 published articles
         try {
           const { data: kb } = await api.kb.list({ status: 'published', limit: 3 });
@@ -406,6 +491,15 @@ export default function WidgetPage() {
         case 'typing':
           setTypingExt(Boolean((payload as { active?: boolean }).active));
           break;
+        case 'transfer': {
+          // Worker D follow-up: host/agent-side transfer → distinct notice in the timeline
+          const pl = payload as { to?: string; agent?: string; department?: string; note?: string };
+          const to = String(pl.to ?? pl.agent ?? pl.department ?? '').slice(0, 120);
+          const note = String(pl.note ?? '').slice(0, 300);
+          pushLocal({ from: 'system', kind: 'transfer', text: '', transferTo: to || undefined, transferNote: note || undefined });
+          if (pl.agent) void resolveAgent(null, pl.agent).then(setAssignedAgent);
+          break;
+        }
         case 'setVisitor': {
           const v = payload.visitor as { name?: string; email?: string } | undefined;
           if (v) setAttributes((a) => ({ ...a, _visitor_name: v.name ?? '', _visitor_email: v.email ?? '' }));
@@ -448,6 +542,24 @@ export default function WidgetPage() {
   const pushLocal = (m: Omit<WMsg, 'id' | 'ts'>) =>
     setMsgs((prev) => [...prev, { ...m, id: uid('w'), ts: Date.now() }]);
 
+  /* ---------- agent identity (Worker D follow-up) ---------- */
+  // Resolve the routed/assigned agent's display name + job title for the chat
+  // header. api.members.get (Worker A §9) is optional — falls back to the
+  // name the router returned, then to the brand name in the header.
+  const resolveAgent = async (agentId: string | null, fallbackName: string | null) => {
+    let name = fallbackName ?? '';
+    let title = '';
+    try {
+      const m = p2(api).members;
+      if (m && agentId) {
+        const { data } = await m.get(agentId);
+        name = data.display_name ?? data.name ?? name;
+        title = data.title ?? data.job_title ?? '';
+      }
+    } catch { /* keep the router's name */ }
+    return name ? { name, title } : null;
+  };
+
   const beginChat = async () => {
     const p = property;
     if (!p) return;
@@ -458,12 +570,39 @@ export default function WidgetPage() {
       page_url: document.referrer || '',
     });
     if (c.messages[0]) c.messages[0].text = greeting;
-    setConv(c);
-    setMsgs(c.messages.map((m) => ({
-      id: m.id,
-      from: m.sender === 'visitor' ? 'visitor' : m.sender === 'system' ? 'system' : 'agent',
-      text: m.text, ts: new Date(m.created_at).getTime(),
-    })));
+    // Worker D follow-up: route by chosen department, then resolve the agent
+    let agentId: string | null = c.agent_id ?? null;
+    let agentName: string | null = c.agent_name ?? null;
+    let deptName: string | undefined = formVals.department || undefined;
+    if (deptId) {
+      try {
+        const rt = p2(api).routing;
+        if (rt) {
+          const { data: r } = await rt.routeChat(p.id, deptId);
+          agentId = r.agent_id ?? agentId;
+          agentName = r.agent_name ?? agentName;
+          deptName = r.department_name ?? deptName;
+        }
+      } catch { /* routing is best-effort; chat continues unrouted */ }
+    }
+    if (agentId || agentName) {
+      const resolved = await resolveAgent(agentId, agentName);
+      if (resolved) setAssignedAgent(resolved);
+    }
+    setConv({ ...c, agent_id: agentId, agent_name: agentName, department: deptName ?? c.department });
+    setMsgs(c.messages.map((m) => {
+      // transfer notices (Worker A may mark them kind:'transfer' or metadata.transfer)
+      const raw = m as unknown as { kind?: string; metadata?: Record<string, unknown> };
+      const isTransfer = raw.kind === 'transfer' || Boolean(raw.metadata?.transfer);
+      return {
+        id: m.id,
+        from: m.sender === 'visitor' ? 'visitor' : m.sender === 'system' ? 'system' : 'agent',
+        text: m.text, ts: new Date(m.created_at).getTime(),
+        kind: isTransfer ? ('transfer' as const) : undefined,
+        transferTo: isTransfer ? String(raw.metadata?.transfer_to ?? raw.metadata?.to ?? '') || undefined : undefined,
+        transferNote: isTransfer ? String(raw.metadata?.note ?? '') || undefined : undefined,
+      } as WMsg;
+    }));
     window.setTimeout(() => inputRef.current?.focus(), 60);
   };
 
@@ -512,17 +651,45 @@ export default function WidgetPage() {
     setStage('ended');
   };
 
-  const submitRating = () => {
+  /* ---------- two-step rating: CSAT 1–5 → NPS 0–10 (Worker D) ---------- */
+  // Defensive: ratings.create (Worker A §9) is optional until landed; the
+  // satisfaction event + conversation rating keep working either way.
+  const postRating = (kind: 'csat' | 'nps', score: number, comment: string) => {
     const c = convRef.current;
-    if (c && rating > 0) void api.conversations.setRating(c.id, rating);
+    const r = p2(api).ratings;
+    if (c && r) {
+      void r.create({
+        property_id: c.property_id,
+        conversation_id: c.id,
+        agent_id: c.agent_id,
+        kind, score,
+        comment: comment.trim() || undefined,
+      }).catch(() => { /* local-only: never break the widget on a write failure */ });
+    }
+    if (c) {
+      postToParent('ratingSubmitted', { kind, score, conversation_id: c.id });
+    } else {
+      postToParent('ratingSubmitted', { kind, score });
+    }
+  };
+
+  const submitCsat = () => {
+    const c = convRef.current;
+    if (c && csat > 0) void api.conversations.setRating(c.id, csat);
+    postToParent('satisfaction', { rating: csat, comment: ratingComment.trim() });
+    postRating('csat', csat, ratingComment);
+    setRateStep('nps');
+  };
+
+  const submitNps = () => {
+    postRating('nps', nps, ratingComment);
     pushLocal({ from: 'system', text: t('csatThanks') });
-    postToParent('satisfaction', { rating, comment: ratingComment.trim() });
-    setCsatDone(true);
+    setRateStep('done');
   };
 
   /* ---------- pre-chat form ---------- */
   const startFromHome = () => {
-    setFormVals({}); setFormErr('');
+    setFormVals({}); setFormErr(''); setDeptId('');
     if (prechatCfg.enabled) setStage('prechat');
     else void beginChat();
   };
@@ -619,13 +786,18 @@ export default function WidgetPage() {
     const set = (v: string) => setFormVals((p) => ({ ...p, [f]: v }));
     const label = t(f) === f ? f : t(f);
     const cls = 'w-full px-3 py-2.5 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-brix-500/40 focus:border-brix-500 bg-white';
-    if (f === 'department' && settings.departments.length) {
+    if (f === 'department' && depts.length) {
       return (
         <label key={f} className="block">
-          <span className="block text-xs font-semibold text-slate-600 mb-1">{t('department')}</span>
-          <select value={val} onChange={(e) => set(e.target.value)} className={cls} aria-label={t('department')}>
-            <option value="">{t('selectDepartment')}</option>
-            {settings.departments.map((d) => <option key={d.id} value={d.name}>{d.name}</option>)}
+          <span className="block text-xs font-semibold text-slate-600 mb-1">{t('chooseTeam')}</span>
+          <select value={deptId} onChange={(e) => {
+            const id = e.target.value;
+            setDeptId(id);
+            // keep formVals.department as the human-readable name (back-compat for prechatSubmitted)
+            set(depts.find((x) => x.id === id)?.name ?? '');
+          }} className={cls} aria-label={t('chooseTeam')}>
+            <option value="">{t('chooseTeam')}</option>
+            {depts.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
           </select>
         </label>
       );
@@ -677,24 +849,57 @@ export default function WidgetPage() {
   const radius = w.bubble === 'pill' ? 24 : w.bubble === 'square' ? 6 : 16;
   const showAgentTyping = typing || typingExt;
 
+  /* branded header strip for pre-chat / offline forms (only when branding set) */
+  const BrandStrip = () => hasBranding ? (
+    <div className="-mx-5 -mt-6 mb-4 px-5 py-2.5 flex items-center gap-2.5" style={{ background: headerGradient }}>
+      {logoUrl ? (
+        <img src={logoUrl} alt="" className="w-8 h-8 rounded-full object-cover bg-white/20 shrink-0" />
+      ) : (
+        <div className="w-8 h-8 rounded-full bg-white/20 grid place-items-center text-white text-xs font-bold shrink-0" aria-hidden>
+          {agentInitials}
+        </div>
+      )}
+      <div className="min-w-0">
+        <div className="text-white text-sm font-bold leading-tight truncate">{brandName}</div>
+        {tagline && <div className="text-white/85 text-[11px] leading-tight truncate">{tagline}</div>}
+      </div>
+    </div>
+  ) : null;
+
   return (
     <div className="h-screen w-screen flex flex-col bg-white overflow-hidden brix-widget-panel"
       style={{ fontFamily: 'Inter, system-ui, sans-serif' }}
       dir={RTL[lang] ? 'rtl' : 'ltr'} role="dialog" aria-modal="false" aria-label={t('chatPanel')}>
       {/* header */}
-      <div className="px-4 py-3.5 flex items-center gap-3 text-white shrink-0" style={{ background: `linear-gradient(135deg, ${accent}, #06b6d4)` }}>
-        <div className="w-10 h-10 rounded-full bg-white/20 grid place-items-center font-bold" aria-hidden>
-          {w.agent_name.split(' ').map((x) => x[0]).slice(0, 2).join('')}
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="font-bold text-[15px] leading-tight">{w.agent_name}</div>
-          <div className="text-xs text-white/85 flex items-center gap-1.5">
-            <span className="relative flex w-2 h-2" aria-hidden>
-              <span className={cx('absolute inline-flex h-full w-full rounded-full', status === 'online' ? 'bg-emerald-300 animate-ping-soft' : 'bg-amber-300')} />
-              <span className={cx('relative inline-flex rounded-full h-2 w-2', status === 'online' ? 'bg-emerald-300' : 'bg-amber-300')} />
-            </span>
-            {status === 'online' ? t('onlineNow') : t('offlineNow')}
+      <div className="px-4 py-3.5 flex items-center gap-3 text-white shrink-0" style={{ background: headerGradient }}>
+        {logoUrl ? (
+          <img src={logoUrl} alt="" className="w-10 h-10 rounded-full object-cover bg-white/20 shrink-0" />
+        ) : (
+          <div className="w-10 h-10 rounded-full bg-white/20 grid place-items-center font-bold shrink-0" aria-hidden>
+            {agentInitials}
           </div>
+        )}
+        <div className="flex-1 min-w-0">
+          {stage === 'chat' && assignedAgent ? (
+            <>
+              <div className="font-bold text-[15px] leading-tight truncate">{t('chattingWith')} {assignedAgent.name}</div>
+              <div className="text-xs text-white/85 truncate">
+                {assignedAgent.title || (status === 'online' ? t('onlineNow') : t('offlineNow'))}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="font-bold text-[15px] leading-tight truncate">{brandName}</div>
+              <div className="text-xs text-white/85 flex items-center gap-1.5">
+                <span className="relative flex w-2 h-2" aria-hidden>
+                  <span className={cx('absolute inline-flex h-full w-full rounded-full', status === 'online' ? 'bg-emerald-300 animate-ping-soft' : 'bg-amber-300')} />
+                  <span className={cx('relative inline-flex rounded-full h-2 w-2', status === 'online' ? 'bg-emerald-300' : 'bg-amber-300')} />
+                </span>
+                {status === 'online' ? t('onlineNow') : t('offlineNow')}
+              </div>
+              {tagline && <div className="text-[11px] text-white/80 leading-tight truncate mt-0.5">{tagline}</div>}
+            </>
+          )}
         </div>
         {(stage === 'chat') && (
           <button onClick={() => setMenu(menu === 'main' ? null : 'main')}
@@ -730,7 +935,18 @@ export default function WidgetPage() {
             </>
           ) : (
             <>
-              <div className="px-2 py-1 text-xs font-bold text-slate-500 uppercase tracking-wide">{t('transcriptTitle')}</div>
+              {hasBranding && (
+                <div className="flex items-center gap-2 px-2 py-1 border-b border-slate-100 mb-1">
+                  {logoUrl ? (
+                    <img src={logoUrl} alt="" className="w-6 h-6 rounded-full object-cover shrink-0" />
+                  ) : (
+                    <div className="w-6 h-6 rounded-full grid place-items-center text-white text-[10px] font-bold shrink-0" style={{ background: accent }} aria-hidden>{agentInitials}</div>
+                  )}
+                  <span className="text-xs font-bold text-slate-800 truncate">{brandName}</span>
+                </div>
+              )}
+              <div className={cx('px-2 py-1 text-xs font-bold uppercase tracking-wide', !hasBranding && 'text-slate-500')}
+                style={{ color: hasBranding ? accent : undefined }}>{t('transcriptTitle')}</div>
               {transcriptDone ? (
                 <div className="px-2 py-2">
                   <div className="text-sm font-semibold text-emerald-700">{t('transcriptDone')}</div>
@@ -761,10 +977,14 @@ export default function WidgetPage() {
       {stage === 'home' && (
         <div className="flex-1 overflow-y-auto slim-scroll px-5 py-6 bg-slate-50">
           <div className="text-center mb-5">
-            <div className="w-14 h-14 mx-auto rounded-full grid place-items-center text-white text-xl font-bold mb-3"
-              style={{ background: `linear-gradient(135deg, ${accent}, #06b6d4)` }} aria-hidden>
-              {w.agent_name.split(' ').map((x) => x[0]).slice(0, 2).join('')}
-            </div>
+            {logoUrl ? (
+              <img src={logoUrl} alt="" className="w-14 h-14 mx-auto rounded-full object-cover mb-3 shadow-lg" />
+            ) : (
+              <div className="w-14 h-14 mx-auto rounded-full grid place-items-center text-white text-xl font-bold mb-3"
+                style={{ background: headerGradient }} aria-hidden>
+                {agentInitials}
+              </div>
+            )}
             <h1 className="text-lg font-bold text-slate-900">{greeting}</h1>
             <p className="text-sm text-slate-500 mt-1">{status === 'online' ? t('onlineNow') : t('offlineNow')}</p>
           </div>
@@ -800,7 +1020,8 @@ export default function WidgetPage() {
               <h2 className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">{t('faqTitle')}</h2>
               <div className="space-y-2">
                 {faq.map((a) => (
-                  <div key={a.id} className="bg-white border border-slate-200/80 rounded-xl overflow-hidden">
+                  <div key={a.id} className="bg-white border border-slate-200/80 rounded-xl overflow-hidden"
+                    style={hasBranding ? { borderLeft: `3px solid ${accent}` } : undefined}>
                     <button onClick={() => setFaqOpen(faqOpen === a.id ? null : a.id)}
                       className="w-full text-start px-3.5 py-2.5 text-sm font-medium text-slate-800 flex items-center justify-between gap-2"
                       aria-expanded={faqOpen === a.id}>
@@ -834,10 +1055,12 @@ export default function WidgetPage() {
       {/* ========================== PRE-CHAT ========================== */}
       {stage === 'prechat' && (
         <div className="flex-1 overflow-y-auto slim-scroll px-5 py-6 bg-slate-50">
+          <BrandStrip />
           <h1 className="text-lg font-bold text-slate-900 text-center">{t('prechatTitle')}</h1>
           <p className="text-sm text-slate-500 text-center mt-1 mb-5">{t('prechatHint')}</p>
           <form onSubmit={submitPrechat} className="space-y-3.5">
             {prechatCfg.fields.map(renderField)}
+            {depts.length > 0 && !prechatCfg.fields.includes('department') && renderField('department')}
             {formErr && <p className="text-xs font-medium text-rose-600" role="alert">{formErr}</p>}
             <button type="submit" className="w-full py-3 rounded-2xl text-white font-semibold text-sm shadow-lg" style={{ background: accent }}>
               {t('submit')}
@@ -850,6 +1073,7 @@ export default function WidgetPage() {
       {/* ========================== OFFLINE ========================== */}
       {stage === 'offline' && (
         <div className="flex-1 overflow-y-auto slim-scroll px-5 py-6 bg-slate-50">
+          <BrandStrip />
           {offlineDone ? (
             <div className="text-center py-8">
               <div className="text-4xl mb-3" aria-hidden>✅</div>
@@ -879,7 +1103,13 @@ export default function WidgetPage() {
       {stage === 'chat' && (
         <>
           <div className="flex-1 overflow-y-auto slim-scroll px-4 py-4 space-y-3 bg-slate-50" role="log" aria-live="polite" aria-label={t('chatPanel')}>
-            {msgs.map((m) => m.from === 'system' ? (
+            {msgs.map((m) => m.kind === 'transfer' ? (
+              <div key={m.id} className="text-center">
+                <span className="inline-block text-[11px] text-slate-600 bg-slate-200/80 px-3 py-1.5 rounded-full">
+                  🔀 {t('transferredTo')}{m.transferTo ? ` ${m.transferTo}` : ''}{m.transferNote ? ` — ${t('transferNote')}: ${m.transferNote}` : ''}
+                </span>
+              </div>
+            ) : m.from === 'system' ? (
               <div key={m.id} className="text-center">
                 <span className="inline-block text-[11px] text-slate-500 bg-slate-200/70 px-3 py-1 rounded-full">{m.text}</span>
               </div>
@@ -911,7 +1141,8 @@ export default function WidgetPage() {
           {/* proactive prompt bubbles */}
           {prompts.map((p) => (
             <div key={p.id} className="px-4 pb-1 bg-slate-50 shrink-0">
-              <div className="relative bg-white border border-brix-200 rounded-2xl px-3.5 py-2.5 text-[13px] text-slate-800 shadow-md animate-fade-up" role="status">
+              <div className="relative bg-white border border-brix-200 rounded-2xl px-3.5 py-2.5 text-[13px] text-slate-800 shadow-md animate-fade-up" role="status"
+                style={hasBranding ? { borderColor: accent } : undefined}>
                 {p.text}
                 <button onClick={() => dismissPrompt(p.id, 'dismiss')}
                   className="absolute -top-2 -end-2 w-6 h-6 rounded-full bg-slate-700 text-white text-xs grid place-items-center"
@@ -966,29 +1197,60 @@ export default function WidgetPage() {
             <h1 className="text-lg font-bold text-slate-900">{t('chatEnded')}</h1>
             <p className="text-sm text-slate-500 mt-1">{t('chatEndedHint')}</p>
           </div>
-          {!csatDone ? (
+          {rateStep !== 'done' ? (
             <div className="bg-white rounded-2xl border border-slate-200 p-5">
-              <h2 className="text-sm font-bold text-slate-900 text-center">{t('csatTitle')}</h2>
-              <p className="text-xs text-slate-500 text-center mt-1 mb-4">{t('csatHint')}</p>
-              <div className="flex justify-center gap-2 mb-4" role="radiogroup" aria-label={t('csatTitle')}>
-                {[1, 2, 3, 4, 5].map((n) => (
-                  <button key={n} onClick={() => setRating(n)} role="radio" aria-checked={rating === n}
-                    className={cx('text-3xl transition-transform hover:scale-125', rating >= n ? '' : 'grayscale opacity-40')}
-                    aria-label={`${n} / 5`}>⭐</button>
-                ))}
-              </div>
-              <textarea value={ratingComment} onChange={(e) => setRatingComment(e.target.value)} rows={2}
-                placeholder={t('commentPh')} aria-label={t('commentPh')}
-                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-brix-500/40 resize-none mb-3" />
-              <div className="flex gap-2">
-                <button onClick={submitRating} disabled={rating === 0}
-                  className="flex-1 py-2.5 rounded-xl text-white text-sm font-semibold disabled:opacity-40" style={{ background: accent }}>
-                  {t('submit')}
-                </button>
-                <button onClick={() => setCsatDone(true)} className="px-4 py-2.5 rounded-xl text-sm text-slate-500 hover:bg-slate-100">
-                  {t('skip')}
-                </button>
-              </div>
+              <p className="text-[11px] font-bold uppercase tracking-widest text-slate-400 text-center mb-2">
+                {t(rateStep === 'csat' ? 'step1of2' : 'step2of2')}
+              </p>
+              {rateStep === 'csat' ? (
+                <>
+                  <h2 className="text-sm font-bold text-slate-900 text-center">{t('csatTitle')}</h2>
+                  <p className="text-xs text-slate-500 text-center mt-1 mb-4">{t('csatHint')}</p>
+                  <div className="flex justify-center gap-2 mb-4" role="radiogroup" aria-label={t('csatTitle')}>
+                    {[1, 2, 3, 4, 5].map((n) => (
+                      <button key={n} onClick={() => setCsat(n)} role="radio" aria-checked={csat === n}
+                        className={cx('text-3xl transition-transform hover:scale-125 rounded-lg', csat >= n ? '' : 'grayscale opacity-40')}
+                        style={hasBranding && csat >= n ? { boxShadow: `0 0 0 2px ${accent}` } : undefined}
+                        aria-label={`${n} / 5`}>⭐</button>
+                    ))}
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={submitCsat} disabled={csat === 0}
+                      className="flex-1 py-2.5 rounded-xl text-white text-sm font-semibold disabled:opacity-40" style={{ background: accent }}>
+                      {t('submit')}
+                    </button>
+                    <button onClick={() => setRateStep('nps')} className="px-4 py-2.5 rounded-xl text-sm text-slate-500 hover:bg-slate-100">
+                      {t('skip')}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <h2 className="text-sm font-bold text-slate-900 text-center">{t('npsTitle')}</h2>
+                  <p className="text-xs text-slate-500 text-center mt-1 mb-4">{t('npsHint')}</p>
+                  <div className="grid grid-cols-11 gap-1 mb-4" role="radiogroup" aria-label={t('npsTitle')}>
+                    {Array.from({ length: 11 }, (_, n) => (
+                      <button key={n} onClick={() => setNps(n)} role="radio" aria-checked={nps === n}
+                        className={cx('h-9 rounded-lg text-sm font-bold transition-colors',
+                          nps === n ? 'text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200')}
+                        style={nps === n ? { background: accent } : undefined}
+                        aria-label={String(n)}>{n}</button>
+                    ))}
+                  </div>
+                  <textarea value={ratingComment} onChange={(e) => setRatingComment(e.target.value)} rows={2}
+                    placeholder={t('commentPh')} aria-label={t('commentPh')}
+                    className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-brix-500/40 resize-none mb-3" />
+                  <div className="flex gap-2">
+                    <button onClick={submitNps} disabled={nps < 0}
+                      className="flex-1 py-2.5 rounded-xl text-white text-sm font-semibold disabled:opacity-40" style={{ background: accent }}>
+                      {t('submit')}
+                    </button>
+                    <button onClick={() => setRateStep('done')} className="px-4 py-2.5 rounded-xl text-sm text-slate-500 hover:bg-slate-100">
+                      {t('skip')}
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           ) : (
             <div className="text-center text-sm font-semibold text-emerald-700 mb-5">{t('csatThanks')}</div>

@@ -33,6 +33,7 @@
  *   BrixChat.onMessageReceived(fn) .onMessageSent(fn)
  *   BrixChat.onUnreadCountChanged(fn) .onStatusChange(fn)
  *   BrixChat.onSatisfaction(fn)               // CSAT rating after chat end (phase 2)
+ *   BrixChat.onRating(fn)                     // CSAT/NPS submitted, { kind, score } (phase 2, Worker D)
  *   BrixChat.onTyping(fn)                     // visitor typing activity (phase 2)
  *   window events: 'brixchat:ready', 'brixchat:satisfaction', ...
  *
@@ -343,6 +344,7 @@
     }
     // phase 2 events from the widget (all backward compatible additions)
     else if (type === 'satisfaction') { emit('satisfaction', p); }
+    else if (type === 'ratingSubmitted') { emit('ratingSubmitted', p); } // phase 2 (Worker D): two-step rating
     else if (type === 'typing') { emit('typing', p); }
     else if (type === 'prechatSubmitted') { emit('prechatSubmitted', p); }
     else if (type === 'offlineSubmitted') { emit('offlineSubmitted', p); }
@@ -509,6 +511,7 @@
     onUnreadCountChanged: function (fn) { on('unreadCountChanged', fn); },
     onStatusChange: function (fn) { on('statusChange', fn); },
     onSatisfaction: function (fn) { on('satisfaction', fn); }, // phase 2: CSAT after chat end
+    onRating: function (fn) { on('ratingSubmitted', fn); },     // phase 2 (Worker D): { kind: 'csat'|'nps', score }
     onTyping: function (fn) { on('typing', fn); },             // phase 2: visitor typing activity
     onPromptShown: function (fn) { on('promptShown', fn); },
     onPromptDismissed: function (fn) { on('promptDismissed', fn); },
