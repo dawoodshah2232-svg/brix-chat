@@ -219,7 +219,7 @@ export function CommandPalette({
       },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [session?.workspaceId],
+    [session?.workspaceId, session?.viewingWorkspaceId],
   );
 
   const items = useMemo<PaletteItem[]>(() => {

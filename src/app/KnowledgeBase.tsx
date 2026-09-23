@@ -40,7 +40,7 @@ export default function KnowledgeBase() {
     } catch { /* ignore */ }
   };
 
-  useEffect(() => { refreshUnanswered(); }, [session?.workspaceId]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { refreshUnanswered(); }, [session?.workspaceId, session?.viewingWorkspaceId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const promote = async (id: string) => {
     if (!api || busy) return;

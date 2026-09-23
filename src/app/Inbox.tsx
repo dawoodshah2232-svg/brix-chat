@@ -78,7 +78,7 @@ export default function Inbox() {
     } catch { /* ignore */ }
   };
 
-  useEffect(() => { refreshViews(); }, [session?.workspaceId]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { refreshViews(); }, [session?.workspaceId, session?.viewingWorkspaceId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const convId = params.get('c');
   const conv = convId ? data.conversations.find((c) => c.id === convId) : undefined;

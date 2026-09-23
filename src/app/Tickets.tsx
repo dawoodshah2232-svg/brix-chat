@@ -79,7 +79,7 @@ export default function Tickets() {
     setLoading(false);
   };
 
-  useEffect(() => { refresh(); }, [session?.workspaceId]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { refresh(); }, [session?.workspaceId, session?.viewingWorkspaceId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const memberName = (id: string | null) => members.find((m) => m.id === id)?.display_name ?? 'Unassigned';
 
