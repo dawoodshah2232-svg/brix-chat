@@ -184,6 +184,8 @@ export interface ApiTicket {
   conversation_id: string | null;
   tags: string[];
   category_id: string | null;
+  parent_id: string | null; // P4-9: parent ticket (child / side-thread relationships)
+  relation: 'child' | 'side' | null; // how this ticket relates to parent_id
   created_at: string;
   updated_at: string;
 }
@@ -865,8 +867,8 @@ function seedDB(): ApiDB {
     routing_counters: {},
     categories: [],
     tickets: [
-      { id: uid('t'), property_id: propId, subject: 'Refund request #1042', requester_name: 'Jonas Weber', requester_email: 'jonas@example.com', message: 'I was charged twice for the monthly plan.', status: 'new', priority: 'high', assignee_id: null, sla_due: new Date(Date.now() + 20 * 3600000).toISOString(), conversation_id: null, tags: ['billing'], category_id: null, created_at: now, updated_at: now },
-      { id: uid('t'), property_id: propId, subject: 'Feature request: dark widget', requester_name: 'Priya Nair', requester_email: 'priya@example.com', message: 'Would love a dark-mode widget theme.', status: 'open', priority: 'low', assignee_id: null, sla_due: null, conversation_id: null, tags: ['feature'], category_id: null, created_at: now, updated_at: now },
+      { id: uid('t'), property_id: propId, subject: 'Refund request #1042', requester_name: 'Jonas Weber', requester_email: 'jonas@example.com', message: 'I was charged twice for the monthly plan.', status: 'new', priority: 'high', assignee_id: null, sla_due: new Date(Date.now() + 20 * 3600000).toISOString(), conversation_id: null, tags: ['billing'], category_id: null, parent_id: null, relation: null, created_at: now, updated_at: now },
+      { id: uid('t'), property_id: propId, subject: 'Feature request: dark widget', requester_name: 'Priya Nair', requester_email: 'priya@example.com', message: 'Would love a dark-mode widget theme.', status: 'open', priority: 'low', assignee_id: null, sla_due: null, conversation_id: null, tags: ['feature'], category_id: null, parent_id: null, relation: null, created_at: now, updated_at: now },
     ],
     articles: [
       { id: uid('kb'), title: 'Installing the widget', slug: 'installing-the-widget', body: 'Paste the embed snippet from Admin → Install before the closing </body> tag of every page.', category: 'Getting started', category_id: null, status: 'published', views: 128, updated_at: now },
@@ -1018,13 +1020,13 @@ function seedWorkspace(slug: string): ApiDB {
         requester_email: 'lena@example.com', message: 'The trail pack arrived with a torn strap. Please advise.',
         status: 'new', priority: 'high', assignee_id: ben.id,
         sla_due: new Date(Date.now() + 4 * 3600000).toISOString(), conversation_id: null,
-        tags: ['shipping'], category_id: null, created_at: now, updated_at: now,
+        tags: ['shipping'], category_id: null, parent_id: null, relation: null, created_at: now, updated_at: now,
       },
       {
         id: uid('t'), property_id: propId, subject: 'Discount code not applying', requester_name: 'Ravi Patel',
         requester_email: 'ravi@example.com', message: 'WELCOME10 is rejected at checkout.',
         status: 'open', priority: 'medium', assignee_id: null, sla_due: null, conversation_id: null,
-        tags: ['billing'], category_id: null, created_at: now, updated_at: now,
+        tags: ['billing'], category_id: null, parent_id: null, relation: null, created_at: now, updated_at: now,
       },
     ];
     db.contacts = [
@@ -1078,6 +1080,8 @@ function ensureDefaults(db: ApiDB, slug = 'demo'): void {
     if (t.conversation_id === undefined) t.conversation_id = null;
     if (!t.tags) t.tags = [];
     if (t.category_id === undefined) t.category_id = null;
+    if (t.parent_id === undefined) t.parent_id = null;
+    if (t.relation === undefined) t.relation = null;
   });
   db.members.forEach((m) => {
     if (m.job_title === undefined) m.job_title = '';
@@ -1605,6 +1609,7 @@ export class BrixApi {
         assignee_id: input.assignee_id ?? null, sla_due: input.sla_due ?? null,
         conversation_id: input.conversation_id ?? null, tags: input.tags ?? [],
         category_id: input.category_id ?? null,
+        parent_id: null, relation: null,
         created_at: now, updated_at: now,
       };
       db.tickets.unshift(t);
@@ -1694,6 +1699,75 @@ export class BrixApi {
         conversation_id: convId,
         tags: conv?.tags ?? [],
       });
+    },
+    /** P4-9: link a ticket as a child or side thread of another ticket. */
+    setParent: async (id: string, parentId: string | null, relation: 'child' | 'side' = 'child'): Promise<Envelope<ApiTicket>> => {
+      const db = this.db();
+      const t = db.tickets.find((x) => x.id === id);
+      if (!t) throw this.notFound('Ticket', id);
+      if (parentId === null) {
+        t.parent_id = null; t.relation = null; t.updated_at = isoNow();
+        this.logAudit(db, 'ticket.unlinked', 'ticket', id, {});
+        this.save(db);
+        return { data: t };
+      }
+      const parent = db.tickets.find((x) => x.id === parentId);
+      if (!parent) throw this.notFound('Ticket', parentId);
+      if (parentId === id) throw new ApiError('validation', 'A ticket cannot be linked to itself.', 422);
+      // cycle guard: walk up from the candidate parent
+      let cursor: string | null = parentId;
+      const seen = new Set<string>([id]);
+      while (cursor) {
+        if (seen.has(cursor)) throw new ApiError('validation', 'Linking these tickets would create a cycle.', 422);
+        seen.add(cursor);
+        cursor = db.tickets.find((x) => x.id === cursor)?.parent_id ?? null;
+      }
+      t.parent_id = parentId; t.relation = relation; t.updated_at = isoNow();
+      this.logAudit(db, 'ticket.linked', 'ticket', id, { parent_id: parentId, relation });
+      this.save(db);
+      return { data: t };
+    },
+    /** P4-9: split one ticket into 2–4 child tickets. The original is resolved
+     *  and tagged 'split' — nothing is deleted. Children inherit requester,
+     *  assignee, priority, conversation and tags. */
+    split: async (id: string, subjects: string[]): Promise<Envelope<ApiTicket[]>> => {
+      const clean = subjects.map((x) => x.trim()).filter(Boolean);
+      if (clean.length < 2 || clean.length > 4) throw new ApiError('validation', 'Provide 2–4 subjects to split into.', 422);
+      const db = this.db();
+      const t = db.tickets.find((x) => x.id === id);
+      if (!t) throw this.notFound('Ticket', id);
+      if (t.status === 'resolved') throw new ApiError('validation', 'Only open tickets can be split.', 422);
+      const now = isoNow();
+      const children: ApiTicket[] = clean.map((subject) => {
+        const child: ApiTicket = {
+          id: uid('t'), property_id: t.property_id, subject,
+          requester_name: t.requester_name, requester_email: t.requester_email,
+          message: t.message, status: 'new', priority: t.priority,
+          assignee_id: t.assignee_id, sla_due: null,
+          conversation_id: t.conversation_id, tags: [...t.tags, 'split-from'],
+          category_id: t.category_id,
+          parent_id: t.id, relation: 'child',
+          created_at: now, updated_at: now,
+        };
+        db.tickets.unshift(child);
+        return child;
+      });
+      t.status = 'resolved';
+      if (!t.tags.includes('split')) t.tags.push('split');
+      t.updated_at = now;
+      this.logAudit(db, 'ticket.split', 'ticket', id, { children: children.map((c) => c.id) });
+      this.save(db);
+      return { data: children };
+    },
+    /** P4-9: children and side threads of a ticket. */
+    related: async (id: string): Promise<Envelope<{ parent: ApiTicket | null; children: ApiTicket[]; side: ApiTicket[] }>> => {
+      const db = this.db();
+      const t = db.tickets.find((x) => x.id === id);
+      if (!t) throw this.notFound('Ticket', id);
+      const parent = t.parent_id ? db.tickets.find((x) => x.id === t.parent_id) ?? null : null;
+      const children = db.tickets.filter((x) => x.parent_id === id && x.relation === 'child');
+      const side = db.tickets.filter((x) => x.parent_id === id && x.relation === 'side');
+      return { data: { parent, children, side } };
     },
   };
 
@@ -3045,6 +3119,8 @@ const mapTicket = (r: Row): ApiTicket => ({
   conversation_id: r.conversation_id ?? null,
   tags: asArr<string>(r.tags),
   category_id: r.category_id ?? null,
+  parent_id: r.parent_id ?? null,
+  relation: r.relation ?? null,
   created_at: isoOf(r.created_at),
   updated_at: isoOf(r.updated_at),
 });

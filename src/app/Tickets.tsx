@@ -76,6 +76,13 @@ export default function Tickets() {
   const [busy, setBusy] = useState(false);
   const [merging, setMerging] = useState(false);
   const [mergePrimary, setMergePrimary] = useState('');
+  // P4-9: ticket relationships (parent / children / side threads)
+  const [related, setRelated] = useState<{ parent: ApiTicket | null; children: ApiTicket[]; side: ApiTicket[] } | null>(null);
+  const [linking, setLinking] = useState(false);
+  const [linkQ, setLinkQ] = useState('');
+  const [linkRelation, setLinkRelation] = useState<'child' | 'side'>('child');
+  const [splitting, setSplitting] = useState(false);
+  const [splitSubjects, setSplitSubjects] = useState<string[]>(['', '']);
 
   // create form
   const [fSubject, setFSubject] = useState('');
@@ -89,6 +96,16 @@ export default function Tickets() {
 
   const ticketId = params.get('ticket');
   const active = tickets.find((t) => t.id === ticketId) ?? null;
+
+  // P4-9: load linked tickets for the open ticket
+  useEffect(() => {
+    if (!api || !active) { setRelated(null); return; }
+    let cancelled = false;
+    api.tickets.related(active.id)
+      .then(({ data }) => { if (!cancelled) setRelated(data); })
+      .catch(() => { if (!cancelled) setRelated(null); });
+    return () => { cancelled = true; };
+  }, [api, active?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // P4: ?new=1 deep-link opens the create modal
   useEffect(() => {
@@ -197,6 +214,44 @@ export default function Tickets() {
       select(merged.id);
       toast.success(`Merged ${n} tickets`, merged.subject);
     } catch { toast.error('Merge failed'); }
+    setBusy(false);
+  };
+
+  /** P4-9: link the active ticket to another as child / side thread. */
+  const linkTicket = async (targetId: string) => {
+    if (!api || !active) return;
+    setBusy(true);
+    try {
+      await api.tickets.setParent(active.id, targetId, linkRelation);
+      setLinking(false); setLinkQ('');
+      refresh();
+      toast.success(linkRelation === 'child' ? 'Linked as child ticket' : 'Linked as side thread');
+    } catch (e) { toast.error(e instanceof Error ? e.message : 'Link failed'); }
+    setBusy(false);
+  };
+
+  const unlinkTicket = async () => {
+    if (!api || !active) return;
+    setBusy(true);
+    try {
+      await api.tickets.setParent(active.id, null);
+      refresh();
+      toast.success('Ticket unlinked');
+    } catch { toast.error('Unlink failed'); }
+    setBusy(false);
+  };
+
+  /** P4-9: split the active ticket into 2–4 child tickets. */
+  const splitTicket = async () => {
+    if (!api || !active) return;
+    setBusy(true);
+    try {
+      const { data: children } = await api.tickets.split(active.id, splitSubjects);
+      setSplitting(false); setSplitSubjects(['', '']);
+      refresh();
+      select(children[0]?.id ?? null);
+      toast.success(`Split into ${children.length} tickets`, 'The original was resolved and tagged');
+    } catch (e) { toast.error(e instanceof Error ? e.message : 'Split failed'); }
     setBusy(false);
   };
 
@@ -394,13 +449,49 @@ export default function Tickets() {
                 );
               })()}
 
+              {/* P4-9: parent / children / side threads */}
+              {related && (related.parent || related.children.length > 0 || related.side.length > 0) && (
+                <div className="mt-5 rounded-xl bg-indigo-50/60 border border-indigo-100 p-4">
+                  <div className="text-xs font-bold uppercase tracking-wide text-indigo-700 mb-2">🔗 Linked tickets</div>
+                  <div className="space-y-1.5">
+                    {related.parent && (
+                      <div className="flex items-center gap-2 text-sm">
+                        <span className="text-xs text-slate-500">↩ {related.parent.relation === 'side' ? 'Side thread of' : 'Child of'}:</span>
+                        <button onClick={() => select(related.parent!.id)} className="font-semibold text-slate-800 hover:underline truncate">
+                          {related.parent.subject}
+                        </button>
+                        <button onClick={unlinkTicket} className="text-xs text-rose-600 hover:underline ml-auto shrink-0">Unlink</button>
+                      </div>
+                    )}
+                    {related.children.map((c) => (
+                      <div key={c.id} className="flex items-center gap-2 text-sm">
+                        <span className="text-xs text-slate-500">↳ Child:</span>
+                        <button onClick={() => select(c.id)} className="font-semibold text-slate-800 hover:underline truncate">{c.subject}</button>
+                        <Badge tone={STATUS_TONE[c.status]}>{c.status}</Badge>
+                      </div>
+                    ))}
+                    {related.side.map((c) => (
+                      <div key={c.id} className="flex items-center gap-2 text-sm">
+                        <span className="text-xs text-slate-500">⇄ Side thread:</span>
+                        <button onClick={() => select(c.id)} className="font-semibold text-slate-800 hover:underline truncate">{c.subject}</button>
+                        <Badge tone={STATUS_TONE[c.status]}>{c.status}</Badge>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div className="mt-4 text-xs text-slate-400">
                 Assigned to {memberName(active.assignee_id)}{active.conversation_id ? ' · linked to a chat conversation' : ''}
               </div>
 
-              <div className="flex gap-2 mt-5">
+              <div className="flex gap-2 mt-5 flex-wrap">
                 {active.status !== 'resolved' && (
                   <Button size="sm" onClick={() => patchTicket(active.id, { status: 'resolved' })}>✓ Resolve</Button>
+                )}
+                <Button size="sm" variant="secondary" onClick={() => { setLinking(true); setLinkQ(''); }}>🔗 Link</Button>
+                {active.status !== 'resolved' && (
+                  <Button size="sm" variant="secondary" onClick={() => { setSplitting(true); setSplitSubjects(['', '']); }}>✂️ Split</Button>
                 )}
                 <Button size="sm" variant="secondary" onClick={() => { patchTicket(active.id, { status: 'resolved' }); patchTicket(active.id, { tags: [...active.tags, 'spam'] }); }}>🚫 Spam</Button>
               </div>
@@ -436,6 +527,79 @@ export default function Tickets() {
           <Button variant="secondary" onClick={() => setMerging(false)}>Cancel</Button>
           <Button onClick={mergeTickets} disabled={busy || !mergePrimary}>{busy ? 'Merging…' : 'Merge tickets'}</Button>
         </div>
+      </Modal>
+
+      {/* P4-9: link as child / side thread */}
+      <Modal open={linking} onClose={() => setLinking(false)} title={`Link “${active?.subject ?? ''}”`}>
+        {active && (
+          <div className="space-y-4">
+            <div>
+              <Label>Link as</Label>
+              <div className="flex gap-2 mt-1">
+                {(['child', 'side'] as const).map((r) => (
+                  <button key={r} onClick={() => setLinkRelation(r)}
+                    className={cx('px-3 py-1.5 rounded-xl text-sm font-semibold border transition',
+                      linkRelation === r ? 'border-brix-500 bg-brix-50 text-brix-700' : 'border-slate-200 text-slate-600 hover:border-slate-300')}>
+                    {r === 'child' ? '↳ Child ticket' : '⇄ Side thread'}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-slate-500 mt-1.5">
+                {linkRelation === 'child'
+                  ? 'This ticket becomes a sub-task of the target.'
+                  : 'This ticket stays independent but is listed as a related thread.'}
+              </p>
+            </div>
+            <div>
+              <Label>Find target ticket</Label>
+              <SearchInput value={linkQ} onChange={setLinkQ} placeholder="Search subject, requester…" />
+              <div className="mt-2 space-y-1.5 max-h-56 overflow-y-auto slim-scroll">
+                {tickets
+                  .filter((t) => t.id !== active.id && !t.parent_id)
+                  .filter((t) => {
+                    const qq = linkQ.trim().toLowerCase();
+                    return !qq || t.subject.toLowerCase().includes(qq) || t.requester_name.toLowerCase().includes(qq);
+                  })
+                  .slice(0, 8)
+                  .map((t) => (
+                    <button key={t.id} onClick={() => linkTicket(t.id)}
+                      className="w-full text-left rounded-xl border border-slate-200 hover:border-brix-300 p-3 transition">
+                      <div className="text-sm font-semibold text-slate-800 truncate">{t.subject}</div>
+                      <div className="text-xs text-slate-500">{t.requester_name} · {t.status} · ⚑ {t.priority}</div>
+                    </button>
+                  ))}
+              </div>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* P4-9: split into child tickets */}
+      <Modal open={splitting} onClose={() => setSplitting(false)} title={`Split “${active?.subject ?? ''}”`}>
+        {active && (
+          <div className="space-y-4">
+            <p className="text-sm text-slate-500">
+              Creates 2–4 child tickets from this one. They inherit the requester, assignee, priority and tags.
+              The original is resolved and tagged <code className="font-mono bg-slate-100 px-1 rounded">split</code>.
+            </p>
+            {splitSubjects.map((subj, i) => (
+              <div key={i}>
+                <Label>Child ticket {i + 1}{i > 1 && <button onClick={() => setSplitSubjects((xs) => xs.filter((_, j) => j !== i))} className="ml-2 text-xs text-rose-600 hover:underline font-normal">remove</button>}</Label>
+                <Input value={subj} onChange={(e) => setSplitSubjects((xs) => xs.map((x, j) => (j === i ? e.target.value : x)))}
+                  placeholder={`e.g. ${i === 0 ? 'Refund the duplicate charge' : i === 1 ? 'Fix the billing email typo' : 'Follow up on the invoice'}`} />
+              </div>
+            ))}
+            {splitSubjects.length < 4 && (
+              <button onClick={() => setSplitSubjects((xs) => [...xs, ''])} className="text-sm font-semibold text-brix-600 hover:underline">+ Add another (max 4)</button>
+            )}
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" onClick={() => setSplitting(false)}>Cancel</Button>
+              <Button onClick={splitTicket} disabled={busy || splitSubjects.filter((x) => x.trim()).length < 2}>
+                {busy ? 'Splitting…' : 'Split ticket'}
+              </Button>
+            </div>
+          </div>
+        )}
       </Modal>
 
       {/* Create modal */}
