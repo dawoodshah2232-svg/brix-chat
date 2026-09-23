@@ -21,6 +21,7 @@
 //   trackEvent { name, metadata }
 //   prompt { id?, text, delay?, dismissAfter? }   — proactive bubble (phase 2)
 //   emailTranscript { email }                     — request transcript (phase 2)
+//   requestCallback                             — open the "Request a callback" form (phase 5)
 //   typing { active }                             — host-driven agent typing (phase 2)
 //   language { code }                             — UI language override (phase 2)
 //   transfer { to?, agent?, department?, note? }   — Worker D: transfer notice in timeline + agent identity
@@ -33,6 +34,7 @@
 //   typing { active }                             — visitor typing (phase 2)
 //   prechatSubmitted { values }                   — phase 2
 //   offlineSubmitted { queued, values, ticket? }   — phase 2
+//   callbackRequested { queued, ticket_id, values } — phase 5 ("Request a callback" submitted)
 //   satisfaction { rating, comment }              — phase 2 (CSAT, kept for back-compat)
 //   ratingSubmitted { kind: 'csat'|'nps', score } — phase 2 (Worker D: two-step rating)
 //   transcriptRequested { email, chars, saved }   — phase 2
@@ -44,6 +46,18 @@
 // Forward compatibility: §9 methods (propertySettings.get, tickets.create,
 // notifications.push) are accessed defensively — the widget works fully today
 // and picks them up automatically once Worker A lands them in src/lib/api.ts.
+//
+// Phase 5 — "Request a callback": the chat ⋯ menu and the loader's
+// BrixChat('requestCallback') open a small form (name, phone required, topic,
+// preferred time window). Submit creates a ticket via api.tickets.create with
+// the phone + preferred time in the message (tags: callback, widget), falling
+// back to the honest local queue 'brixchat_callback_queue_v1' when the API is
+// unreachable — the same pattern as the offline form.
+// Phase 5 — chat queue: when the loader passes queue: true (?queue=1), the
+// visitor joins the shared queue localStorage['brixchat_queue_v1']
+// (Record<propertyId, [{ id, joinedAt, name? }]>, oldest first — helpers in
+// src/lib/portal.ts) and the panel shows "You're #N in line — about X min
+// wait" with N = 1 + entries already waiting.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
@@ -52,6 +66,8 @@ import type { ApiArticle, ApiConversation, ApiProperty } from '../lib/api';
 import { botReply } from '../lib/bot';
 import type { GuideStep } from '../lib/types';
 import { uid, fmtTime, cx } from '../lib/utils';
+// phase 5: shared chat-queue helpers (key 'brixchat_queue_v1', also used by public/widget.js)
+import { joinQueue, leaveQueue, queuePosition } from '../lib/portal';
 
 const NS = 'brixchat';
 const EMOJIS = ['😊', '👍', '🙏', '🎉', '❤️', '😅', '👋', '✅'];
@@ -308,6 +324,15 @@ const STR: Record<Lang, Record<string, string>> = {
     transcriptTitle: 'Email transcript', transcriptPh: 'you@example.com', transcriptSend: 'Send',
     transcriptDone: 'Saved ✓', transcriptHint: 'Saved on this device — we will email it once email sending is enabled (backend phase).',
     bookMeeting: 'Book a meeting', faqTitle: 'Quick answers', languageLabel: 'Language', menuLabel: 'Chat menu',
+    requestCallback: 'Request a callback',
+    callbackTitle: 'Request a callback', callbackHint: 'Leave your number and we will call you back.',
+    callbackName: 'Name', callbackPhone: 'Phone number', callbackTopic: 'Topic', callbackWhen: 'Preferred time',
+    callbackWithinHour: 'Within 1 hour', callbackAfternoon: 'Today afternoon', callbackTomorrow: 'Tomorrow morning',
+    callbackPickTime: 'Pick date/time', callbackCustomPh: 'Choose date and time', callbackSubmit: 'Request callback',
+    callbackPhoneErr: 'Please enter a valid phone number.',
+    callbackDoneTitle: 'Request received', callbackDoneText: "We'll call you back at {time}.",
+    callbackBack: 'Back',
+    queueLine: "You're #{n} in line — about {m} min wait",
     endChat: 'End chat', chatEnded: 'Chat ended', chatEndedHint: 'Thanks for chatting with us. Start a new chat any time.',
     newChat: 'Start new chat', attachFile: 'Attach a file', emojiBtn: 'Emoji', typeMessage: 'Type your message…',
     sendBtn: 'Send', minimizeBtn: 'Minimize chat', dismiss: 'Dismiss', closeChat: 'Close chat', openChat: 'Open chat',
@@ -509,6 +534,21 @@ function postToParent(type: string, payload: Record<string, unknown> = {}) {
   } catch { /* not embedded */ }
 }
 
+/** Phase 5: human label for the callback "preferred time" window. */
+function cbWhenLabel(when: string, custom: string): string {
+  if (when === 'within-hour') return 'within the hour';
+  if (when === 'afternoon') return 'this afternoon';
+  if (when === 'tomorrow') return 'tomorrow morning';
+  if (custom) {
+    const d = new Date(custom);
+    if (!Number.isNaN(d.getTime())) {
+      return d.toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    }
+    return custom;
+  }
+  return 'a convenient time';
+}
+
 /** True when "now" falls inside the property's business hours (honest best-effort:
  *  computed in the property timezone via Intl; falls back to open when unknown). */
 function withinHours(bh: P2PropertySettings['business_hours'], tz: string): boolean {
@@ -531,13 +571,16 @@ function withinHours(bh: P2PropertySettings['business_hours'], tz: string): bool
 
 const validLang = (c: string | null): c is Lang => (LANGS as string[]).includes(c ?? '');
 
-type Stage = 'loading' | 'home' | 'prechat' | 'offline' | 'chat' | 'ended';
+type Stage = 'loading' | 'home' | 'prechat' | 'offline' | 'callback' | 'chat' | 'ended';
 
 export default function WidgetPage() {
   const [params] = useSearchParams();
   const api = getApi('demo', 'widget');
 
   const propertyKey = params.get('property') || params.get('key') || '';
+  // phase 5: chat queue position — enabled by the loader flag (data-queue / boot({ queue: true }) → ?queue=1)
+  const queueEnabled = params.get('queue') === '1';
+  const queueProp = propertyKey || 'demo';
   const paramColor = params.get('color') || '';
   const paramGreeting = params.get('greeting') || '';
   const paramLocale = params.get('locale') || '';
@@ -576,6 +619,29 @@ export default function WidgetPage() {
   const [formErr, setFormErr] = useState('');
   const [sendingForm, setSendingForm] = useState(false);
   const [offlineDone, setOfflineDone] = useState(false);
+  // phase 5: "Request a callback" form state
+  const [cbName, setCbName] = useState('');
+  const [cbPhone, setCbPhone] = useState('');
+  const [cbTopic, setCbTopic] = useState('General question');
+  const [cbWhen, setCbWhen] = useState('within-hour');
+  const [cbCustom, setCbCustom] = useState('');
+  const [cbErr, setCbErr] = useState('');
+  const [cbSending, setCbSending] = useState(false);
+  const [cbDoneLabel, setCbDoneLabel] = useState(''); // preferred-time label shown in the confirmation
+  const [cbReturn, setCbReturn] = useState<'home' | 'chat'>('home');
+  // phase 5: chat queue — entry id + live 1-based position in the shared queue
+  const [queueId, setQueueId] = useState('');
+  const [queuePos, setQueuePos] = useState(0);
+  // phase 5: refs so the unmount cleanup below sees the current queue entry
+  const queueIdRef = useRef('');
+  const queuePropRef = useRef(queueProp);
+  useEffect(() => {
+    queueIdRef.current = queueId;
+    queuePropRef.current = queueProp;
+  }, [queueId, queueProp]);
+  useEffect(() => () => {
+    if (queueIdRef.current) leaveQueue(queuePropRef.current, queueIdRef.current);
+  }, []);
   const [ratingComment, setRatingComment] = useState('');
   const [rateStep, setRateStep] = useState<'csat' | 'nps' | 'done'>('csat');
   const [csat, setCsat] = useState(0);
@@ -807,6 +873,10 @@ export default function WidgetPage() {
           else if (stageRef.current === 'chat') { setMenu('transcript'); setTranscriptDone(false); }
           break;
         }
+        case 'requestCallback': { // phase 5
+          openCallback(stageRef.current === 'chat' ? 'chat' : 'home');
+          break;
+        }
         case 'typing':
           setTypingExt(Boolean((payload as { active?: boolean }).active));
           break;
@@ -879,10 +949,27 @@ export default function WidgetPage() {
     return name ? { name, title } : null;
   };
 
+  // phase 5: keep the displayed queue position live while the visitor waits
+  useEffect(() => {
+    if (!queueEnabled || !queueId || stage !== 'chat') return;
+    const iv = window.setInterval(() => {
+      const p = queuePosition(queueProp, queueId);
+      setQueuePos(p);
+      if (p === 0) { setQueueId(''); window.clearInterval(iv); }
+    }, 10000);
+    return () => window.clearInterval(iv);
+  }, [queueEnabled, queueId, stage, queueProp]);
+
   const beginChat = async (opts?: { tag?: string | null; firstVisitorMessage?: string | null }) => {
     const p = property;
     if (!p) return;
     setStage('chat');
+    // phase 5: join the shared chat queue when the property has it enabled
+    if (queueEnabled) {
+      const { id, position } = joinQueue(queueProp, formVals.name || visitorName || undefined);
+      setQueueId(id);
+      setQueuePos(position);
+    }
     const { data: c } = await api.conversations.startSession(p.id, {
       name: formVals.name || visitorName || undefined,
       email: formVals.email || visitorEmail || undefined,
@@ -992,6 +1079,12 @@ export default function WidgetPage() {
   };
 
   const endChat = async () => {
+    // phase 5: leave the shared chat queue
+    if (queueId) {
+      leaveQueue(queueProp, queueId);
+      setQueueId('');
+      setQueuePos(0);
+    }
     const c = convRef.current;
     if (c) {
       await api.conversations.setStatus(c.id, 'closed');
@@ -1347,6 +1440,62 @@ export default function WidgetPage() {
     postToParent('offlineSubmitted', { queued, ticket_id: ticketId, values: { name: formVals.name, email: formVals.email } });
   };
 
+  /* ---------- phase 5: "Request a callback" → ticket (defensive) ---------- */
+  const openCallback = (from: 'home' | 'chat') => {
+    setCbName(visitorName || formVals.name || '');
+    setCbPhone('');
+    setCbTopic('General question');
+    setCbWhen('within-hour');
+    setCbCustom('');
+    setCbErr('');
+    setCbSending(false);
+    setCbDoneLabel('');
+    setCbReturn(from);
+    setMenu(null);
+    setStage('callback');
+  };
+
+  const submitCallback = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const phone = cbPhone.trim();
+    if (phone.replace(/\D/g, '').length < 7) { setCbErr(t('callbackPhoneErr')); return; }
+    const name = cbName.trim() || visitorName || formVals.name || 'Website visitor';
+    const whenLabel = cbWhenLabel(cbWhen, cbCustom);
+    setCbErr('');
+    setCbSending(true);
+    const payload = {
+      property_id: property?.id ?? '',
+      subject: `Callback request from ${name}`,
+      message: `Phone: ${phone}\nTopic: ${cbTopic}\nPreferred time: ${whenLabel}\n\nRequested through the website widget.`,
+      requester_name: name,
+      requester_email: visitorEmail || formVals.email || '',
+      priority: cbWhen === 'within-hour' ? 'high' : 'medium',
+      tags: ['callback', 'widget'],
+    };
+    let ticketId: string | undefined; let queued = false;
+    try {
+      const tk = p2(api).tickets;
+      if (tk && property) {
+        const { data } = await tk.create(payload);
+        ticketId = data.id;
+      } else {
+        throw new Error('no-tickets-api');
+      }
+    } catch {
+      // same honest fallback as the offline form: queue locally
+      queued = true;
+      try {
+        const raw = localStorage.getItem('brixchat_callback_queue_v1');
+        const q = raw ? (JSON.parse(raw) as unknown[]) : [];
+        q.unshift({ ...payload, at: Date.now() });
+        localStorage.setItem('brixchat_callback_queue_v1', JSON.stringify(q.slice(0, 50)));
+      } catch { /* ignore */ }
+    }
+    setCbSending(false);
+    setCbDoneLabel(whenLabel);
+    postToParent('callbackRequested', { queued, ticket_id: ticketId, values: { name, phone } });
+  };
+
   /* ---------- transcript (logged locally; email = backend phase) ---------- */
   const requestTranscript = async (email: string) => {
     const em = email.trim();
@@ -1604,6 +1753,11 @@ export default function WidgetPage() {
                 className="w-full text-start px-3 py-2 rounded-xl text-sm hover:bg-slate-50 dark:hover:bg-slate-800 dark:bg-slate-950 text-slate-700 dark:text-slate-200" role="menuitem">
                 ✉️ {t('transcriptTitle')}
               </button>
+              {/* phase 5: "Request a callback" */}
+              <button onClick={() => openCallback('chat')}
+                className="w-full text-start px-3 py-2 rounded-xl text-sm hover:bg-slate-50 dark:hover:bg-slate-800 dark:bg-slate-950 text-slate-700 dark:text-slate-200" role="menuitem">
+                📞 {t('requestCallback')}
+              </button>
               <label className="flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-200">
                 <span aria-hidden>🌐</span>
                 <select value={lang} onChange={(e) => setLanguage(e.target.value)}
@@ -1847,9 +2001,76 @@ export default function WidgetPage() {
         </div>
       )}
 
+      {/* ============================ CALLBACK (phase 5) ============================ */}
+      {stage === 'callback' && (
+        <div className="flex-1 overflow-y-auto slim-scroll px-5 py-6 bg-slate-50 dark:bg-slate-950">
+          <BrandStrip />
+          {cbDoneLabel ? (
+            <div className="text-center py-8">
+              <div className="text-4xl mb-3" aria-hidden>📞</div>
+              <h1 className="text-lg font-bold text-slate-900 dark:text-slate-50">{t('callbackDoneTitle')}</h1>
+              <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">{t('callbackDoneText').replace('{time}', cbDoneLabel)}</p>
+              <button onClick={() => setStage(cbReturn)} className="mt-5 text-sm font-semibold underline" style={{ color: accent }}>{t('callbackBack')}</button>
+            </div>
+          ) : (
+            <>
+              <h1 className="text-lg font-bold text-slate-900 dark:text-slate-50 text-center">{t('callbackTitle')}</h1>
+              <p className="text-sm text-slate-500 dark:text-slate-400 text-center mt-1 mb-5">{t('callbackHint')}</p>
+              <form onSubmit={submitCallback} className="space-y-3.5">
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-1">{t('callbackName')}</label>
+                  <input value={cbName} onChange={(e) => setCbName(e.target.value)} autoComplete="name"
+                    className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-sm outline-none focus:ring-2 focus:ring-brix-500/40 bg-white dark:bg-slate-900" />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-1">{t('callbackPhone')} *</label>
+                  <input value={cbPhone} onChange={(e) => setCbPhone(e.target.value)} type="tel" autoComplete="tel" placeholder="+971 50 123 4567"
+                    className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-sm outline-none focus:ring-2 focus:ring-brix-500/40 bg-white dark:bg-slate-900" />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-1">{t('callbackTopic')}</label>
+                  <select value={cbTopic} onChange={(e) => setCbTopic(e.target.value)}
+                    className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-sm outline-none bg-white dark:bg-slate-900">
+                    {['General question', 'Sales', 'Billing', 'Technical support', 'Something else'].map((x) => <option key={x}>{x}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-1">{t('callbackWhen')}</label>
+                  <select value={cbWhen} onChange={(e) => setCbWhen(e.target.value)}
+                    className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-sm outline-none bg-white dark:bg-slate-900">
+                    <option value="within-hour">{t('callbackWithinHour')}</option>
+                    <option value="afternoon">{t('callbackAfternoon')}</option>
+                    <option value="tomorrow">{t('callbackTomorrow')}</option>
+                    <option value="custom">{t('callbackPickTime')}</option>
+                  </select>
+                </div>
+                {cbWhen === 'custom' && (
+                  <div>
+                    <input value={cbCustom} onChange={(e) => setCbCustom(e.target.value)} type="datetime-local" aria-label={t('callbackCustomPh')}
+                      className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-sm outline-none bg-white dark:bg-slate-900" />
+                  </div>
+                )}
+                {cbErr && <p className="text-xs font-medium text-rose-600 dark:text-rose-400" role="alert">{cbErr}</p>}
+                <button type="submit" disabled={cbSending}
+                  className="w-full py-3 rounded-2xl text-white font-semibold text-sm shadow-lg disabled:opacity-50" style={{ background: accent }}>
+                  {cbSending ? t('sending') : t('callbackSubmit')}
+                </button>
+                <button type="button" onClick={() => setStage(cbReturn)} className="w-full text-xs text-slate-400 dark:text-slate-500 underline">{t('callbackBack')}</button>
+              </form>
+            </>
+          )}
+        </div>
+      )}
+
       {/* ============================ CHAT ============================ */}
       {stage === 'chat' && (
         <>
+          {/* phase 5: chat queue position */}
+          {queueEnabled && queuePos > 0 && (
+            <div className="mx-4 mt-3 rounded-xl border border-brix-200 bg-brix-50 dark:bg-slate-800 dark:border-slate-700 px-3.5 py-2.5 text-[13px] font-semibold text-brix-800 dark:text-slate-200 text-center" role="status">
+              ⏳ {t('queueLine').replace('{n}', String(queuePos)).replace('{m}', String(Math.max(1, (queuePos - 1) * 2)))}
+            </div>
+          )}
           <div className="flex-1 overflow-y-auto slim-scroll px-4 py-4 space-y-3 bg-slate-50 dark:bg-slate-950" role="log" aria-live="polite" aria-label={t('chatPanel')}>
             {msgs.map((m) => m.kind === 'transfer' ? (
               <div key={m.id} className="text-center">

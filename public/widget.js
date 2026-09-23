@@ -12,6 +12,10 @@
  *   data-color, data-position (bottom-right|bottom-left), data-greeting, data-locale,
  *   data-theme (light|dark|auto — widget color scheme; default follows the
  *   property branding theme set in Admin → Branding).
+ *   data-queue="1" — chat queue position: when the property has queue enabled
+ *   (also via boot({ queue: true })), the loader shows "You're #N in line —
+ *   about X min wait" from the shared queue key below, and forwards the flag
+ *   to the widget (?queue=1 + config).
  *
  * JS API (all calls are safe before the widget finishes loading — they queue):
  *   BrixChat('boot', { property, visitor, theme }) // start (auto-boots from data-* if omitted)
@@ -38,12 +42,18 @@
  *   BrixChat.onSatisfaction(fn)               // CSAT rating after chat end (phase 2)
  *   BrixChat.onRating(fn)                     // CSAT/NPS submitted, { kind, score } (phase 2, Worker D)
  *   BrixChat.onTyping(fn)                     // visitor typing activity (phase 2)
+ *   BrixChat('requestCallback', opts?)       // "Request a callback" form modal:
+ *     collects name, phone (required), topic and a preferred time window,
+ *     stores a callback ticket in the same localStorage shape the dashboard
+ *     reads, and confirms "We'll call you back at <time>". Emits
+ *     'callbackRequested'. Works even before the chat panel loads.
  *   window events: 'brixchat:ready', 'brixchat:satisfaction', ...
  *
  * Widget → loader events (brixchat:<type>):
  *   ready | open | close | chatStarted | chatEnded | message | typing |
  *   prechatSubmitted | offlineSubmitted | satisfaction | ratingSubmitted |
  *   transcriptRequested | promptShown | promptDismissed | languageChanged |
+ *   callbackRequested { ticket_id, queued, values } | // phase 5
  *   status | proactiveTriggers { triggers }  // phase 4 (P4-2): the loader
  *     installs host-page detectors (page_view / top-edge exit_intent /
  *     idle N s / scroll %) with frequency caps in localStorage
@@ -52,6 +62,20 @@
  * Secure mode: pass visitor.hash = HMAC-SHA256(email, property_secret), generated
  * on your server. The loader forwards it to the widget; server-side verification
  * activates with the backend phase (today the hash is accepted and stored).
+ *
+ * Shared localStorage keys (documented in src/lib/portal.ts):
+ *   brixchat_queue_v1 — chat queue: { <propertyId>: [{ id, joinedAt, name? }] },
+ *     oldest first. A new joiner's position = 1 + entries already waiting; the
+ *     wait estimate shown is (position-1) x 2 minutes, labelled "about".
+ *   Callback tickets are stored as ApiTicket-shaped records in the dashboard's
+ *   own database — localStorage['brixchat_api_v1'][<workspace>].tickets, with
+ *   workspace 'demo' in this build (a production backend resolves the workspace
+ *   from the property server-side). That is the exact shape
+ *   getApi(workspace).tickets.list() reads, so callback tickets appear in the
+ *   dashboard's Tickets page. When that database is absent (e.g. the loader
+ *   runs on a third-party host before the app ever booted), the ticket goes to
+ *   the honest local fallback 'brixchat_callback_queue_v1' instead of writing
+ *   a partial skeleton.
  */
 (function () {
   'use strict';
@@ -129,7 +153,9 @@
       hash: prebootVisitor.hash || '' // secure-mode HMAC; verified server-side later
     },
     attributes: {},
-    tags: []
+    tags: [],
+    // phase 5: "Request a callback" + chat queue — data-queue="1" or boot({ queue: true })
+    queue: dataAttr('queue', '') === '1'
   };
 
   /* ---------- state ---------- */
@@ -219,7 +245,8 @@
         sendCmd('config', {
           greeting: cfg.greeting, locale: cfg.locale,
           visitor: cfg.visitor, attributes: cfg.attributes, tags: cfg.tags,
-          prechat: cfg.prechat, offline: cfg.offline // phase 2 host overrides
+          prechat: cfg.prechat, offline: cfg.offline, // phase 2 host overrides
+          queue: cfg.queue // phase 5: chat queue position
         });
       }
     });
@@ -238,6 +265,7 @@
     DOC.body.appendChild(teaserWrap);
     DOC.body.appendChild(bubble);
     applyLang();
+    maybeShowQueue(); // phase 5: queue position teaser when queue: true
     // keyframes for the prompt teaser entrance
     try {
       var st = DOC.createElement('style');
@@ -404,6 +432,201 @@
     });
   }
 
+  /* ---------- phase 5: "Request a callback" (loader-side form modal) ----------
+   * The ticket is stored as an ApiTicket-shaped record in the dashboard's own
+   * localStorage database — localStorage['brixchat_api_v1'][workspace].tickets,
+   * workspace 'demo' in this build — the exact shape
+   * getApi(workspace).tickets.list() reads, so the callback appears in the
+   * dashboard's Tickets page. When that database is absent (e.g. the loader
+   * runs on a third-party host before the app ever booted), the ticket goes
+   * to the honest local fallback 'brixchat_callback_queue_v1' instead of
+   * writing a partial skeleton. */
+  var CALLBACK_TOPICS = ['General question', 'Sales', 'Billing', 'Technical support', 'Something else'];
+  var CALLBACK_WHENS = [
+    { v: 'within-hour', label: 'Within 1 hour' },
+    { v: 'afternoon', label: 'Today afternoon' },
+    { v: 'tomorrow', label: 'Tomorrow morning' },
+    { v: 'custom', label: 'Pick date/time' }
+  ];
+  var cbOverlay = null;
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  function cbWhenLabel(when, custom) {
+    if (when === 'within-hour') return 'within the hour';
+    if (when === 'afternoon') return 'this afternoon';
+    if (when === 'tomorrow') return 'tomorrow morning';
+    if (custom) {
+      var d = new Date(custom);
+      if (!isNaN(d.getTime())) {
+        var days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+        var months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        var hh = ('0' + d.getHours()).slice(-2), mm = ('0' + d.getMinutes()).slice(-2);
+        return days[d.getDay()] + ' ' + d.getDate() + ' ' + months[d.getMonth()] + ', ' + hh + ':' + mm;
+      }
+      return custom;
+    }
+    return 'a convenient time';
+  }
+
+  function storeCallbackTicket(f) {
+    var now = new Date();
+    var iso = now.toISOString();
+    var ticket = {
+      id: 't_' + now.getTime().toString(36) + Math.random().toString(36).slice(2, 8),
+      property_id: cfg.property || null,
+      subject: 'Callback request from ' + (f.name || 'Website visitor'),
+      requester_name: f.name || 'Website visitor',
+      requester_email: '',
+      message: 'Phone: ' + f.phone + '\nTopic: ' + f.topic + '\nPreferred time: ' + f.whenLabel +
+        '\n\nRequested through the website widget.',
+      status: 'new',
+      priority: f.when === 'within-hour' ? 'high' : 'medium',
+      assignee_id: null,
+      sla_due: null,
+      conversation_id: null,
+      tags: ['callback', 'widget'],
+      category_id: null,
+      parent_id: null,
+      relation: null,
+      created_at: iso,
+      updated_at: iso
+    };
+    var inDashboard = false;
+    try {
+      var raw = WIN.localStorage.getItem('brixchat_api_v1');
+      if (raw) {
+        var map = JSON.parse(raw);
+        if (map && map.demo && Array.isArray(map.demo.tickets)) {
+          map.demo.tickets.unshift(ticket);
+          WIN.localStorage.setItem('brixchat_api_v1', JSON.stringify(map));
+          inDashboard = true;
+        }
+      }
+    } catch (e) { /* storage unavailable — fall through to the local queue */ }
+    if (!inDashboard) {
+      try {
+        var qraw = WIN.localStorage.getItem('brixchat_callback_queue_v1');
+        var q = qraw ? JSON.parse(qraw) : [];
+        if (!Array.isArray(q)) q = [];
+        q.unshift({ ticket: ticket, at: Date.now() });
+        WIN.localStorage.setItem('brixchat_callback_queue_v1', JSON.stringify(q.slice(0, 50)));
+      } catch (e2) { /* ignore */ }
+    }
+    return { id: ticket.id, inDashboard: inDashboard };
+  }
+
+  function closeCallbackModal() {
+    if (cbOverlay && cbOverlay.parentNode) cbOverlay.parentNode.removeChild(cbOverlay);
+    cbOverlay = null;
+  }
+
+  function showCallbackDone(whenLabel) {
+    if (!cbOverlay) return;
+    var dark = loaderDark();
+    var card = cbOverlay.querySelector('#' + NS + '-cb-card');
+    card.innerHTML =
+      '<div style="text-align:center;padding:12px 4px">' +
+      '<div style="font-size:40px;margin-bottom:8px" aria-hidden>📞</div>' +
+      '<div style="font-size:17px;font-weight:800;margin-bottom:6px">Request received</div>' +
+      '<div style="font-size:14px;color:' + (dark ? '#cbd5e1' : '#475569') + '">We\'ll call you back at ' + escapeHtml(whenLabel) + '.</div>' +
+      '<button id="' + NS + '-cb-done" style="margin-top:16px;padding:10px 28px;border:none;border-radius:12px;background:linear-gradient(135deg,#6366f1,#06b6d4);color:#fff;font-size:14px;font-weight:700;cursor:pointer">Done</button>' +
+      '</div>';
+    card.querySelector('#' + NS + '-cb-done').addEventListener('click', closeCallbackModal);
+  }
+
+  function openCallbackModal() {
+    ensureBoot();
+    closeCallbackModal();
+    var dark = loaderDark();
+    var inputCss = 'width:100%;box-sizing:border-box;padding:10px 12px;border-radius:10px;border:1px solid ' +
+      (dark ? '#334155;background:#020617;color:#e2e8f0' : '#cbd5e1;background:#fff;color:#0f172a') +
+      ';font-size:14px;font-family:system-ui,sans-serif;outline:none;margin-top:4px';
+    var labelCss = 'display:block;font-size:11px;font-weight:700;margin-top:12px;color:' +
+      (dark ? '#94a3b8' : '#475569') + ';text-transform:uppercase;letter-spacing:.04em';
+
+    cbOverlay = el('div', {
+      position: 'fixed', left: '0', top: '0', right: '0', bottom: '0', zIndex: '2147483001',
+      background: 'rgba(2,6,23,.55)', display: 'flex', alignItems: 'center',
+      justifyContent: 'center', padding: '16px', fontFamily: 'system-ui,sans-serif'
+    }, { role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Request a callback' });
+    cbOverlay.innerHTML =
+      '<div id="' + NS + '-cb-card" style="width:340px;max-width:100%;border-radius:16px;padding:20px;background:' +
+      (dark ? '#0f172a;color:#e2e8f0' : '#ffffff;color:#1e293b') + ';box-shadow:0 24px 70px rgba(2,6,23,.35);animation:' + NS + '-pop .25s ease-out">' +
+      '<div style="font-size:17px;font-weight:800;margin-bottom:2px">Request a callback</div>' +
+      '<div style="font-size:13px;color:' + (dark ? '#94a3b8' : '#64748b') + ';margin-bottom:4px">Leave your number — we will call you back.</div>' +
+      '<form id="' + NS + '-cb-form">' +
+      '<label style="' + labelCss + '">Name<input name="name" type="text" autocomplete="name" style="' + inputCss + '"></label>' +
+      '<label style="' + labelCss + '">Phone number *<input name="phone" type="tel" autocomplete="tel" required style="' + inputCss + '" placeholder="+971 50 123 4567"></label>' +
+      '<label style="' + labelCss + '">Topic<select name="topic" style="' + inputCss + '">' +
+      CALLBACK_TOPICS.map(function (x) { return '<option>' + x + '</option>'; }).join('') + '</select></label>' +
+      '<label style="' + labelCss + '">Preferred time<select name="when" style="' + inputCss + '">' +
+      CALLBACK_WHENS.map(function (x) { return '<option value="' + x.v + '">' + x.label + '</option>'; }).join('') + '</select></label>' +
+      '<div id="' + NS + '-cb-custom" style="display:none"><label style="' + labelCss + '">Pick date/time<input name="custom" type="datetime-local" style="' + inputCss + '"></label></div>' +
+      '<div id="' + NS + '-cb-err" role="alert" style="display:none;color:#f43f5e;font-size:12px;font-weight:600;margin-top:10px"></div>' +
+      '<button type="submit" style="width:100%;margin-top:14px;padding:12px;border:none;border-radius:12px;background:linear-gradient(135deg,#6366f1,#06b6d4);color:#fff;font-size:14px;font-weight:700;cursor:pointer">Request callback</button>' +
+      '<button type="button" id="' + NS + '-cb-cancel" style="width:100%;margin-top:8px;padding:8px;border:none;background:transparent;color:' + (dark ? '#94a3b8' : '#64748b') + ';font-size:12px;cursor:pointer;text-decoration:underline">Cancel</button>' +
+      '</form></div>';
+
+    var form = cbOverlay.querySelector('#' + NS + '-cb-form');
+    var whenSel = form.querySelector('[name=when]');
+    var customWrap = cbOverlay.querySelector('#' + NS + '-cb-custom');
+    var err = cbOverlay.querySelector('#' + NS + '-cb-err');
+    whenSel.addEventListener('change', function () { customWrap.style.display = whenSel.value === 'custom' ? 'block' : 'none'; });
+    cbOverlay.querySelector('#' + NS + '-cb-cancel').addEventListener('click', closeCallbackModal);
+    cbOverlay.addEventListener('click', function (e) { if (e.target === cbOverlay) closeCallbackModal(); });
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var name = form.querySelector('[name=name]').value.trim().slice(0, 80);
+      var phone = form.querySelector('[name=phone]').value.trim().slice(0, 32);
+      var topic = form.querySelector('[name=topic]').value;
+      var when = whenSel.value;
+      var custom = form.querySelector('[name=custom]').value;
+      if (phone.replace(/\D/g, '').length < 7) {
+        err.textContent = 'Please enter a valid phone number.';
+        err.style.display = 'block';
+        return;
+      }
+      err.style.display = 'none';
+      var whenLabel = cbWhenLabel(when, custom);
+      var stored = storeCallbackTicket({ name: name, phone: phone, topic: topic, when: when, whenLabel: whenLabel });
+      emit('callbackRequested', {
+        ticket_id: stored.id, queued: !stored.inDashboard,
+        values: { name: name, phone: phone, topic: topic, when: whenLabel }
+      });
+      showCallbackDone(whenLabel);
+    });
+    DOC.body.appendChild(cbOverlay);
+  }
+
+  /* ---------- phase 5: chat queue position (shared key, documented above) ---------- */
+  function readQueue() {
+    try {
+      var raw = WIN.localStorage.getItem('brixchat_queue_v1');
+      if (!raw) return [];
+      var map = JSON.parse(raw);
+      var list = map && map[cfg.property];
+      return Array.isArray(list) ? list : [];
+    } catch (e) { return []; }
+  }
+  function queueWaitText(position) {
+    var mins = Math.max(1, (position - 1) * 2); // (position-1) x 2 min, labelled "about"
+    return 'You\'re #' + position + ' in line — about ' + mins + ' min wait';
+  }
+  var queueShown = false;
+  function maybeShowQueue() {
+    if (!cfg.queue || queueShown || state.hidden) return;
+    var waiting = readQueue();
+    if (!waiting.length) return; // nobody ahead — nothing to show
+    queueShown = true;
+    // Prospective position if the visitor starts a chat now: 1 + already waiting.
+    queuePrompt({ id: 'queue', text: queueWaitText(waiting.length + 1), delay: 1200, dismissAfter: 0 });
+  }
+
   function widgetUrl() {
     var q = 'property=' + encodeURIComponent(cfg.property) +
       '&color=' + encodeURIComponent(cfg.color) +
@@ -412,7 +635,8 @@
       '&v=' + encodeURIComponent(cfg.visitor.name) +
       '&e=' + encodeURIComponent(cfg.visitor.email) +
       '&h=' + encodeURIComponent(cfg.visitor.hash) +
-      (cfg.greeting ? '&greeting=' + encodeURIComponent(cfg.greeting) : '');
+      (cfg.greeting ? '&greeting=' + encodeURIComponent(cfg.greeting) : '') +
+      (cfg.queue ? '&queue=1' : ''); // phase 5: queue position display
     return host + 'widget?' + q;
   }
 
@@ -507,6 +731,7 @@
     if (opts.theme && validTheme(opts.theme)) cfg.theme = opts.theme; // phase 3: boot-time theme override
     if (opts.prechat) cfg.prechat = opts.prechat;   // phase 2 host overrides
     if (opts.offline) cfg.offline = opts.offline;   // phase 2 host overrides
+    if (opts.queue !== undefined) cfg.queue = !!opts.queue; // phase 5: chat queue position
     if (opts.visitor) {
       cfg.visitor.name = opts.visitor.name || cfg.visitor.name;
       cfg.visitor.email = opts.visitor.email || cfg.visitor.email;
@@ -539,6 +764,12 @@
     prompt: function (opts) { ensureBoot(); queuePrompt(opts || {}); },
     /* phase 2: ask the widget to save/email the chat transcript */
     emailTranscript: function (email) { ensureBoot(); sendCmd('emailTranscript', { email: String(email || '') }); },
+    /* phase 5: "Request a callback" — loader-side form modal; the ticket is
+     * stored in the same localStorage shape the dashboard reads (see header).
+     * Emits 'callbackRequested'. The widget panel has its own copy of this
+     * form (chat menu → "Request a callback"); the loader command below is
+     * the host-side entry point and works even before the panel loads. */
+    requestCallback: function () { ensureBoot(); openCallbackModal(); },
     /* phase 3: switch the widget color scheme (light|dark|auto) — reloads the panel */
     setTheme: function (code) {
       ensureBoot();
