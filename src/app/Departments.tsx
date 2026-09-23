@@ -143,9 +143,9 @@ export default function Departments() {
                 </Badge>
               </div>
               <div className="mt-3">
-                <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-1.5">Agents ({d.agent_ids.length})</div>
+                <div className="text-[11px] font-bold uppercase tracking-wide text-slate-500 mb-1.5">Agents ({d.agent_ids.length})</div>
                 {d.agent_ids.length === 0 ? (
-                  <span className="text-xs text-slate-400">No agents assigned — chats wait unassigned.</span>
+                  <span className="text-xs text-slate-500">No agents assigned — chats wait unassigned.</span>
                 ) : (
                   <div className="flex flex-wrap gap-1.5">
                     {d.agent_ids.map((id) => (
@@ -194,7 +194,7 @@ export default function Departments() {
               {members.map((m) => (
                 <label key={m.id} className={cx('flex items-center gap-2 px-3 py-2 rounded-xl border text-sm cursor-pointer transition', draft?.agent_ids?.includes(m.id) ? 'border-brix-500 bg-brix-50 font-semibold text-brix-800' : 'border-slate-200 text-slate-600')}>
                   <input type="checkbox" checked={draft?.agent_ids?.includes(m.id)} onChange={() => toggleAgent(m.id)} className="accent-brix-600" />
-                  {m.display_name} <span className="text-xs text-slate-400">({m.role})</span>
+                  {m.display_name} <span className="text-xs text-slate-500">({m.role})</span>
                 </label>
               ))}
             </div>

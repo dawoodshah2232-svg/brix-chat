@@ -6,8 +6,16 @@ import { getApi } from '../lib/api';
 import type { CopilotSettings, DataSettings, SecuritySettings } from '../lib/api';
 import { copyText } from '../lib/utils';
 import { Avatar, Button, Card, Input, Label, Select, Textarea, Toggle, useConfirm } from '../components/ui';
+import ProfanitySection from '../components/dashboard/ProfanitySection';
 import { DEFAULT_SLA_POLICIES, type SlaPolicy, type SlaPriority } from '../lib/sla';
 import { DEFAULT_BOT_THRESHOLD, DEFAULT_HANDOFF_TIMEOUT_MINS } from '../lib/bot';
+import { getTheme, setTheme, type Theme } from '../lib/theme';
+import {
+  TONES, EVENT_LABELS, loadNotifyPrefs, saveNotifyPrefs,
+  playTone, desktopPermission, requestDesktopPermission, fireIncomingMessage,
+  type NotifyPrefs, type NotifyEvent,
+} from '../lib/sounds';
+import { cx } from '../lib/utils';
 
 const COLOR_PRESETS = ['#4f46e5', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#0b1020'];
 const MEMBER_COLORS = ['#4f46e5', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
@@ -167,7 +175,7 @@ function AdvancedSettings({ workspace, actor }: { workspace: string; actor: stri
           ))}
         </div>
         <div className="mt-2">
-          <div className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">Answer sources</div>
+          <div className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">Answer sources</div>
           <div className="flex flex-wrap gap-2">
             {COPILOT_SOURCES.map((s) => (
               <button
@@ -268,40 +276,165 @@ function AdvancedSettings({ workspace, actor }: { workspace: string; actor: stri
   );
 }
 
-const NOTIF_EVENTS = [
-  { key: 'chat.message', icon: '💬', label: 'New visitor message' },
-  { key: 'chat.assigned', icon: '👤', label: 'Chat assigned to me' },
-  { key: 'ticket.created', icon: '🎫', label: 'New ticket' },
-  { key: 'ticket.sla', icon: '⏰', label: 'Ticket SLA breach' },
-  { key: 'campaign.sent', icon: '📣', label: 'Campaign sent' },
-  { key: 'goal.completed', icon: '🏁', label: 'Goal completed' },
-  { key: 'mention', icon: '＠', label: 'Mention in a note' },
-];
+/* ---------- UX ELEVATION: appearance + sounds (localStorage-backed) ---------- */
 
-function defaultPrefs() {
-  return {
-    sound: true,
-    desktopBell: false,
-    events: Object.fromEntries(NOTIF_EVENTS.map((e) => [e.key, true])),
+function AppearanceSection({ agent }: { agent: string }) {
+  const [theme, setThemeState] = useState<Theme>(() => getTheme(agent));
+  const flip = (dark: boolean) => {
+    const next: Theme = dark ? 'dark' : 'light';
+    setTheme(agent, next);
+    setThemeState(next);
   };
+  return (
+    <Card className="p-6">
+      <SectionTitle>Appearance</SectionTitle>
+      <p className="text-sm text-slate-500 mt-1 mb-2">Dashboard theme — saved per agent on this browser.</p>
+      <div className="flex items-center justify-between py-2">
+        <div>
+          <div className="text-sm font-semibold text-slate-900">{theme === 'dark' ? '🌙 Dark mode' : '☀️ Light mode'}</div>
+          <div className="text-xs text-slate-500">Restyles the dashboard chrome and common surfaces. The widget keeps its own theme.</div>
+        </div>
+        <Toggle checked={theme === 'dark'} onChange={flip} label="Dark mode" />
+      </div>
+    </Card>
+  );
 }
 
-function notifPermission(): NotificationPermission {
-  return typeof Notification !== 'undefined' ? Notification.permission : 'denied';
-}
+function SoundNotifications({ agent }: { agent: string }) {
+  const store = useStore();
+  const [prefs, setPrefs] = useState<NotifyPrefs>(() => loadNotifyPrefs(agent));
+  const [perm, setPerm] = useState<NotificationPermission>(() => desktopPermission());
 
-async function requestNotifPermission() {
-  try {
-    if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
-      await Notification.requestPermission();
-    }
-  } catch { /* ignore */ }
+  // Keep the store's bell prefs in sync so the topbar notification bell keeps
+  // honoring the same sound + per-event choices.
+  const update = (patch: Partial<NotifyPrefs>) => {
+    const next: NotifyPrefs = { ...prefs, ...patch };
+    setPrefs(next);
+    saveNotifyPrefs(agent, next);
+    store.updateSettings({
+      notifySound: next.sound,
+      notifyPrefs: {
+        sound: next.sound,
+        desktopBell: next.desktop,
+        events: {
+          ...(store.data.settings.notifyPrefs?.events ?? {}),
+          'chat.message': next.events.newMessage,
+          'chat.assigned': next.events.assigned,
+          mention: next.events.mention,
+        },
+      },
+    });
+  };
+
+  const setEvent = (k: NotifyEvent, v: boolean) => update({ events: { ...prefs.events, [k]: v } });
+
+  const enableDesktop = async () => {
+    setPerm(await requestDesktopPermission());
+  };
+
+  return (
+    <Card className="p-6">
+      <SectionTitle>Sounds &amp; notifications</SectionTitle>
+      <p className="text-sm text-slate-500 mt-1 mb-2">
+        Tones are generated live in your browser — no audio files, nothing to download. Saved per agent on this device.
+      </p>
+      <div className="divide-y divide-slate-100">
+        <div className="flex items-center justify-between py-3">
+          <div>
+            <div className="text-sm font-semibold text-slate-900">🔔 Notification sound</div>
+            <div className="text-xs text-slate-500">Play a tone when a notification arrives</div>
+          </div>
+          <Toggle checked={prefs.sound} onChange={(v) => update({ sound: v })} label="Notification sound" />
+        </div>
+
+        {prefs.sound && (
+          <div className="py-4 space-y-4">
+            <div className="grid sm:grid-cols-2 gap-4">
+              <div>
+                <Label>Tone</Label>
+                <div className="flex gap-2" role="radiogroup" aria-label="Notification tone">
+                  {TONES.map((t) => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={prefs.tone === t.id}
+                      title={t.hint}
+                      onClick={() => { update({ tone: t.id }); playTone(t.id, prefs.volume); }}
+                      className={cx(
+                        'flex-1 px-3 py-2 rounded-xl text-sm font-semibold border transition',
+                        prefs.tone === t.id
+                          ? 'bg-brix-600 text-white border-brix-600 shadow-lg shadow-brix-600/25'
+                          : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300',
+                      )}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <Label>Volume · {Math.round(prefs.volume * 100)}%</Label>
+                <input
+                  type="range" min={0} max={100} value={Math.round(prefs.volume * 100)}
+                  onChange={(e) => update({ volume: Number(e.target.value) / 100 })}
+                  className="w-full accent-brix-600" aria-label="Notification volume"
+                />
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" variant="secondary" onClick={() => playTone(prefs.tone, prefs.volume)}>
+                ▶ Preview tone
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => fireIncomingMessage(agent, 'Demo visitor', 'Hi! Is anyone there? This is a simulated incoming message to test your sound + desktop settings.')}
+              >
+                ✉ Simulate incoming message
+              </Button>
+            </div>
+          </div>
+        )}
+
+        <div className="flex items-center justify-between py-3 gap-4">
+          <div className="min-w-0">
+            <div className="text-sm font-semibold text-slate-900">🖥️ Desktop notifications</div>
+            <div className="text-xs text-slate-500">
+              Show a system notification even when this tab is in the background. Honest notes: your browser asks
+              for permission first; if you blocked it, re-allow it in the browser&apos;s site settings — the button
+              below can&apos;t override a block. Notifications only ever cover your own workspace&apos;s chats.
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {perm !== 'granted' && (
+              <Button size="sm" variant="secondary" onClick={enableDesktop} disabled={perm === 'denied'}>
+                {perm === 'denied' ? 'Blocked in browser' : 'Enable'}
+              </Button>
+            )}
+            <Toggle checked={prefs.desktop && perm === 'granted'} onChange={(v) => update({ desktop: v })} label="Desktop notifications" />
+          </div>
+        </div>
+
+        <div className="pt-4">
+          <div className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">Notify me about</div>
+          {(Object.keys(EVENT_LABELS) as NotifyEvent[]).map((k) => (
+            <div key={k} className="flex items-center justify-between py-2.5">
+              <div className="text-sm font-medium text-slate-700">{EVENT_LABELS[k]}</div>
+              <Toggle checked={prefs.events[k]} onChange={(v) => setEvent(k, v)} label={EVENT_LABELS[k]} />
+            </div>
+          ))}
+        </div>
+      </div>
+    </Card>
+  );
 }
 
 export default function Settings() {
   const store = useStore();
   const { confirm, dialog } = useConfirm();
   const s = store.data.settings;
+  const agentName = store.session?.displayName ?? 'agent';
   const patchBot = (patch: Partial<NonNullable<SettingsData['bot']>>) =>
     store.updateSettings({
       bot: {
@@ -359,7 +492,7 @@ export default function Settings() {
   };
 
   return (
-    <div className="space-y-5 max-w-5xl">
+    <div className="p-4 sm:p-6 max-w-5xl mx-auto space-y-5">
       <div>
         <h1 className="text-xl font-display font-extrabold text-slate-900">Settings</h1>
         <p className="text-sm text-slate-500 mt-0.5">Widget, team, hours and product preferences</p>
@@ -417,7 +550,7 @@ export default function Settings() {
           <div>
             <Label>Live preview</Label>
             <div className="rounded-2xl bg-slate-100 border border-slate-200 p-4 h-[380px] relative overflow-hidden">
-              <div className="text-xs text-slate-400 mb-2">Position: {w.position.replace('-', ' ')}</div>
+              <div className="text-xs text-slate-500 mb-2">Position: {w.position.replace('-', ' ')}</div>
               <div className="absolute left-4 right-4 bottom-4">
                 <div className="bg-white shadow-xl border border-slate-200 overflow-hidden" style={{ borderRadius: w.radius }}>
                   <div className="px-4 py-3 flex items-center gap-2.5"
@@ -434,13 +567,13 @@ export default function Settings() {
                     <div className="bg-white border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm max-w-[85%]"
                       style={{ borderRadius: w.radius }}>{w.greeting}</div>
                     <div className="flex gap-2">
-                      <div className="flex-1 bg-white border border-slate-200 px-3 py-2 text-xs text-slate-400"
+                      <div className="flex-1 bg-white border border-slate-200 px-3 py-2 text-xs text-slate-500"
                         style={{ borderRadius: w.radius }}>Type a message…</div>
                       <div className="px-3 py-2 text-xs text-white font-bold grid place-items-center"
                         style={{ background: w.color, borderRadius: w.radius }}>➤</div>
                     </div>
                   </div>
-                  {w.showBranding && <div className="text-center text-[10px] text-slate-400 py-1.5 bg-white border-t border-slate-100">Powered by Brix Chat</div>}
+                  {w.showBranding && <div className="text-center text-[10px] text-slate-500 py-1.5 bg-white border-t border-slate-100">Powered by Brix Chat</div>}
                 </div>
                 <div className={`mt-3 w-12 h-12 ${w.position === 'bottom-right' ? 'ml-auto' : ''} ${BUBBLE_CLASS[w.bubble]} shadow-xl grid place-items-center text-white text-lg`}
                   style={{ background: w.color }}>💬</div>
@@ -506,71 +639,21 @@ export default function Settings() {
         <SectionTitle>Online hours</SectionTitle>
         <div className="divide-y divide-slate-100 mt-2">
           {s.hours.map((h, i) => (
-            <div key={h.day} className="flex items-center gap-3 py-2.5">
+            <div key={h.day} className="flex flex-wrap items-center gap-x-3 gap-y-2 py-2.5">
               <span className="w-24 text-sm font-semibold text-slate-800">{h.day}</span>
               <input type="time" value={h.from} onChange={(e) => updateHour(i, { from: e.target.value })}
-                className="px-2.5 py-1.5 rounded-lg border border-slate-200 text-sm disabled:opacity-40" disabled={!h.enabled} />
-              <span className="text-slate-400 text-sm">to</span>
+                className="px-2.5 py-1.5 rounded-lg border border-slate-200 text-sm disabled:opacity-40 min-w-0" disabled={!h.enabled} />
+              <span className="text-slate-500 text-sm">to</span>
               <input type="time" value={h.to} onChange={(e) => updateHour(i, { to: e.target.value })}
-                className="px-2.5 py-1.5 rounded-lg border border-slate-200 text-sm disabled:opacity-40" disabled={!h.enabled} />
+                className="px-2.5 py-1.5 rounded-lg border border-slate-200 text-sm disabled:opacity-40 min-w-0" disabled={!h.enabled} />
               <div className="ml-auto"><Toggle checked={h.enabled} onChange={(v) => updateHour(i, { enabled: v })} label={h.day} /></div>
             </div>
           ))}
         </div>
       </Card>
 
-      {/* Notifications */}
-      <Card className="p-6">
-        <SectionTitle>Notifications</SectionTitle>
-        <p className="text-sm text-slate-500 mt-1 mb-4">Choose what pings you — everything stays in this browser.</p>
-        <div className="divide-y divide-slate-100">
-          <div className="flex items-center justify-between py-3">
-            <div>
-              <div className="text-sm font-semibold text-slate-900">🔔 Sound</div>
-              <div className="text-xs text-slate-500">Play a chime when a new notification arrives</div>
-            </div>
-            <Toggle
-              checked={s.notifyPrefs?.sound ?? s.notifySound}
-              onChange={(v) => store.updateSettings({ notifySound: v, notifyPrefs: { ...defaultPrefs(), ...s.notifyPrefs, sound: v } })}
-              label="Notification sound"
-            />
-          </div>
-          <div className="flex items-center justify-between py-3">
-            <div>
-              <div className="text-sm font-semibold text-slate-900">🛎 Desktop bell</div>
-              <div className="text-xs text-slate-500">
-                Show a system notification even when this tab is in the background
-                {notifPermission() !== 'granted' && ' · browser permission needed'}
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              {notifPermission() !== 'granted' && (
-                <Button size="sm" variant="secondary" onClick={requestNotifPermission}>Enable</Button>
-              )}
-              <Toggle
-                checked={(s.notifyPrefs?.desktopBell ?? false) && notifPermission() === 'granted'}
-                onChange={(v) => store.updateSettings({ notifyPrefs: { ...defaultPrefs(), ...s.notifyPrefs, desktopBell: v } })}
-                label="Desktop bell"
-              />
-            </div>
-          </div>
-          <div className="pt-4">
-            <div className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">Notify me about</div>
-            {NOTIF_EVENTS.map((e) => (
-              <div key={e.key} className="flex items-center justify-between py-2.5">
-                <div className="text-sm font-medium text-slate-700">{e.icon} {e.label}</div>
-                <Toggle
-                  checked={s.notifyPrefs?.events?.[e.key] ?? true}
-                  onChange={(v) => store.updateSettings({
-                    notifyPrefs: { ...defaultPrefs(), ...s.notifyPrefs, events: { ...defaultPrefs().events, ...s.notifyPrefs?.events, [e.key]: v } },
-                  })}
-                  label={e.label}
-                />
-              </div>
-            ))}
-          </div>
-        </div>
-      </Card>
+      <AppearanceSection agent={agentName} />
+      <SoundNotifications agent={agentName} />
 
       {/* SLA policies */}
       <Card className="p-6">
@@ -700,6 +783,9 @@ export default function Settings() {
 
       {/* Advanced: copilot, security, data */}
       {store.session && <AdvancedSettings workspace={store.effectiveWorkspaceId()} actor={store.session.displayName} />}
+
+      {/* Conversation Operations: profanity filter (local demo) */}
+      <ProfanitySection />
 
       {/* Danger zone */}
       <Card className="p-6 border-rose-200">

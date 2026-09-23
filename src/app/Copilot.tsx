@@ -82,11 +82,11 @@ export default function Copilot({ convId, onInsert }: { convId: string; onInsert
 
         {section === 'replies' && (
           <div className="space-y-2 animate-fade-up">
-            {suggestions.length === 0 && <div className="text-xs text-slate-400">No visitor message yet to reply to.</div>}
+            {suggestions.length === 0 && <div className="text-xs text-slate-500">No visitor message yet to reply to.</div>}
             {suggestions.map((sg) => (
               <Card key={sg.id} className="p-3 cursor-pointer hover:border-brix-300 hover:shadow-md transition group" >
                 <div onClick={() => onInsert(sg.text)}>
-                  <div className="text-[11px] font-bold text-slate-400 mb-1">{SOURCE_BADGE[sg.source]} · {sg.label}</div>
+                  <div className="text-[11px] font-bold text-slate-500 mb-1">{SOURCE_BADGE[sg.source]} · {sg.label}</div>
                   <div className="text-[13px] text-slate-800 leading-relaxed">{sg.text}</div>
                   <div className="text-[11px] font-bold text-brix-600 mt-1.5 opacity-0 group-hover:opacity-100 transition">Click to insert →</div>
                 </div>
@@ -97,7 +97,7 @@ export default function Copilot({ convId, onInsert }: { convId: string; onInsert
 
         {section === 'summary' && (
           <Card className="p-4 animate-fade-up">
-            <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-2">Thread summary</div>
+            <div className="text-[11px] font-bold uppercase tracking-wide text-slate-500 mb-2">Thread summary</div>
             <pre className="text-[13px] text-slate-700 whitespace-pre-wrap font-sans leading-relaxed">{summary}</pre>
           </Card>
         )}

@@ -165,14 +165,14 @@ export default function Team() {
                     <span className="font-bold text-slate-900">{m.display_name}</span>
                     <Badge tone={roleTone(m.role)}>{m.role}</Badge>
                     <span className={`w-2 h-2 rounded-full ${m.status === 'online' ? 'bg-emerald-500' : m.status === 'away' ? 'bg-amber-500' : 'bg-slate-300'}`} title={m.status} />
-                    {m.id === session?.memberId && <span className="text-xs text-slate-400">(you)</span>}
+                    {m.id === session?.memberId && <span className="text-xs text-slate-500">(you)</span>}
                   </div>
                   <div className="text-xs text-slate-500 mt-0.5">
                     {m.job_title || '—'} · Last login {m.last_login ? timeAgo(new Date(m.last_login).getTime()) : 'never'}
                   </div>
                 </div>
                 {m.role === 'owner' ? (
-                  <span className="text-xs text-slate-400 font-medium">Platform owner</span>
+                  <span className="text-xs text-slate-500 font-medium">Platform owner</span>
                 ) : (
                   <div className="flex items-center gap-2 shrink-0">
                     <Select value={m.role} onChange={(e) => changeRole(m, e.target.value as TeamRole)} className="text-xs">

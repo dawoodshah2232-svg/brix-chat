@@ -50,7 +50,7 @@ export default function Canned() {
   });
 
   return (
-    <div className="space-y-5">
+    <div className="p-4 sm:p-6 max-w-6xl mx-auto space-y-5">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-xl font-display font-extrabold text-slate-900">Canned responses</h1>
@@ -81,7 +81,7 @@ export default function Canned() {
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
+                <tr className="text-left text-xs uppercase tracking-wide text-slate-500 border-b border-slate-100">
                   <th className="px-5 py-3 font-semibold">Shortcut</th>
                   <th className="px-5 py-3 font-semibold">Title</th>
                   <th className="px-5 py-3 font-semibold">Scope</th>

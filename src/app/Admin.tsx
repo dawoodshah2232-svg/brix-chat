@@ -147,11 +147,11 @@ function MetricCard({ label, value, icon, spark, sparkColor, sub }: {
     <Card className="p-4">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <div className="text-[11px] font-bold uppercase tracking-widest text-slate-400">{label}</div>
+          <div className="text-[11px] font-bold uppercase tracking-widest text-slate-500">{label}</div>
           <div className="text-2xl font-black text-slate-900 mt-1 flex items-center gap-2">
             <span className="text-lg">{icon}</span>{value}
           </div>
-          {sub && <div className="text-[11px] text-slate-400 mt-0.5">{sub}</div>}
+          {sub && <div className="text-[11px] text-slate-500 mt-0.5">{sub}</div>}
         </div>
         {spark && spark.length > 0 && <Sparkline values={spark} color={sparkColor} className="mt-1 shrink-0" />}
       </div>
@@ -422,7 +422,7 @@ function OverviewTab({ jumpTo }: { jumpTo: (t: Tab) => void }) {
             </span>
             <h3 className="font-bold text-slate-900">Live operations</h3>
           </div>
-          <span className="text-xs text-slate-400">auto-refreshes every 5s · updates as you work — local mode, no server push</span>
+          <span className="text-xs text-slate-500">auto-refreshes every 5s · updates as you work — local mode, no server push</span>
         </div>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
           <MetricCard label="Open chats" value={String(totals.openChats)} icon="💬" />
@@ -433,7 +433,7 @@ function OverviewTab({ jumpTo }: { jumpTo: (t: Tab) => void }) {
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
+              <tr className="text-left text-xs uppercase tracking-wide text-slate-500 border-b border-slate-100">
                 <th className="py-2 pr-3 font-semibold">Client</th>
                 <th className="py-2 pr-3 font-semibold">Open</th>
                 <th className="py-2 pr-3 font-semibold">Unassigned</th>
@@ -476,14 +476,14 @@ function OverviewTab({ jumpTo }: { jumpTo: (t: Tab) => void }) {
           )}
         </Card>
         <Card className="p-5">
-          <h3 className="font-bold text-slate-900 mb-3">System health <span className="text-xs font-semibold text-slate-400">this browser</span></h3>
+          <h3 className="font-bold text-slate-900 mb-3">System health <span className="text-xs font-semibold text-slate-500">this browser</span></h3>
           <dl className="space-y-2 text-sm">
             <div className="flex justify-between"><dt className="text-slate-500">localStorage used</dt><dd className="font-bold text-slate-900">{(storage.bytes / 1048576).toFixed(2)} MB</dd></div>
             <div className="flex justify-between"><dt className="text-slate-500">Brix keys</dt><dd className="font-bold text-slate-900">{storage.keys}</dd></div>
-            <div className="flex justify-between"><dt className="text-slate-500">Workspace DBs</dt><dd className="font-bold text-slate-900">{rows.length + 1} <span className="font-normal text-slate-400">(clients + operator)</span></dd></div>
+            <div className="flex justify-between"><dt className="text-slate-500">Workspace DBs</dt><dd className="font-bold text-slate-900">{rows.length + 1} <span className="font-normal text-slate-500">(clients + operator)</span></dd></div>
             <div className="flex justify-between"><dt className="text-slate-500">Logged errors</dt><dd className={cx('font-bold', errorCount > 0 ? 'text-amber-600' : 'text-emerald-600')}>{errorCount}</dd></div>
           </dl>
-          <p className="text-xs text-slate-400 mt-3">Health reflects this browser's local data only. Multi-device/server monitoring arrives with the backend phase.</p>
+          <p className="text-xs text-slate-500 mt-3">Health reflects this browser's local data only. Multi-device/server monitoring arrives with the backend phase.</p>
         </Card>
       </div>
     </div>
@@ -668,7 +668,7 @@ function ClientsTab({ highlightId, nonce }: { highlightId?: string; nonce: numbe
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
+              <tr className="text-left text-xs uppercase tracking-wide text-slate-500 border-b border-slate-100">
                 <th className="py-3 pl-4 pr-2 w-10"><input type="checkbox" checked={allSel} onChange={(e) => setSelected(e.target.checked ? new Set(filtered.map((c) => c.slug)) : new Set())} aria-label="Select all" /></th>
                 <th className="py-3 pr-3 font-semibold">Client</th>
                 <th className="py-3 pr-3 font-semibold">Plan</th>
@@ -682,7 +682,7 @@ function ClientsTab({ highlightId, nonce }: { highlightId?: string; nonce: numbe
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={9} className="py-10 text-center text-slate-400">Loading clients…</td></tr>
+                <tr><td colSpan={9} className="py-10 text-center text-slate-500">Loading clients…</td></tr>
               ) : filtered.length === 0 ? (
                 <tr><td colSpan={9}><EmptyState icon="🏢" title="No clients match" hint="Adjust the filters or import clients." /></td></tr>
               ) : filtered.map((c) => {
@@ -692,7 +692,7 @@ function ClientsTab({ highlightId, nonce }: { highlightId?: string; nonce: numbe
                     <td className="py-3 pl-4 pr-2"><RowCheck checked={selected.has(c.slug)} onChange={() => toggleSel(c.slug)} label={`Select ${c.name}`} /></td>
                     <td className="py-3 pr-3">
                       <div className="font-bold text-slate-900">{c.name}</div>
-                      <div className="text-xs text-slate-400 font-mono">{c.slug}</div>
+                      <div className="text-xs text-slate-500 font-mono">{c.slug}</div>
                     </td>
                     <td className="py-3 pr-3">{plan?.name ?? c.planId}</td>
                     <td className="py-3 pr-3">{c.seats}</td>
@@ -724,7 +724,7 @@ function ClientsTab({ highlightId, nonce }: { highlightId?: string; nonce: numbe
         <Select value={planChoice} onChange={(e) => setPlanChoice(e.target.value)}>
           {plans.map((p) => <option key={p.id} value={p.id}>{p.name} — ${p.price}/mo · {p.seats} seats</option>)}
         </Select>
-        <p className="text-xs text-slate-400 mt-2">Seats update to the plan default. Billing is local-only until Stripe is connected (backend phase).</p>
+        <p className="text-xs text-slate-500 mt-2">Seats update to the plan default. Billing is local-only until Stripe is connected (backend phase).</p>
         <div className="flex justify-end gap-2 mt-5">
           <Button variant="secondary" onClick={() => setPlanModal(null)}>Cancel</Button>
           <Button onClick={applyPlan}>Apply plan</Button>
@@ -804,7 +804,7 @@ function PropertiesTab({ highlightId, nonce }: { highlightId?: string; nonce: nu
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
+              <tr className="text-left text-xs uppercase tracking-wide text-slate-500 border-b border-slate-100">
                 <th className="py-3 pl-4 pr-3 font-semibold">Property</th>
                 <th className="py-3 pr-3 font-semibold">Workspace</th>
                 <th className="py-3 pr-3 font-semibold">Domain</th>
@@ -815,13 +815,13 @@ function PropertiesTab({ highlightId, nonce }: { highlightId?: string; nonce: nu
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={6} className="py-10 text-center text-slate-400">Loading properties…</td></tr>
+                <tr><td colSpan={6} className="py-10 text-center text-slate-500">Loading properties…</td></tr>
               ) : filtered.length === 0 ? (
                 <tr><td colSpan={6}><EmptyState icon="🌐" title="No properties" hint="Properties appear once clients add them." /></td></tr>
               ) : filtered.map((r) => (
                 <tr key={r.property.id} className={cx('border-b border-slate-50 last:border-0 hover:bg-slate-50/60', flash === r.property.id && 'bg-brix-50')}>
                   <td className="py-3 pl-4 pr-3 font-bold text-slate-900">{r.property.name}</td>
-                  <td className="py-3 pr-3">{r.workspaceName} <span className="text-xs text-slate-400 font-mono">{r.workspaceSlug}</span></td>
+                  <td className="py-3 pr-3">{r.workspaceName} <span className="text-xs text-slate-500 font-mono">{r.workspaceSlug}</span></td>
                   <td className="py-3 pr-3 text-slate-500">{r.property.domain}</td>
                   <td className="py-3 pr-3"><Code text={r.property.public_key} /> <CopyBtn text={r.property.public_key} /></td>
                   <td className="py-3 pr-3"><Badge tone={r.property.enabled ? 'green' : 'rose'}>{r.property.enabled ? 'enabled' : 'disabled'}</Badge></td>
@@ -935,7 +935,7 @@ function PlansTab({ highlightId, nonce }: { highlightId?: string; nonce: number 
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
+                <tr className="text-left text-xs uppercase tracking-wide text-slate-500 border-b border-slate-100">
                   <th className="py-2 pr-3 font-semibold">Plan</th>
                   <th className="py-2 pr-3 font-semibold">Clients</th>
                   <th className="py-2 font-semibold text-right">MRR</th>
@@ -944,7 +944,7 @@ function PlansTab({ highlightId, nonce }: { highlightId?: string; nonce: number 
               <tbody>
                 {planRows.map((r) => (
                   <tr key={r.plan.id} className="border-b border-slate-50 last:border-0">
-                    <td className="py-2 pr-3 font-bold text-slate-900">{r.plan.name} <span className="font-normal text-slate-400">${r.plan.price}/mo</span></td>
+                    <td className="py-2 pr-3 font-bold text-slate-900">{r.plan.name} <span className="font-normal text-slate-500">${r.plan.price}/mo</span></td>
                     <td className="py-2 pr-3">{r.clients}</td>
                     <td className="py-2 text-right font-bold">${r.mrr.toLocaleString()}</td>
                   </tr>
@@ -1012,7 +1012,7 @@ function PlansTab({ highlightId, nonce }: { highlightId?: string; nonce: number 
           <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800 font-semibold">
             BACKEND-PHASE — payments are stubbed, not connected.
           </div>
-          <p className="text-xs text-slate-400">When the backend lands, this dialog becomes the Stripe OAuth connect flow (publishable key + webhook signing).</p>
+          <p className="text-xs text-slate-500">When the backend lands, this dialog becomes the Stripe OAuth connect flow (publishable key + webhook signing).</p>
           <div className="flex justify-end"><Button variant="secondary" onClick={() => setStripeOpen(false)}>Got it</Button></div>
         </div>
       </Modal>
@@ -1117,7 +1117,7 @@ function SystemTab() {
               {errors.map((e) => (
                 <li key={e.id} className="text-xs rounded-lg bg-slate-50 border border-slate-100 p-2">
                   <div className="font-mono text-slate-700 break-words">{e.message}</div>
-                  <div className="text-slate-400 mt-1">{e.source} · {fmtDate(e.at)}</div>
+                  <div className="text-slate-500 mt-1">{e.source} · {fmtDate(e.at)}</div>
                 </li>
               ))}
             </ul>
@@ -1138,7 +1138,7 @@ function SystemTab() {
                     <span className="font-bold text-slate-900">{def.name}</span>
                     {saved ? <Badge tone="green">configured</Badge> : <Badge tone="slate">not set</Badge>}
                   </div>
-                  {saved && <div className="text-xs font-mono text-slate-400 mt-0.5">{masked(saved)}</div>}
+                  {saved && <div className="text-xs font-mono text-slate-500 mt-0.5">{masked(saved)}</div>}
                 </div>
                 <Input
                   type="password"
@@ -1251,7 +1251,7 @@ function AuditTab() {
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
+              <tr className="text-left text-xs uppercase tracking-wide text-slate-500 border-b border-slate-100">
                 <th className="py-3 pl-4 pr-3 font-semibold">When</th>
                 <th className="py-3 pr-3 font-semibold">Workspace</th>
                 <th className="py-3 pr-3 font-semibold">Actor</th>
@@ -1262,7 +1262,7 @@ function AuditTab() {
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={6} className="py-10 text-center text-slate-400">Loading audit log…</td></tr>
+                <tr><td colSpan={6} className="py-10 text-center text-slate-500">Loading audit log…</td></tr>
               ) : filtered.length === 0 ? (
                 <tr><td colSpan={6}><EmptyState icon="📜" title="No entries" hint="Actions across workspaces will appear here." /></td></tr>
               ) : filtered.slice(0, 200).map((e) => (
@@ -1273,7 +1273,7 @@ function AuditTab() {
                     <td className="py-2.5 pr-3 font-semibold text-slate-900">{e.actor}</td>
                     <td className="py-2.5 pr-3 font-mono text-xs">{e.action}</td>
                     <td className="py-2.5 pr-3 text-slate-500">{e.entity}{e.entity_id ? ` · ${e.entity_id.slice(0, 12)}` : ''}</td>
-                    <td className="py-2.5 pr-4 text-right text-slate-400">{expanded === e.id ? '▾' : '▸'}</td>
+                    <td className="py-2.5 pr-4 text-right text-slate-500">{expanded === e.id ? '▾' : '▸'}</td>
                   </tr>
                   {expanded === e.id && (
                     <tr className="bg-slate-50/70">
@@ -1285,7 +1285,7 @@ function AuditTab() {
             </tbody>
           </table>
         </div>
-        {filtered.length > 200 && <p className="text-xs text-slate-400 p-3">Showing 200 of {filtered.length} — refine the filters.</p>}
+        {filtered.length > 200 && <p className="text-xs text-slate-500 p-3">Showing 200 of {filtered.length} — refine the filters.</p>}
       </Card>
     </div>
   );
@@ -1349,7 +1349,7 @@ function SettingsTab() {
             <h3 className="font-bold text-slate-900">Security</h3>
             <div><Label>Session timeout (minutes)</Label><Input type="number" min={5} max={1440} value={draft.session_timeout_mins} onChange={(e) => setDraft({ ...draft, session_timeout_mins: Number(e.target.value) })} /></div>
             <div><Label>Minimum passcode length</Label><Input type="number" min={4} max={12} value={draft.passcode_min_length} onChange={(e) => setDraft({ ...draft, passcode_min_length: Number(e.target.value) })} /></div>
-            <p className="text-xs text-slate-400">Applies to newly set passcodes. Existing sessions are unaffected until re-login.</p>
+            <p className="text-xs text-slate-500">Applies to newly set passcodes. Existing sessions are unaffected until re-login.</p>
             <div className="flex justify-end"><Button onClick={save}>Save settings</Button></div>
           </Card>
           <Card className="p-5">
@@ -1364,7 +1364,7 @@ function SettingsTab() {
               </div>
               <span className="ml-auto text-[10px] font-bold uppercase tracking-widest bg-brix-600 rounded-full px-2 py-0.5">Platform</span>
             </div>
-            <p className="text-xs text-slate-400 mt-2">Preview updates as you edit — save to apply.</p>
+            <p className="text-xs text-slate-500 mt-2">Preview updates as you edit — save to apply.</p>
           </Card>
         </div>
       </div>
@@ -1503,7 +1503,7 @@ function AdminInner() {
               </span>
             )}
             <div className="ml-auto flex items-center gap-2">
-              <span className="text-xs text-slate-400 hidden sm:block">effective workspace: <span className="font-mono font-bold text-slate-600">{effectiveWorkspaceId(session)}</span></span>
+              <span className="text-xs text-slate-500 hidden sm:block">effective workspace: <span className="font-mono font-bold text-slate-600">{effectiveWorkspaceId(session)}</span></span>
               <Button variant="secondary" size="sm" onClick={openPalette}>⌘K Search</Button>
             </div>
           </div>

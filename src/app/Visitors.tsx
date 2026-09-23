@@ -119,7 +119,7 @@ function OpsMonitor() {
           <Card key={st.label} className="!p-4">
             <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{st.label}</div>
             <div className="text-2xl font-extrabold text-slate-900 mt-1 tabular-nums">{st.value}</div>
-            <div className="text-xs text-slate-400 mt-0.5 truncate">{st.sub}</div>
+            <div className="text-xs text-slate-500 mt-0.5 truncate">{st.sub}</div>
           </Card>
         ))}
       </div>
@@ -132,14 +132,14 @@ function OpsMonitor() {
                 <span className={'w-2.5 h-2.5 rounded-full ' + (t.online ? 'bg-emerald-500' : 'bg-slate-300')} />
                 <div className="flex-1">
                   <div className="text-sm font-semibold text-slate-800">{t.name}</div>
-                  <div className="text-xs text-slate-400">{t.role}{t.online ? '' : ' · away'}</div>
+                  <div className="text-xs text-slate-500">{t.role}{t.online ? '' : ' · away'}</div>
                 </div>
                 <Badge tone={loadOf(t.name) > 3 ? 'rose' : loadOf(t.name) > 0 ? 'amber' : 'slate'}>
                   {loadOf(t.name)} open
                 </Badge>
               </div>
             ))}
-            {team.length === 0 && <div className="px-5 py-6 text-sm text-slate-400">No team members.</div>}
+            {team.length === 0 && <div className="px-5 py-6 text-sm text-slate-500">No team members.</div>}
           </div>
         </Card>
         <Card className="!p-0 overflow-hidden">
@@ -150,10 +150,10 @@ function OpsMonitor() {
                 <span className="text-base">{e.icon}</span>
                 <div className="flex-1 text-sm text-slate-700">{e.text}</div>
                 <button onClick={() => navigate(`/app?c=${e.convId}`)} className="text-xs font-semibold text-brix-600 hover:underline">Open</button>
-                <div className="text-[11px] text-slate-400 whitespace-nowrap">{timeAgo(e.ts)}</div>
+                <div className="text-[11px] text-slate-500 whitespace-nowrap">{timeAgo(e.ts)}</div>
               </div>
             ))}
-            {events.length === 0 && <div className="px-5 py-6 text-sm text-slate-400">No events yet.</div>}
+            {events.length === 0 && <div className="px-5 py-6 text-sm text-slate-500">No events yet.</div>}
           </div>
         </Card>
       </div>
@@ -165,7 +165,7 @@ function OpsMonitor() {
               <div key={c.id} className="flex items-center gap-3 px-5 py-2.5">
                 <div className="flex-1">
                   <div className="text-sm font-semibold text-slate-800">{c.visitor}</div>
-                  <div className="text-xs text-slate-400">waiting {fmtDuration(Date.now() - lastVisitorTs(c))} · {c.department}</div>
+                  <div className="text-xs text-slate-500">waiting {fmtDuration(Date.now() - lastVisitorTs(c))} · {c.department}</div>
                 </div>
                 <Button size="sm" variant="secondary" onClick={() => navigate(`/app?c=${c.id}`)}>Assign</Button>
               </div>
@@ -201,7 +201,7 @@ export default function Visitors() {
   const [tab, setTab] = useState<'visitors' | 'ops'>('visitors');
 
   return (
-    <div className="space-y-5">
+    <div className="p-4 sm:p-6 max-w-6xl mx-auto space-y-5">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-xl font-display font-extrabold text-slate-900">Live visitors</h1>
@@ -231,7 +231,7 @@ export default function Visitors() {
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
+                <tr className="text-left text-xs uppercase tracking-wide text-slate-500 border-b border-slate-100">
                   <th className="px-5 py-3 font-semibold">Visitor</th>
                   <th className="px-5 py-3 font-semibold">Current page</th>
                   <th className="px-5 py-3 font-semibold">Location</th>
@@ -251,7 +251,7 @@ export default function Visitors() {
                         </span>
                         <div>
                           <div className="font-semibold text-slate-900">{v.name}</div>
-                          <div className="text-xs text-slate-400">{v.pages} page{v.pages === 1 ? '' : 's'} viewed</div>
+                          <div className="text-xs text-slate-500">{v.pages} page{v.pages === 1 ? '' : 's'} viewed</div>
                         </div>
                       </div>
                     </td>
@@ -268,7 +268,7 @@ export default function Visitors() {
                       <div className="flex flex-col gap-1.5">
                         {v.typing && <span className="text-xs text-brix-600 font-medium">💬 typing: {v.typing}…</span>}
                         {v.cartValue !== undefined && <Badge tone="amber">🛒 ${v.cartValue.toFixed(2)}</Badge>}
-                        {!v.typing && v.cartValue === undefined && <span className="text-xs text-slate-400">—</span>}
+                        {!v.typing && v.cartValue === undefined && <span className="text-xs text-slate-500">—</span>}
                       </div>
                     </td>
                     <td className="px-5 py-3.5">

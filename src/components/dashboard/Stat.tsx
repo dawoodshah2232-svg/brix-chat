@@ -72,7 +72,7 @@ export function Stat({
     <Card className="p-5 hover:shadow-md transition-shadow">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">{label}</div>
+          <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">{label}</div>
           <div className="mt-1.5 text-3xl font-display font-extrabold text-slate-900 tabular-nums">{value}</div>
           {delta && (
             <div

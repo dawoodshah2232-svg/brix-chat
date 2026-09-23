@@ -143,3 +143,108 @@ img, video {
   max-width: 100%;
   height: auto;
 }
+
+/* ---------- UX ELEVATION pack ---------- */
+
+/* smooth sidebar collapse (width transition on the sidebar aside) */
+.sidebar-collapse {
+  transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* toast slide-in entrance */
+@keyframes toast-in {
+  from { opacity: 0; transform: translateX(28px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.animate-toast-in {
+  animation: toast-in 0.32s cubic-bezier(0.21, 1.02, 0.73, 1) both;
+}
+
+/* skeleton shimmer */
+@keyframes shimmer {
+  from { background-position: -400px 0; }
+  to { background-position: 400px 0; }
+}
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background-color: #e2e8f0;
+  border-radius: 0.5rem;
+}
+.skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.65), transparent);
+  animation: shimmer 1.6s linear infinite;
+}
+
+/* skeleton → content fade (apply to the real content when it swaps in) */
+.skeleton-fade {
+  animation: fade-up 0.4s ease-out both;
+}
+
+/* card hover lift */
+.card-hover {
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+.card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 28px -12px rgba(79, 70, 229, 0.22);
+}
+
+/* ---------- dark mode (dashboard chrome + common surfaces) ----------
+ * Toggled via the `dark` class on <html> (see src/lib/theme.ts). Honest
+ * scope: dashboard surfaces and shared components, not every marketing page. */
+.dark {
+  color-scheme: dark;
+}
+.dark body {
+  background-color: #0b1020;
+  color: #e2e8f0;
+}
+.dark .bg-white { background-color: #141b38 !important; }
+.dark .bg-slate-50 { background-color: #0e1430 !important; }
+.dark .bg-slate-100 { background-color: #1a2247 !important; }
+.dark .bg-brix-50 { background-color: rgba(99, 102, 241, 0.14) !important; }
+.dark .bg-brix-100 { background-color: rgba(99, 102, 241, 0.2) !important; }
+.dark .bg-amber-50 { background-color: rgba(245, 158, 11, 0.1) !important; }
+.dark .bg-emerald-50 { background-color: rgba(16, 185, 129, 0.1) !important; }
+.dark .bg-rose-50 { background-color: rgba(244, 63, 94, 0.1) !important; }
+.dark .bg-cyan-100 { background-color: rgba(34, 211, 238, 0.14) !important; }
+.dark .text-slate-900 { color: #f1f5f9 !important; }
+.dark .text-slate-800 { color: #e2e8f0 !important; }
+.dark .text-slate-700 { color: #cbd5e1 !important; }
+.dark .text-slate-600 { color: #aeb9cf !important; }
+.dark .text-slate-500 { color: #8b98b4 !important; }
+.dark .text-slate-400 { color: #7b88a6 !important; }
+.dark .border-slate-200,
+.dark .border-slate-200\/80 { border-color: #2b3563 !important; }
+.dark .border-slate-100 { border-color: #222c55 !important; }
+.dark .divide-slate-100 > :not([hidden]) ~ :not([hidden]) { border-color: #222c55 !important; }
+.dark .hover\:bg-slate-50:hover { background-color: #1a2247 !important; }
+.dark .hover\:bg-slate-100:hover { background-color: #232c58 !important; }
+.dark input:not([type='color']):not([type='checkbox']):not([type='radio']):not([type='range']),
+.dark textarea,
+.dark select {
+  background-color: #0e1430 !important;
+  border-color: #2b3563 !important;
+  color: #e2e8f0 !important;
+}
+.dark input:not([type='color']):not([type='checkbox']):not([type='radio']):not([type='range'])::placeholder,
+.dark textarea::placeholder { color: #64748b !important; }
+.dark input:not([type='color']):disabled,
+.dark textarea:disabled,
+.dark select:disabled { opacity: 0.45; }
+.dark kbd { background-color: #1a2247 !important; border-color: #2b3563 !important; color: #cbd5e1 !important; }
+.dark code { background-color: #1a2247 !important; }
+.dark .skeleton { background-color: #1a2247 !important; }
+.dark .skeleton::after {
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.08), transparent);
+}
+.dark .shadow-sm,
+.dark .shadow-lg,
+.dark .shadow-xl,
+.dark .shadow-2xl {
+  --tw-shadow-color: rgba(0, 0, 0, 0.55);
+}

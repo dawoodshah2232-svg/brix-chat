@@ -283,34 +283,25 @@ export default function Landing() {
               ))}
             </dl>
           </div>
-          {/* floating chat mock */}
-          <div className="relative hidden sm:block" aria-hidden>
-            <div className="absolute inset-0 bg-gradient-to-br from-brix-600/20 to-aqua-500/10 blur-2xl rounded-full" />
-            <div className="relative mx-auto max-w-sm rounded-3xl border border-white/10 bg-white/[0.04] backdrop-blur-xl p-5 shadow-2xl animate-[float_6s_ease-in-out_infinite]">
-              <div className="flex items-center gap-3 pb-4 border-b border-white/10">
-                <span className="w-10 h-10 rounded-full bg-gradient-to-br from-brix-500 to-aqua-400 grid place-items-center text-white font-bold">S</span>
-                <div>
-                  <div className="text-sm font-semibold text-white">Sara — Support</div>
-                  <div className="text-xs text-emerald-400">● Online</div>
-                </div>
-              </div>
-              <div className="py-4 space-y-3 text-sm">
-                <div className="bg-white/10 text-slate-200 rounded-2xl rounded-bl-md px-4 py-2.5 max-w-[85%]">
-                  Do you ship to Riyadh? 🇸🇦
-                </div>
-                <div className="ml-auto bg-gradient-to-r from-brix-600 to-brix-500 text-white rounded-2xl rounded-br-md px-4 py-2.5 max-w-[85%]">
-                  Yes — 2–3 days, free over $50. Want me to track your order too?
-                </div>
-                <div className="bg-white/10 text-slate-200 rounded-2xl rounded-bl-md px-4 py-2.5 max-w-[85%]">
-                  That would be amazing, thank you!
-                </div>
-              </div>
-              <div className="flex gap-2 pt-2">
-                <div className="flex-1 h-10 rounded-xl bg-white/10" />
-                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-brix-600 to-aqua-500 grid place-items-center text-white">➤</div>
-              </div>
+          {/* hero visual */}
+          <div className="relative">
+            <div className="absolute inset-0 bg-gradient-to-br from-brix-600/20 to-aqua-500/10 blur-2xl rounded-full" aria-hidden />
+            <div className="relative mx-auto max-w-md rounded-3xl overflow-hidden ring-1 ring-white/10 shadow-2xl shadow-brix-600/20 animate-floaty">
+              <img
+                src={`${import.meta.env.BASE_URL}images/hero-chat.png`}
+                alt="Abstract 3D illustration of a Brix Chat conversation window with floating message bubbles and a reply composer"
+                className="w-full h-auto block"
+                loading="eager"
+              />
             </div>
-            <style>{`@keyframes float { 0%,100% { transform: translateY(0) } 50% { transform: translateY(-12px) } }`}</style>
+            <div className="absolute -left-2 sm:-left-6 top-8 rounded-2xl bg-white/95 backdrop-blur px-3.5 py-2.5 shadow-xl shadow-brix-600/20 animate-floaty" aria-hidden>
+              <div className="text-[11px] font-semibold text-slate-500">Median setup</div>
+              <div className="font-display text-lg font-extrabold text-brix-600">under 1 minute</div>
+            </div>
+            <div className="absolute -right-2 sm:-right-6 bottom-10 rounded-2xl bg-white/95 backdrop-blur px-3.5 py-2.5 shadow-xl shadow-aqua-500/20 animate-floaty" style={{ animationDelay: '1.4s' }} aria-hidden>
+              <div className="text-[11px] font-semibold text-slate-500">Core plan</div>
+              <div className="font-display text-lg font-extrabold text-aqua-600">free forever</div>
+            </div>
           </div>
         </div>
       </section>

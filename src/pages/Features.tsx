@@ -148,6 +148,48 @@ export default function Features() {
         ))}
       </div>
 
+      {/* illustration row */}
+      <section className="mx-auto max-w-7xl px-4 sm:px-6 pb-20" aria-label="Product highlights">
+        <div className="grid sm:grid-cols-3 gap-5">
+          {[
+            {
+              src: 'feat-copilot.png',
+              alt: 'Abstract illustration of the AI copilot drafting a suggested reply beside a chat thread',
+              title: 'AI copilot',
+              text: 'Draft replies, summaries and tone rewrites appear right inside the thread — the agent stays in control.',
+            },
+            {
+              src: 'feat-analytics.png',
+              alt: 'Abstract illustration of live chat analytics: rising trend lines and satisfaction gauges',
+              title: 'Analytics',
+              text: 'Response times, CSAT and agent load at a glance — the numbers behind every staffing decision.',
+            },
+            {
+              src: 'feat-automation.png',
+              alt: 'Abstract illustration of automation rules routing chats between departments and triggers',
+              title: 'Automation',
+              text: 'Triggers, campaigns and ticket rules run the repetitive work while your team handles the humans.',
+            },
+          ].map((f) => (
+            <figure
+              key={f.src}
+              className="rounded-3xl border border-slate-200 bg-white overflow-hidden shadow-sm hover:shadow-xl hover:shadow-brix-600/10 hover:-translate-y-1 transition"
+            >
+              <img
+                src={`${import.meta.env.BASE_URL}images/${f.src}`}
+                alt={f.alt}
+                className="w-full h-48 object-cover"
+                loading="lazy"
+              />
+              <figcaption className="p-5">
+                <h3 className="font-display font-bold text-slate-900">{f.title}</h3>
+                <p className="mt-1.5 text-sm text-slate-600 leading-relaxed">{f.text}</p>
+              </figcaption>
+            </figure>
+          ))}
+        </div>
+      </section>
+
       {/* comparison-style checklist (original wording, generic market view) */}
       <section className="mx-auto max-w-5xl px-4 sm:px-6 pb-4" aria-label="How Brix Chat compares">
         <h2 className="font-display text-2xl sm:text-3xl font-extrabold text-slate-900 text-center mb-3">

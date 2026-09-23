@@ -155,7 +155,7 @@ export default function Quality() {
                             title={`Lowest-scored thread (${r.worst.quality.score}/100) — open in Inbox`}
                           >
                             Needs coaching: <span className="font-semibold text-slate-700">{r.worst.conv.visitor}</span>
-                            <span className="text-slate-400"> · {r.worst.quality.score}/100 · {timeAgo(r.worst.conv.updatedAt)}</span>
+                            <span className="text-slate-500"> · {r.worst.quality.score}/100 · {timeAgo(r.worst.conv.updatedAt)}</span>
                           </Link>
                         )}
                       </>
@@ -165,7 +165,7 @@ export default function Quality() {
               })}
             </div>
             {agentCards.unassigned > 0 && (
-              <p className="text-xs text-slate-400 mt-3">{agentCards.unassigned} conversation{agentCards.unassigned === 1 ? '' : 's'} not assigned to an agent.</p>
+              <p className="text-xs text-slate-500 mt-3">{agentCards.unassigned} conversation{agentCards.unassigned === 1 ? '' : 's'} not assigned to an agent.</p>
             )}
           </Card>
 

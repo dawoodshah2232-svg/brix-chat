@@ -6,8 +6,9 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useStore } from '../../lib/store';
 import { getApi } from '../../lib/api';
 import type { ApiNotification } from '../../lib/api';
-import { Avatar, Badge, Button, Input, Label, SearchInput } from '../ui';
+import { Avatar, Badge, Button, Input, Label, SearchInput, Toggle } from '../ui';
 import { cx, timeAgo } from '../../lib/utils';
+import { getTheme, setTheme, type Theme } from '../../lib/theme';
 import { BellIcon, ChevronDownIcon, CommandIcon, MenuIcon } from './icons';
 
 export const CRUMBS: Record<string, { section: string; label: string }> = {
@@ -38,7 +39,7 @@ function Breadcrumbs() {
   if (!crumb) return null;
   return (
     <nav aria-label="Breadcrumb" className="hidden sm:flex items-center gap-2 text-sm min-w-0">
-      <span className="text-slate-400 font-medium">{crumb.section}</span>
+      <span className="text-slate-500 font-medium">{crumb.section}</span>
       <span className="text-slate-300">/</span>
       <span className="font-bold text-slate-900 truncate">{crumb.label}</span>
     </nav>
@@ -68,6 +69,13 @@ function AgentMenu() {
   const [newPw, setNewPw] = useState('');
   const [pwError, setPwError] = useState('');
   const [pwOk, setPwOk] = useState(false);
+  const [theme, setThemeState] = useState<Theme>(() => getTheme(session?.displayName ?? 'agent'));
+
+  const flipTheme = (dark: boolean) => {
+    const next: Theme = dark ? 'dark' : 'light';
+    setTheme(session?.displayName ?? 'agent', next);
+    setThemeState(next);
+  };
 
   const member = currentMember;
   const status = (member?.status ?? 'online') as 'online' | 'away' | 'offline';
@@ -129,7 +137,7 @@ function AgentMenu() {
             )}
           />
         </span>
-        <ChevronDownIcon className="w-4 h-4 text-slate-400 hidden sm:block" />
+        <ChevronDownIcon className="w-4 h-4 text-slate-500 hidden sm:block" />
       </button>
 
       {open && (
@@ -147,7 +155,7 @@ function AgentMenu() {
             </div>
 
             <div className="p-4 py-3 border-b border-slate-100">
-              <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2">Presence</div>
+              <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-2">Presence</div>
               <div className="flex gap-1.5">
                 {(['online', 'away', 'offline'] as const).map((s) => (
                   <button
@@ -247,6 +255,12 @@ function AgentMenu() {
                 >
                   Preferences
                 </Link>
+                <div className="flex items-center justify-between px-3 py-2">
+                  <span className="text-sm font-medium text-slate-700">
+                    {theme === 'dark' ? '🌙 Dark mode' : '☀️ Light mode'}
+                  </span>
+                  <Toggle checked={theme === 'dark'} onChange={flipTheme} label="Dark mode" />
+                </div>
               </div>
             )}
 
@@ -383,14 +397,14 @@ function NotificationBell() {
               <span className="font-bold text-slate-900 text-sm">Notifications</span>
               <button
                 onClick={() => setOpen(false)}
-                className="text-xs font-semibold text-slate-400 hover:text-slate-600"
+                className="text-xs font-semibold text-slate-500 hover:text-slate-600"
               >
                 Close
               </button>
             </div>
             <div className="max-h-96 overflow-y-auto slim-scroll">
               {items.length === 0 && (
-                <div className="px-4 py-8 text-center text-sm text-slate-400">
+                <div className="px-4 py-8 text-center text-sm text-slate-500">
                   All caught up — no notifications.
                 </div>
               )}
@@ -408,7 +422,7 @@ function NotificationBell() {
                 >
                   <div className="text-sm font-semibold text-slate-900">{n.title}</div>
                   <div className="text-xs text-slate-500 mt-0.5 line-clamp-2">{n.body}</div>
-                  <div className="text-[11px] text-slate-400 mt-1">{isoAgo(n.created_at)}</div>
+                  <div className="text-[11px] text-slate-500 mt-1">{isoAgo(n.created_at)}</div>
                 </button>
               ))}
             </div>
@@ -463,7 +477,7 @@ export function Topbar({
       <div className="ml-auto flex items-center gap-1.5 sm:gap-2">
         <button
           onClick={onPalette}
-          className="hidden md:flex items-center gap-2.5 pl-3 pr-1.5 py-1.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 hover:border-slate-300 transition text-sm text-slate-400 w-56"
+          className="hidden md:flex items-center gap-2.5 pl-3 pr-1.5 py-1.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 hover:border-slate-300 transition text-sm text-slate-500 w-56"
           title="Command palette (⌘K)"
         >
           <CommandIcon className="w-4 h-4" />
@@ -485,7 +499,7 @@ export function Topbar({
               ) : (
                 <>
                   {results.conversations.length > 0 && (
-                    <div className="px-2 pt-1 pb-1 text-[11px] font-bold uppercase tracking-wide text-slate-400">
+                    <div className="px-2 pt-1 pb-1 text-[11px] font-bold uppercase tracking-wide text-slate-500">
                       Conversations
                     </div>
                   )}
@@ -508,7 +522,7 @@ export function Topbar({
                     </button>
                   ))}
                   {results.contacts.length > 0 && (
-                    <div className="px-2 pt-2 pb-1 text-[11px] font-bold uppercase tracking-wide text-slate-400">
+                    <div className="px-2 pt-2 pb-1 text-[11px] font-bold uppercase tracking-wide text-slate-500">
                       Contacts
                     </div>
                   )}
@@ -532,8 +546,9 @@ export function Topbar({
         </div>
         <button
           onClick={onHelp}
-          className="hidden md:grid w-9 h-9 place-items-center rounded-xl text-slate-400 hover:bg-slate-100 hover:text-slate-600 text-sm font-bold"
+          className="hidden md:grid w-9 h-9 place-items-center rounded-xl text-slate-500 hover:bg-slate-100 hover:text-slate-600 text-sm font-bold"
           title="Keyboard shortcuts (?)"
+          aria-label="Keyboard shortcuts"
         >
           ?
         </button>

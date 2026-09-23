@@ -1,6 +1,6 @@
 // Shared UI primitives — premium, minimal, original styling.
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { cx } from '../lib/utils';
 
@@ -68,11 +68,52 @@ export function Toggle({ checked, onChange, label }: { checked: boolean; onChang
 }
 
 export function Modal({ open, onClose, title, children, wide }: { open: boolean; onClose: () => void; title: string; children: ReactNode; wide?: boolean }) {
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // ESC closes; Tab is trapped inside the dialog; first focusable gets focus.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
+        return;
+      }
+      if (e.key !== 'Tab') return;
+      const root = panelRef.current;
+      if (!root) return;
+      const els = [...root.querySelectorAll<HTMLElement>(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+      )].filter((el) => !el.hasAttribute('disabled') && el.getAttribute('aria-hidden') !== 'true');
+      if (els.length === 0) return;
+      const first = els[0];
+      const last = els[els.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    const t = window.setTimeout(() => {
+      panelRef.current
+        ?.querySelector<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')
+        ?.focus();
+    }, 30);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.clearTimeout(t);
+    };
+  }, [open, onClose]);
+
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-ink-950/60 backdrop-blur-sm" onClick={onClose} />
-      <div className={cx('relative bg-white rounded-2xl shadow-2xl w-full animate-fade-up max-h-[90vh] overflow-y-auto slim-scroll', wide ? 'max-w-3xl' : 'max-w-lg')}>
+      <div ref={panelRef} role="dialog" aria-modal="true" aria-label={title}
+        className={cx('relative bg-white rounded-2xl shadow-2xl w-full animate-fade-up max-h-[90vh] overflow-y-auto slim-scroll', wide ? 'max-w-3xl' : 'max-w-lg')}>
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 sticky top-0 bg-white rounded-t-2xl">
           <h3 className="font-display font-bold text-slate-900">{title}</h3>
           <button onClick={onClose} className="w-8 h-8 grid place-items-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700" aria-label="Close">✕</button>
@@ -83,10 +124,14 @@ export function Modal({ open, onClose, title, children, wide }: { open: boolean;
   );
 }
 
-export function EmptyState({ icon, title, hint, action }: { icon: string; title: string; hint?: string; action?: ReactNode }) {
+export function EmptyState({ icon, title, hint, action, image }: { icon: string; title: string; hint?: string; action?: ReactNode; image?: string }) {
   return (
     <div className="text-center py-12 px-6">
-      <div className="text-4xl mb-3">{icon}</div>
+      {image ? (
+        <img src={image} alt="" aria-hidden className="w-32 h-32 object-contain mx-auto mb-4 opacity-90" loading="lazy" />
+      ) : (
+        <div className="text-4xl mb-3">{icon}</div>
+      )}
       <div className="font-semibold text-slate-800">{title}</div>
       {hint && <div className="text-sm text-slate-500 mt-1 max-w-sm mx-auto">{hint}</div>}
       {action && <div className="mt-4 flex justify-center">{action}</div>}

@@ -95,7 +95,7 @@ export default function Ratings() {
             ))}
           </div>
         ) : (
-          <p className="text-sm text-slate-400">No responses in this period yet.</p>
+          <p className="text-sm text-slate-500">No responses in this period yet.</p>
         )}
       </Card>
 
@@ -103,7 +103,7 @@ export default function Ratings() {
         <Card className="p-6">
           <h2 className="font-bold text-slate-900 mb-4">Per agent</h2>
           {perAgent.length === 0 ? (
-            <p className="text-sm text-slate-400">No rated conversations yet.</p>
+            <p className="text-sm text-slate-500">No rated conversations yet.</p>
           ) : (
             <div className="space-y-3">
               {perAgent.map((a) => (
@@ -113,7 +113,7 @@ export default function Ratings() {
                     <div className="h-full rounded-full bg-gradient-to-r from-brix-500 to-cyan-400" style={{ width: `${a.csat != null ? (a.csat / 5) * 100 : 0}%` }} />
                   </div>
                   <span className="text-sm font-bold text-slate-700 w-20 text-right">{a.csat != null ? `${a.csat.toFixed(1)}/5` : '—'}</span>
-                  <span className="text-xs text-slate-400 w-16 text-right">{a.count} ratings</span>
+                  <span className="text-xs text-slate-500 w-16 text-right">{a.count} ratings</span>
                 </div>
               ))}
             </div>
@@ -122,9 +122,9 @@ export default function Ratings() {
 
         <Card className="p-6">
           <h2 className="font-bold text-slate-900 mb-1">Needs attention</h2>
-          <p className="text-xs text-slate-400 mb-4">Low scores (CSAT ≤ 2, NPS ≤ 6) — follow up with these visitors.</p>
+          <p className="text-xs text-slate-500 mb-4">Low scores (CSAT ≤ 2, NPS ≤ 6) — follow up with these visitors.</p>
           {alerts.length === 0 ? (
-            <p className="text-sm text-slate-400">Nothing to follow up on. 🎉</p>
+            <p className="text-sm text-slate-500">Nothing to follow up on. 🎉</p>
           ) : (
             <div className="space-y-2.5">
               {alerts.map((r) => (
@@ -132,7 +132,7 @@ export default function Ratings() {
                   <div className="flex items-center gap-2 flex-wrap">
                     <Badge tone="rose">{r.kind.toUpperCase()} {r.score}</Badge>
                     <span className="text-sm font-semibold text-slate-800">{agentName(r.agent_id)}</span>
-                    <span className="ml-auto text-xs text-slate-400">{timeAgo(r.created_at)}</span>
+                    <span className="ml-auto text-xs text-slate-500">{timeAgo(r.created_at)}</span>
                   </div>
                   {r.comment && <p className="text-sm text-slate-600 mt-1.5">“{r.comment}”</p>}
                 </div>
@@ -145,7 +145,7 @@ export default function Ratings() {
       <Card className="p-6">
         <h2 className="font-bold text-slate-900 mb-4">Recent comments</h2>
         {ratings.filter((r) => r.comment).length === 0 ? (
-          <EmptyState icon="💬" title="No comments yet" hint="Written feedback from visitors will appear here." />
+          <EmptyState icon="💬" image={`${import.meta.env.BASE_URL}images/empty-ratings.png`} title="No comments yet" hint="Written feedback from visitors will appear here." />
         ) : (
           <div className="space-y-2.5">
             {ratings.filter((r) => r.comment).slice(0, 20).map((r) => (
@@ -155,7 +155,7 @@ export default function Ratings() {
                     {r.kind.toUpperCase()} {r.score}
                   </Badge>
                   <span className="text-sm text-slate-500">{agentName(r.agent_id)}</span>
-                  <span className="ml-auto text-xs text-slate-400">{timeAgo(r.created_at)}</span>
+                  <span className="ml-auto text-xs text-slate-500">{timeAgo(r.created_at)}</span>
                 </div>
                 <p className="text-sm text-slate-700 mt-1.5">“{r.comment}”</p>
               </div>

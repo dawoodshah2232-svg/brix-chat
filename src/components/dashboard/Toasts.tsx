@@ -78,7 +78,7 @@ export function ToastHost() {
       {items.map((t) => (
         <div
           key={t.id}
-          className="relative overflow-hidden bg-white rounded-2xl border border-slate-200 shadow-2xl p-4 animate-fade-up"
+          className="relative overflow-hidden bg-white rounded-2xl border border-slate-200 shadow-2xl p-4 animate-toast-in"
         >
           <div className={cx('absolute left-0 top-0 bottom-0 w-1', TONE_STYLE[t.tone].bar)} />
           <div className="flex items-start gap-3 pl-1">

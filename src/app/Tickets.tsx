@@ -337,15 +337,15 @@ export default function Tickets() {
                 <button onClick={() => { setMergePrimary([...selected][0]); setMerging(true); }} disabled={busy} className="text-xs font-semibold px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20">🔀 Merge</button>
               )}
               <button onClick={() => bulk('spam')} disabled={busy} className="text-xs font-semibold px-2 py-1 rounded-lg bg-rose-500/80 hover:bg-rose-500">🚫 Spam</button>
-              <button onClick={() => setSelected(new Set())} className="ml-auto text-xs text-slate-300 hover:text-white">✕</button>
+              <button onClick={() => setSelected(new Set())} className="ml-auto text-xs text-slate-300 hover:text-white" aria-label="Clear selection">✕</button>
             </div>
           )}
         </div>
 
         <div className="flex-1 overflow-y-auto slim-scroll">
-          {loading && <div className="p-6 text-center text-sm text-slate-400">Loading tickets…</div>}
+          {loading && <div className="p-6 text-center text-sm text-slate-500">Loading tickets…</div>}
           {!loading && list.length === 0 && (
-            <EmptyState icon="🎫" title="No tickets" hint="Create one, or turn any chat into a ticket from the thread." />
+            <EmptyState icon="🎫" image={`${import.meta.env.BASE_URL}images/empty-tickets.png`} title="No tickets" hint="Create one, or turn any chat into a ticket from the thread." />
           )}
           {list.map((t) => {
             const st = slaState(t.sla_due);
@@ -356,7 +356,7 @@ export default function Tickets() {
                 <button onClick={() => select(t.id)} className="flex-1 min-w-0 text-left">
                   <div className="flex items-baseline gap-2">
                     <span className="font-semibold text-sm text-slate-900 truncate">{t.subject}</span>
-                    <span className="ml-auto text-[11px] text-slate-400 shrink-0">{isoAgo(t.updated_at)}</span>
+                    <span className="ml-auto text-[11px] text-slate-500 shrink-0">{isoAgo(t.updated_at)}</span>
                   </div>
                   <div className="text-[13px] text-slate-500 truncate mt-0.5">{t.requester_name} — {t.message.split('\n')[0]}</div>
                   <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
@@ -481,7 +481,7 @@ export default function Tickets() {
                 </div>
               )}
 
-              <div className="mt-4 text-xs text-slate-400">
+              <div className="mt-4 text-xs text-slate-500">
                 Assigned to {memberName(active.assignee_id)}{active.conversation_id ? ' · linked to a chat conversation' : ''}
               </div>
 

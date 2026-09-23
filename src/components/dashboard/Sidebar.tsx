@@ -108,7 +108,7 @@ export function DashboardSidebar({
   return (
     <aside
       className={cx(
-        'hidden lg:flex shrink-0 bg-ink-950 flex-col transition-[width] duration-200 border-r border-white/5',
+        'hidden lg:flex shrink-0 bg-ink-950 flex-col sidebar-collapse border-r border-white/5',
         collapsed ? 'w-[76px]' : 'w-60',
       )}
     >

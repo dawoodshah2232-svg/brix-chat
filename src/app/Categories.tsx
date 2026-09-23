@@ -100,7 +100,7 @@ export default function Categories() {
       </div>
 
       <Tabs tabs={SCOPES.map((s) => ({ id: s.id, label: s.label }))} active={scope} onChange={setScope} />
-      <p className="text-xs text-slate-400 -mt-2">{SCOPES.find((s) => s.id === scope)?.hint}</p>
+      <p className="text-xs text-slate-500 -mt-2">{SCOPES.find((s) => s.id === scope)?.hint}</p>
 
       {items.length === 0 ? (
         <Card><EmptyState icon="🏷" title="No categories" hint={`Create the first ${SCOPES.find((s) => s.id === scope)?.label.toLowerCase()} category.`} /></Card>

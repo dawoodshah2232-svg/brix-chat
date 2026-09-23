@@ -111,7 +111,7 @@ export default function Branding() {
                 {settings.logo_data_url ? (
                   <img src={settings.logo_data_url} alt="Logo" className="w-12 h-12 rounded-xl object-contain border border-slate-200 bg-white" />
                 ) : (
-                  <div className="w-12 h-12 rounded-xl bg-slate-100 grid place-items-center text-slate-400 text-xl">🖼</div>
+                  <div className="w-12 h-12 rounded-xl bg-slate-100 grid place-items-center text-slate-500 text-xl">🖼</div>
                 )}
                 <label className="cursor-pointer">
                   <span className="inline-block px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-sm font-semibold text-slate-700">Upload logo</span>
@@ -121,7 +121,7 @@ export default function Branding() {
                   <button onClick={() => set({ logo_data_url: null })} className="text-sm text-rose-600 font-semibold hover:underline">Remove</button>
                 )}
               </div>
-              <p className="text-xs text-slate-400 mt-1.5">PNG or SVG, under 512 KB. Stored in this browser only.</p>
+              <p className="text-xs text-slate-500 mt-1.5">PNG or SVG, under 512 KB. Stored in this browser only.</p>
             </div>
             <div>
               <Label>Palette</Label>

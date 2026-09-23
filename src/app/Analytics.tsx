@@ -110,7 +110,7 @@ function FunnelBar({ label, value, pct, tone }: { label: string; value: number; 
     <div>
       <div className="flex justify-between text-sm mb-1.5">
         <span className="font-semibold text-slate-700">{label}</span>
-        <span className="tabular-nums font-bold text-slate-900">{value.toLocaleString()} <span className="text-xs font-medium text-slate-400">{pct}%</span></span>
+        <span className="tabular-nums font-bold text-slate-900">{value.toLocaleString()} <span className="text-xs font-medium text-slate-500">{pct}%</span></span>
       </div>
       <div className="h-3 rounded-full bg-slate-100 overflow-hidden">
         <div className={cx('h-full rounded-full transition-all', tone)} style={{ width: `${Math.max(2, pct)}%` }} />
@@ -127,7 +127,7 @@ function SectionHead({ title, hint, onCsv }: { title: string; hint: string; onCs
         <div className="font-semibold text-slate-900">{title}</div>
         <div className="text-xs text-slate-500 mt-0.5">{hint}</div>
       </div>
-      <button onClick={onCsv} className="text-xs font-semibold text-slate-400 hover:text-brix-600 transition" title="Download this section as CSV">
+      <button onClick={onCsv} className="text-xs font-semibold text-slate-500 hover:text-brix-600 transition" title="Download this section as CSV">
         ⬇ CSV
       </button>
     </div>
@@ -356,7 +356,7 @@ export default function Analytics() {
   };
 
   return (
-    <div className="space-y-5">
+    <div className="p-4 sm:p-6 max-w-6xl mx-auto space-y-5">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-xl font-display font-extrabold text-slate-900">Analytics</h1>
@@ -410,13 +410,13 @@ export default function Analytics() {
           {goals.length > 0 && (
             <div className="mt-5 pt-4 border-t border-slate-100">
               <div className="flex items-center justify-between mb-2">
-                <div className="text-xs font-bold uppercase tracking-wide text-slate-400">Tracked goals</div>
-                <button onClick={csv.goals} className="text-xs font-semibold text-slate-400 hover:text-brix-600">⬇ CSV</button>
+                <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Tracked goals</div>
+                <button onClick={csv.goals} className="text-xs font-semibold text-slate-500 hover:text-brix-600">⬇ CSV</button>
               </div>
               <div className="flex flex-wrap gap-1.5">
                 {goals.map((g) => (
                   <span key={g.id} className="px-2.5 py-1 rounded-lg bg-slate-100 text-xs font-semibold text-slate-600">
-                    🏁 {g.name} <span className="text-slate-400">· {g.event} · ${g.revenue}</span>
+                    🏁 {g.name} <span className="text-slate-500">· {g.event} · ${g.revenue}</span>
                   </span>
                 ))}
               </div>
@@ -434,7 +434,7 @@ export default function Analytics() {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
+                  <tr className="text-left text-xs uppercase tracking-wide text-slate-500 border-b border-slate-100">
                     <th className="py-2 font-semibold">Agent</th>
                     <th className="py-2 font-semibold text-right">Chats</th>
                     <th className="py-2 font-semibold text-right">Resolved</th>
@@ -446,7 +446,7 @@ export default function Analytics() {
                   {leaderboard.map((l, i) => (
                     <tr key={l.name} className="border-b border-slate-50 last:border-0">
                       <td className="py-2.5 font-semibold text-slate-800">
-                        <span className="mr-2 text-xs font-extrabold text-slate-400">#{i + 1}</span>{l.name}
+                        <span className="mr-2 text-xs font-extrabold text-slate-500">#{i + 1}</span>{l.name}
                       </td>
                       <td className="py-2.5 text-right tabular-nums">{l.chats}</td>
                       <td className="py-2.5 text-right tabular-nums">{l.resolution}%</td>
@@ -520,7 +520,7 @@ export default function Analytics() {
             </div>
             <div className="rounded-xl bg-slate-50 border border-slate-100 p-3 text-center">
               <div className="text-2xl font-extrabold text-slate-700">{botStats.avgMsgs}</div>
-              <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide mt-0.5">Msgs / drop-off</div>
+              <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide mt-0.5">Msgs / drop-off</div>
             </div>
           </div>
           <p className="text-xs text-slate-500 mb-3">
@@ -528,20 +528,20 @@ export default function Analytics() {
             Low-confidence replies are routed to a human at the threshold set in Settings → Bot &amp; handoff.
           </p>
           {botStats.dropoffs.length === 0 ? (
-            <div className="text-sm text-slate-400 py-4 text-center">No drop-offs in this period. 🎉</div>
+            <div className="text-sm text-slate-500 py-4 text-center">No drop-offs in this period. 🎉</div>
           ) : (
             <div className="space-y-1.5 max-h-48 overflow-y-auto slim-scroll">
               {botStats.dropoffs.slice(0, 8).map((c) => (
                 <div key={c.id} className="flex items-center gap-2 text-sm">
                   <span className="font-semibold text-slate-800 truncate">{c.visitor}</span>
-                  <span className="text-xs text-slate-400">
+                  <span className="text-xs text-slate-500">
                     {c.messages.filter((m) => m.from === 'visitor').length} msg{c.messages.filter((m) => m.from === 'visitor').length === 1 ? '' : 's'} · {c.department} · {timeAgo(c.createdAt)}
                   </span>
                   {c.aiHandled && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-600">AI</span>}
                 </div>
               ))}
               {botStats.dropoffs.length > 8 && (
-                <div className="text-xs text-slate-400">+ {botStats.dropoffs.length - 8} more — download CSV for the full list.</div>
+                <div className="text-xs text-slate-500">+ {botStats.dropoffs.length - 8} more — download CSV for the full list.</div>
               )}
             </div>
           )}
@@ -590,7 +590,7 @@ export default function Analytics() {
           <div>
             <h3 className="text-sm font-bold text-slate-900 mb-3">Saved reports ({savedReports.length})</h3>
             {savedReports.length === 0 ? (
-              <div className="text-sm text-slate-400 py-6 text-center border border-dashed border-slate-200 rounded-xl">
+              <div className="text-sm text-slate-500 py-6 text-center border border-dashed border-slate-200 rounded-xl">
                 No saved reports yet — build one on the left.
               </div>
             ) : (
@@ -604,7 +604,7 @@ export default function Analytics() {
                           {PRESETS.find((p) => p.id === r.preset)?.label} · {r.sections.length} sections · {r.createdBy} · {timeAgo(r.createdAt)}
                         </div>
                       </div>
-                      <button onClick={() => deleteReport(r.id)} className="text-xs text-slate-400 hover:text-rose-600" title="Delete report">🗑</button>
+                      <button onClick={() => deleteReport(r.id)} className="text-xs text-slate-500 hover:text-rose-600" title="Delete report">🗑</button>
                     </div>
                     <div className="flex gap-2 mt-2">
                       <Button size="sm" onClick={() => runReport(r)}>▶ Run</Button>

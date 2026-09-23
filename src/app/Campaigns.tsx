@@ -126,7 +126,7 @@ export default function Campaigns() {
   };
 
   return (
-    <div className="space-y-5">
+    <div className="p-4 sm:p-6 max-w-6xl mx-auto space-y-5">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-display font-extrabold text-slate-900">Campaigns</h1>
@@ -140,7 +140,7 @@ export default function Campaigns() {
       </div>
 
       {store.data.campaigns.length === 0 ? (
-        <Card><EmptyState icon="📣" title="No campaigns yet" hint="Draft a broadcast message — schedule it for later or send it now." /></Card>
+        <Card><EmptyState icon="📣" image={`${import.meta.env.BASE_URL}images/empty-campaigns.png`} title="No campaigns yet" hint="Draft a broadcast message — schedule it for later or send it now." /></Card>
       ) : (
         <div className="grid md:grid-cols-2 gap-4">
           {store.data.campaigns.map((c) => (
@@ -192,7 +192,7 @@ export default function Campaigns() {
                             ? 'No clear winner yet.'
                             : <>Winner: <strong>variant {w.winner}</strong> ({ctr(w.winner === 'A' ? r.clicksA : r.clicksB, w.winner === 'A' ? r.sentA : r.sentB)} CTR)</>}
                           {!w.confident && ' · small sample — treat as directional.'}
-                          <span className="text-slate-400"> Simulated results (local demo).</span>
+                          <span className="text-slate-500"> Simulated results (local demo).</span>
                         </div>
                         {c.abTest!.winner ? (
                           <div className="mt-2 rounded-lg bg-emerald-50 border border-emerald-200 px-2.5 py-1.5 text-xs text-emerald-800">
@@ -249,7 +249,7 @@ export default function Campaigns() {
             <div>
               <Label>Message</Label>
               <Textarea rows={4} value={editor.message} onChange={(e) => setEditor({ ...editor, message: e.target.value })} placeholder="Hey! We've got something for you…" />
-              <div className="text-xs text-slate-400 mt-1 text-right tabular-nums">{editor.message.length} chars</div>
+              <div className="text-xs text-slate-500 mt-1 text-right tabular-nums">{editor.message.length} chars</div>
             </div>
 
             <div className="rounded-xl border border-slate-200 p-4">

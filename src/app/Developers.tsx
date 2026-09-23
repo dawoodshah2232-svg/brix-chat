@@ -229,7 +229,7 @@ export default function Developers() {
                       <div className="flex flex-wrap gap-1 mt-2">
                         {k.scopes.map((s) => <span key={s} className="px-2 py-0.5 rounded-full bg-slate-100 text-[11px] font-mono text-slate-600">{s}</span>)}
                       </div>
-                      <div className="text-xs text-slate-400 mt-1.5">
+                      <div className="text-xs text-slate-500 mt-1.5">
                         Used {k.usage_count}× · Last used {k.last_used_at ? timeAgo(new Date(k.last_used_at).getTime()) : 'never'}
                       </div>
                     </div>
@@ -355,8 +355,8 @@ export default function Developers() {
               <div className="flex items-center gap-2 text-xs flex-wrap">
                 <code className="font-mono font-bold text-slate-800">{d.event}</code>
                 <Badge tone={d.status === 'delivered' ? 'green' : d.status === 'failed' ? 'rose' : 'amber'}>{d.status}</Badge>
-                <span className="text-slate-400">{d.http_status ?? '—'} · {d.attempts} attempt{d.attempts === 1 ? '' : 's'}</span>
-                <span className="ml-auto text-slate-400">{timeAgo(new Date(d.created_at).getTime())}</span>
+                <span className="text-slate-500">{d.http_status ?? '—'} · {d.attempts} attempt{d.attempts === 1 ? '' : 's'}</span>
+                <span className="ml-auto text-slate-500">{timeAgo(new Date(d.created_at).getTime())}</span>
               </div>
               {d.note && <div className="text-xs text-slate-500 mt-1">{d.note}</div>}
             </div>

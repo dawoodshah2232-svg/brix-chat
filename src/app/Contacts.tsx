@@ -187,7 +187,7 @@ export default function Contacts() {
   );
 
   return (
-    <div className="space-y-5">
+    <div className="p-4 sm:p-6 max-w-6xl mx-auto space-y-5">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-display font-extrabold text-slate-900">Contacts</h1>
@@ -253,13 +253,13 @@ export default function Contacts() {
       )}
 
       {filtered.length === 0 ? (
-        <Card><EmptyState icon="📇" title="No contacts found" hint="Add your first contact or clear the search." /></Card>
+        <Card><EmptyState icon="📇" image={`${import.meta.env.BASE_URL}images/empty-contacts.png`} title="No contacts found" hint="Add your first contact or clear the search." /></Card>
       ) : (
         <Card className="overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
+                <tr className="text-left text-xs uppercase tracking-wide text-slate-500 border-b border-slate-100">
                   <th className="px-5 py-3 font-semibold w-10"></th>
                   <th className="px-5 py-3 font-semibold">Name</th>
                   <th className="px-5 py-3 font-semibold">Email</th>
@@ -293,7 +293,7 @@ export default function Contacts() {
                     <td className="px-5 py-3.5">
                       <div className="flex flex-wrap gap-1">
                         {c.tags.map((t) => <Badge key={t} tone="indigo">#{t}</Badge>)}
-                        {c.tags.length === 0 && <span className="text-slate-400 text-xs">—</span>}
+                        {c.tags.length === 0 && <span className="text-slate-500 text-xs">—</span>}
                       </div>
                     </td>
                     <td className="px-5 py-3.5 text-slate-700 font-semibold">{c.chats}</td>
@@ -366,7 +366,7 @@ export default function Contacts() {
             </div>
             <div className="flex flex-wrap gap-1.5">
               {detailContact.tags.map((t) => <Badge key={t} tone="indigo">#{t}</Badge>)}
-              {detailContact.tags.length === 0 && <span className="text-xs text-slate-400">No tags</span>}
+              {detailContact.tags.length === 0 && <span className="text-xs text-slate-500">No tags</span>}
             </div>
             <div>
               <Label>Notes</Label>
@@ -375,14 +375,14 @@ export default function Contacts() {
             <div>
               <Label>Timeline</Label>
               {timeline.length === 0 ? (
-                <p className="text-sm text-slate-400 py-2">No chats or notes recorded for this contact yet.</p>
+                <p className="text-sm text-slate-500 py-2">No chats or notes recorded for this contact yet.</p>
               ) : (
                 <ol className="relative border-l-2 border-slate-100 ml-1.5 space-y-4 mt-2">
                   {timeline.map((e, i) => (
                     <li key={i} className="ml-4">
                       <span className={cx('absolute -left-[7px] mt-1 w-3 h-3 rounded-full border-2 border-white', TIMELINE_DOT[e.kind])} />
                       <div className="text-sm text-slate-700">{e.text}</div>
-                      <div className="text-[11px] text-slate-400 mt-0.5 flex items-center gap-2">
+                      <div className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-2">
                         {timeAgo(e.ts)}
                         {e.kind !== 'note' && (
                           <button onClick={() => { setDetail(null); navigate(`/app?c=${e.convId}`); }}

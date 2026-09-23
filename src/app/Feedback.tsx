@@ -126,7 +126,7 @@ export default function Feedback() {
   };
 
   return (
-    <div className="space-y-5">
+    <div className="p-4 sm:p-6 max-w-6xl mx-auto space-y-5">
       <PageHeader
         title="Feedback"
         subtitle={`${ratings.length} ratings · CSAT, NPS & CES · newest first`}
@@ -149,7 +149,7 @@ export default function Feedback() {
       />
 
       {loading ? (
-        <Card className="p-8 text-center text-sm text-slate-400">Loading ratings…</Card>
+        <Card className="p-8 text-center text-sm text-slate-500">Loading ratings…</Card>
       ) : filtered.length === 0 ? (
         <Card>
           <EmptyState
@@ -180,11 +180,11 @@ export default function Feedback() {
                     <div className="flex items-center gap-2 flex-wrap">
                       <Badge tone={r.kind === 'csat' ? 'indigo' : r.kind === 'nps' ? 'cyan' : 'slate'}>{r.kind.toUpperCase()}</Badge>
                       <Badge tone={BUCKET_TONE[b]}>{b}</Badge>
-                      <span className="text-xs text-slate-400">{fmtDate(r.created_at)}</span>
-                      <span className="text-xs text-slate-400">· agent: {memberName(r.agent_id)}</span>
+                      <span className="text-xs text-slate-500">{fmtDate(r.created_at)}</span>
+                      <span className="text-xs text-slate-500">· agent: {memberName(r.agent_id)}</span>
                     </div>
                     <p className="text-sm text-slate-700 mt-1.5">
-                      {r.comment || <span className="text-slate-400 italic">No comment left.</span>}
+                      {r.comment || <span className="text-slate-500 italic">No comment left.</span>}
                     </p>
                     <div className="flex items-center gap-3 mt-2.5">
                       {r.conversation_id ? (
@@ -215,7 +215,7 @@ export default function Feedback() {
                           )}
                         </>
                       ) : (
-                        <span className="text-xs text-slate-400">No linked conversation</span>
+                        <span className="text-xs text-slate-500">No linked conversation</span>
                       )}
                     </div>
                   </div>

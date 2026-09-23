@@ -22,7 +22,7 @@ const DOT: Record<NonNullable<TimelineEvent['tone']>, string> = {
 
 export function Timeline({ events, empty }: { events: TimelineEvent[]; empty?: ReactNode }) {
   if (events.length === 0) {
-    return <p className="text-sm text-slate-400 py-3">{empty ?? 'Nothing here yet.'}</p>;
+    return <p className="text-sm text-slate-500 py-3">{empty ?? 'Nothing here yet.'}</p>;
   }
   return (
     <ol className="relative border-l-2 border-slate-100 ml-1.5 space-y-5 mt-1">
@@ -37,7 +37,7 @@ export function Timeline({ events, empty }: { events: TimelineEvent[]; empty?: R
           <div className="text-sm font-semibold text-slate-800">{e.title}</div>
           {e.body && <div className="text-[13px] text-slate-500 mt-0.5 leading-relaxed">{e.body}</div>}
           {e.link}
-          <div className="text-[11px] text-slate-400 mt-1">{timeAgo(e.ts)}</div>
+          <div className="text-[11px] text-slate-500 mt-1">{timeAgo(e.ts)}</div>
         </li>
       ))}
     </ol>

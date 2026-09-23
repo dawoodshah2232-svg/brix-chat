@@ -3,7 +3,7 @@
 import { cx } from '../../lib/utils';
 
 export function Skeleton({ className }: { className?: string }) {
-  return <div className={cx('animate-pulse rounded-lg bg-slate-200/80', className)} />;
+  return <div className={cx('skeleton', className)} aria-hidden />;
 }
 
 export function SkeletonStatCards({ count = 4 }: { count?: number }) {

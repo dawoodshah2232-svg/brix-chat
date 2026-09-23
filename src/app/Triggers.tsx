@@ -109,7 +109,7 @@ function ConditionRow({ cond, onChange, onRemove }: {
       </Select>
       <Input value={cond.value} onChange={(e) => onChange({ ...cond, value: e.target.value })}
         placeholder={field.placeholder} className="text-xs py-1.5 flex-1" />
-      <button onClick={onRemove} className="text-slate-300 hover:text-rose-500 text-sm" title="Remove condition">✕</button>
+      <button onClick={onRemove} className="text-slate-300 hover:text-rose-500 text-sm" title="Remove condition" aria-label="Remove condition">✕</button>
     </div>
   );
 }
@@ -128,7 +128,7 @@ function ActionRow({ action, onChange, onRemove }: {
       </Select>
       <Input value={action.value} onChange={(e) => onChange({ ...action, value: e.target.value })}
         placeholder={kind.placeholder} className="text-xs py-1.5 flex-1" />
-      <button onClick={onRemove} className="text-slate-300 hover:text-rose-500 text-sm" title="Remove action">✕</button>
+      <button onClick={onRemove} className="text-slate-300 hover:text-rose-500 text-sm" title="Remove action" aria-label="Remove action">✕</button>
     </div>
   );
 }
@@ -213,7 +213,7 @@ export default function Triggers() {
   const simResult = simRule ? simulate(simRule, simCtx) : null;
 
   return (
-    <div className="space-y-5">
+    <div className="p-4 sm:p-6 max-w-6xl mx-auto space-y-5">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-display font-extrabold text-slate-900">Triggers</h1>
@@ -300,7 +300,7 @@ export default function Triggers() {
             <div className="grid grid-cols-2 gap-4">
               <div><Label>Rule name</Label><Input value={editor.name} onChange={(e) => setRule({ name: e.target.value })} placeholder="Pricing page greeter" /></div>
               <div className="col-span-2">
-                <Label>Description <span className="font-normal text-slate-400">(plain language — what does this rule do?)</span></Label>
+                <Label>Description <span className="font-normal text-slate-500">(plain language — what does this rule do?)</span></Label>
                 <Input value={editor.description ?? ''} onChange={(e) => setRule({ description: e.target.value })}
                   placeholder="Greet visitors who idle 60s on pricing" />
               </div>
@@ -336,7 +336,7 @@ export default function Triggers() {
                       ))}
                     </div>
                     <button onClick={() => setRule({ conditionGroups: (editor.conditionGroups ?? []).filter((_, i) => i !== gi) })}
-                      className="text-xs text-slate-400 hover:text-rose-600">Remove group</button>
+                      className="text-xs text-slate-500 hover:text-rose-600">Remove group</button>
                   </div>
                   {grp.conditions.map((c, ci) => (
                     <ConditionRow key={ci} cond={c}
@@ -397,7 +397,7 @@ export default function Triggers() {
             <div className="space-y-3">
               {(simRule.conditionGroups ?? []).map((grp, gi) => (
                 <div key={gi} className="rounded-xl border border-slate-200 p-3">
-                  <div className="text-[11px] font-extrabold uppercase tracking-wide text-slate-400 mb-2">Group {gi + 1} ({grp.op})</div>
+                  <div className="text-[11px] font-extrabold uppercase tracking-wide text-slate-500 mb-2">Group {gi + 1} ({grp.op})</div>
                   {grp.conditions.map((c, ci) => {
                     const ok = evalCondition(c, simCtx);
                     return (
