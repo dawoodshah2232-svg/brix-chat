@@ -6,6 +6,7 @@ import { useStore } from '../lib/store';
 import { getApi } from '../lib/api';
 import type { ApiMember, ApiTicket, TicketPriority, TicketStatus } from '../lib/api';
 import { Avatar, Badge, Button, EmptyState, Input, Label, Modal, SearchInput, Select, Tabs, Textarea } from '../components/ui';
+import { toast } from '../components/dashboard/Toasts';
 import { slaState, slaCountdown, slaDueFromPolicy, policyFor, DEFAULT_SLA_POLICIES, type SlaPriority } from '../lib/sla';
 import { cx, timeAgo } from '../lib/utils';
 
@@ -89,6 +90,15 @@ export default function Tickets() {
   const ticketId = params.get('ticket');
   const active = tickets.find((t) => t.id === ticketId) ?? null;
 
+  // P4: ?new=1 deep-link opens the create modal
+  useEffect(() => {
+    if (params.get('new') === '1') {
+      setCreating(true);
+      setParams({}, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const refresh = async () => {
     if (!api) return;
     setLoading(true);
@@ -143,9 +153,11 @@ export default function Tickets() {
     setBusy(true);
     try {
       await api.tickets.bulk([...selected], action, action === 'assign' ? bulkAgent || undefined : undefined);
+      const n = selected.size;
       setSelected(new Set());
       refresh();
-    } catch { /* ignore */ }
+      toast.success(action === 'resolve' ? `${n} ticket${n === 1 ? '' : 's'} resolved` : action === 'assign' ? `${n} ticket${n === 1 ? '' : 's'} assigned` : `${n} ticket${n === 1 ? '' : 's'} marked as spam`);
+    } catch { toast.error('Bulk action failed'); }
     setBusy(false);
   };
 
@@ -178,11 +190,13 @@ export default function Tickets() {
       setTickets((xs) => [merged, ...xs.map((x) => (selected.has(x.id) && x.id !== primary.id
         ? { ...x, status: 'resolved' as TicketStatus, tags: [...new Set([...x.tags, `merged:${merged.id}`])] }
         : x))]);
+      const n = sel.length;
       setSelected(new Set());
       setMergePrimary('');
       setMerging(false);
       select(merged.id);
-    } catch { /* ignore */ }
+      toast.success(`Merged ${n} tickets`, merged.subject);
+    } catch { toast.error('Merge failed'); }
     setBusy(false);
   };
 
@@ -213,7 +227,8 @@ export default function Tickets() {
       setFSubject(''); setFName(''); setFEmail(''); setFMessage('');
       setFPriority('medium'); setFAssignee(''); setFSla(''); setFTags('');
       select(t.id);
-    } catch { /* ignore */ }
+      toast.success('Ticket created', t.subject);
+    } catch { toast.error('Could not create the ticket'); }
     setBusy(false);
   };
 

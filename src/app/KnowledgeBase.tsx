@@ -1,11 +1,13 @@
 // Brix Chat — Knowledge base article manager + unanswered-questions loop.
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useStore } from '../lib/store';
 import { getApi } from '../lib/api';
 import type { ApiUnanswered } from '../lib/api';
 import type { Article } from '../lib/types';
 import { cx, timeAgo, uid } from '../lib/utils';
 import { Badge, Button, Card, EmptyState, Input, Label, Modal, SearchInput, Tabs, Textarea, Toggle, useConfirm } from '../components/ui';
+import { toast } from '../components/dashboard/Toasts';
 
 function slugify(title: string): string {
   return title.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
@@ -51,6 +53,16 @@ export default function KnowledgeBase() {
   const { session, effectiveWorkspaceId } = store;
   const { confirm, dialog } = useConfirm();
   const [editor, setEditor] = useState<{ article: Article; slugTouched: boolean } | null>(null);
+  const [params, setParams] = useSearchParams();
+
+  // P4: ?new=1 deep-link opens the article editor
+  useEffect(() => {
+    if (params.get('new') === '1') {
+      setEditor({ article: blankArticle(), slugTouched: false });
+      setParams({}, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [reader, setReader] = useState<Article | null>(null);
   const [openRev, setOpenRev] = useState<string | null>(null);
   const [section, setSection] = useState<'articles' | 'unanswered'>('articles');
@@ -131,7 +143,9 @@ export default function KnowledgeBase() {
       category: a.category.trim() || 'General',
       updatedAt: Date.now(),
     });
+    const title = a.title.trim();
     setEditor(null);
+    toast.success('Article saved', title);
   };
 
   return (

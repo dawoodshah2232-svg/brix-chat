@@ -1,6 +1,7 @@
 // Brix Chat — Campaign composer (local demo: sending is simulated).
 
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useStore } from '../lib/store';
 import { getApi } from '../lib/api';
 import type { ApiGoal } from '../lib/api';
@@ -8,6 +9,7 @@ import type { Campaign } from '../lib/types';
 import { uid } from '../lib/utils';
 import { splitCounts, simulateResults, pickWinner } from '../lib/ab';
 import { Badge, Button, Card, EmptyState, Input, Label, Modal, Select, Textarea, Toggle, useConfirm } from '../components/ui';
+import { toast } from '../components/dashboard/Toasts';
 import { cx } from '../lib/utils';
 
 function blankCampaign(): Campaign {
@@ -43,6 +45,17 @@ export default function Campaigns() {
   const { confirm, dialog } = useConfirm();
   const [editor, setEditor] = useState<Campaign | null>(null);
   const [sendLater, setSendLater] = useState(false);
+  const [params, setParams] = useSearchParams();
+
+  // P4: ?new=1 deep-link opens the composer
+  useEffect(() => {
+    if (params.get('new') === '1') {
+      setEditor(blankCampaign());
+      setSendLater(false);
+      setParams({}, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [goals, setGoals] = useState<ApiGoal[]>([]);
 
   useEffect(() => {
@@ -59,8 +72,10 @@ export default function Campaigns() {
 
   const save = () => {
     if (!editor || !editor.name.trim()) return;
-    store.saveCampaign({ ...editor, name: editor.name.trim(), status: sendLater ? 'scheduled' : editor.status });
+    const scheduled = sendLater;
+    store.saveCampaign({ ...editor, name: editor.name.trim(), status: scheduled ? 'scheduled' : editor.status });
     setEditor(null);
+    toast.success(scheduled ? 'Campaign scheduled' : 'Campaign saved', editor.name.trim());
   };
 
 
@@ -91,6 +106,7 @@ export default function Campaigns() {
       status: 'sent',
       abTest: ab ? { ...ab, results } : undefined,
     });
+    toast.success(ab ? 'A/B send simulated' : 'Campaign sent (simulated)', `${results.sentA + results.sentB} recipients · results are simulated`);
   };
 
   return (
