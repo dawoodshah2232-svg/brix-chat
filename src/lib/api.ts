@@ -509,6 +509,21 @@ export const API_SCOPES: Array<{ name: string; description: string }> = [
 
 const LS_KEY = 'brixchat_api_v1';
 
+/** Thrown when a localStorage write fails because the browser quota is full. */
+export class StorageQuotaError extends Error {
+  constructor() {
+    super('Browser storage is full — your change was not saved. Try deleting old voice notes, removing logos, or exporting and resetting demo data.');
+    this.name = 'StorageQuotaError';
+  }
+}
+
+function isQuotaError(e: unknown): boolean {
+  return (
+    e instanceof Error &&
+    (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED' || /quota/i.test(e.message))
+  );
+}
+
 interface ApiDB {
   workspace: ApiWorkspace;
   properties: ApiProperty[];
@@ -1108,8 +1123,9 @@ function loadAll(): DBMap {
 function saveAll(map: DBMap): void {
   try {
     localStorage.setItem(LS_KEY, JSON.stringify(map));
-  } catch {
-    /* storage full — reads still work */
+  } catch (e) {
+    if (isQuotaError(e)) throw new StorageQuotaError();
+    /* other write errors — reads still work */
   }
 }
 

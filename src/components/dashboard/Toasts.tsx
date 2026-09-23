@@ -1,7 +1,7 @@
 // Brix Chat — lightweight toast system. Any page can call toast.success(...)
 // after a mutation; <ToastHost /> lives once inside AppShell.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { cx, uid } from '../../lib/utils';
 
 export type ToastTone = 'success' | 'error' | 'info' | 'warning';
@@ -43,6 +43,7 @@ const TONE_STYLE: Record<ToastTone, { bar: string; icon: string; iconBg: string 
 
 export function ToastHost() {
   const [items, setItems] = useState<Toast[]>([]);
+  const lastStorageWarn = useRef(0);
 
   useEffect(() => {
     const add = (t: Toast) => {
@@ -51,9 +52,24 @@ export function ToastHost() {
         setItems((xs) => xs.filter((x) => x.id !== t.id));
       }, 4200);
     };
+    // Browser storage full: persist failures dispatch this event. Warn the
+    // user (throttled) instead of silently dropping their changes.
+    const onStorageFull = () => {
+      const now = Date.now();
+      if (now - lastStorageWarn.current < 30000) return;
+      lastStorageWarn.current = now;
+      add({
+        id: uid('toast'),
+        title: 'Browser storage is full',
+        body: 'Changes may not be saved. Try deleting old voice notes or removing logos, or export and reset your data.',
+        tone: 'warning',
+      });
+    };
     listeners.add(add);
+    window.addEventListener('brix:storage-full', onStorageFull);
     return () => {
       listeners.delete(add);
+      window.removeEventListener('brix:storage-full', onStorageFull);
     };
   }, []);
 

@@ -19,9 +19,10 @@ import type {
   Visitor,
   Workspace,
 } from './types';
-import { getApi, ApiError } from './api';
+import { getApi, ApiError, StorageQuotaError } from './api';
 import type { ApiMember } from './api';
 import { seedData, seedDataForWorkspace, seedWorkspaces } from './seed';
+import { clientStatus } from '../components/admin/platform';
 import { detectDistress } from './quality';
 import { uid } from './utils';
 
@@ -181,8 +182,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     try {
       localStorage.setItem(LS_KEY, JSON.stringify({ workspaces: persisted.workspaces, dataByWorkspace: persisted.dataByWorkspace }));
-    } catch {
-      /* storage full — ignore in demo */
+    } catch (e) {
+      if (e instanceof StorageQuotaError || (e instanceof Error && /quota/i.test(e.name + e.message))) {
+        window.dispatchEvent(new CustomEvent('brix:storage-full'));
+      }
+      /* other write failures — reads still work */
     }
     try {
       if (persisted.session) {
@@ -253,6 +257,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (!w) return { ok: false, error: 'Workspace name is required.' };
       if (!displayName.trim()) return { ok: false, error: 'Display name is required.' };
       if (passcode.length < 4) return { ok: false, error: 'Passcode must be at least 4 characters.' };
+      if (clientStatus(w) === 'suspended') {
+        return { ok: false, error: 'This workspace is suspended. Contact the platform operator to reactivate it.' };
+      }
       const api = getApi(w, displayName.trim());
       try {
         const existing = await api.members.list().catch(() => ({ data: [] as ApiMember[] }));
@@ -289,6 +296,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const w = norm(workspace);
       if (!w) return { ok: false, error: 'Workspace name is required.' };
       if (!passcode) return { ok: false, error: 'Passcode is required.' };
+      if (clientStatus(w) === 'suspended') {
+        return { ok: false, error: 'This workspace is suspended. Contact the platform operator to reactivate it.' };
+      }
       const api = getApi(w, opts?.displayName?.trim() || 'agent');
       try {
         const { data: member } = await api.members.login(opts?.displayName ?? '', passcode);

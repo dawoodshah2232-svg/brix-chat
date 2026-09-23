@@ -30,6 +30,7 @@ import {
   getPlatformSettings, savePlatformSettings,
   allProperties, aggregateAudit, storageUsage,
   logPlatformError, getPlatformErrors, clearPlatformErrors,
+  logPlatformAudit,
   exportAllData, resetAllData, collectPlatformSearchItems,
 } from '../components/admin/platform';
 import type {
@@ -381,7 +382,7 @@ function OverviewTab({ jumpTo }: { jumpTo: (t: Tab) => void }) {
           <h2 className="text-xl font-extrabold text-slate-900">Platform overview</h2>
           <p className="text-sm text-slate-500">Every client workspace, at a glance. Local mode — data refreshes as you work, no server push.</p>
         </div>
-        <Button variant="secondary" size="sm" onClick={() => { setLoading(true); void load().then(() => setLoading(false)); }} disabled={loading}>
+        <Button variant="secondary" size="sm" onClick={() => { setLoading(true); load().catch(() => {}).finally(() => setLoading(false)); }} disabled={loading}>
           {loading ? 'Refreshing…' : '↻ Refresh now'}
         </Button>
       </div>
@@ -498,7 +499,7 @@ const CLIENT_STATUS_TONES: Record<ClientStatus, 'green' | 'indigo' | 'rose'> = {
 function ClientsTab({ highlightId, nonce }: { highlightId?: string; nonce: number }) {
   const { setViewingWorkspace } = useStore();
   const navigate = useNavigate();
-  const { toast } = useToast();
+  const { toast, toastError } = useToast();
   const { confirm, dialog } = useConfirm();
   const [clients, setClients] = useState<ClientRecord[]>([]);
   const [plans, setPlans] = useState<PlanRecord[]>([]);
@@ -543,12 +544,23 @@ function ClientsTab({ highlightId, nonce }: { highlightId?: string; nonce: numbe
   }), [clients, q, statusF, planF]);
 
   const persist = (next: ClientRecord[]) => {
-    saveClients(next);
+    if (!saveClients(next)) {
+      toastError('Could not save — browser storage is full. Free up space and try again.');
+      return false;
+    }
     setClients(next);
+    return true;
   };
 
   const setStatus = (slugs: string[], status: ClientStatus) => {
-    persist(clients.map((c) => (slugs.includes(c.slug) ? { ...c, status } : c)));
+    if (!persist(clients.map((c) => (slugs.includes(c.slug) ? { ...c, status } : c)))) return;
+    slugs.forEach((slug) => {
+      const c = clients.find((x) => x.slug === slug);
+      logPlatformAudit(status === 'suspended' ? 'client.suspended' : 'client.reactivated', 'client', slug, {
+        name: c?.name ?? slug,
+        slugs: slugs.length,
+      });
+    });
     toast(`${slugs.length} client${slugs.length > 1 ? 's' : ''} ${status === 'suspended' ? 'suspended' : 'set to ' + status}.`);
     setSelected(new Set());
   };
@@ -564,10 +576,14 @@ function ClientsTab({ highlightId, nonce }: { highlightId?: string; nonce: numbe
   const applyPlan = () => {
     if (!planModal || !planChoice) return;
     const plan = plans.find((p) => p.id === planChoice);
-    persist(clients.map((c) => {
+    if (!persist(clients.map((c) => {
       if (!planModal.slugs.includes(c.slug)) return c;
       return { ...c, planId: planChoice, seats: plan ? plan.seats : c.seats };
-    }));
+    }))) return;
+    planModal.slugs.forEach((slug) => {
+      const c = clients.find((x) => x.slug === slug);
+      logPlatformAudit('client.plan_changed', 'client', slug, { name: c?.name ?? slug, plan: plan?.name ?? planChoice });
+    });
     toast(`${planModal.slugs.length} client${planModal.slugs.length > 1 ? 's' : ''} moved to ${plan?.name ?? planChoice}.`);
     setPlanModal(null);
     setSelected(new Set());
@@ -740,7 +756,8 @@ function ClientsTab({ highlightId, nonce }: { highlightId?: string; nonce: numbe
               notes: '',
             });
           });
-          persist(next);
+          if (!persist(next)) return;
+          logPlatformAudit('client.imported', 'client', 'csv', { count: rows.length });
           toast(`Imported ${rows.length} client${rows.length === 1 ? '' : 's'}.`);
           setImportOpen(false);
         }}
@@ -837,7 +854,11 @@ function PlansTab({ highlightId, nonce }: { highlightId?: string; nonce: number 
   useEffect(load, []);
 
   const flash = useRowFlash(highlightId, nonce);
-  const persist = (next: PlanRecord[]) => { savePlans(next); setPlans(next); };
+  const persist = (next: PlanRecord[]) => {
+    if (!savePlans(next)) { toastError('Could not save — browser storage is full. Free up space and try again.'); return false; }
+    setPlans(next);
+    return true;
+  };
 
   const openNew = () => setEditing({ name: '', price: 49, seats: 5, featuresText: '' });
   const openEdit = (p: PlanRecord) => setEditing({ ...p, featuresText: p.features.join('\n') });
@@ -849,12 +870,14 @@ function PlansTab({ highlightId, nonce }: { highlightId?: string; nonce: number 
     const features = (editing.featuresText ?? '').split('\n').map((f) => f.trim()).filter(Boolean);
     setError('');
     if (editing.id) {
-      persist(plans.map((p) => (p.id === editing.id ? { ...p, name: editing.name!.trim(), price, seats: Number(editing.seats) || 1, features } : p)));
+      if (!persist(plans.map((p) => (p.id === editing.id ? { ...p, name: editing.name!.trim(), price, seats: Number(editing.seats) || 1, features } : p)))) return;
+      logPlatformAudit('plan.updated', 'plan', editing.id, { name: editing.name!.trim(), price });
       toast(`Plan “${editing.name!.trim()}” updated.`);
     } else {
       const id = editing.name!.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-');
       if (plans.some((p) => p.id === id)) { setError('A plan with that name already exists.'); return; }
-      persist([...plans, { id, name: editing.name!.trim(), price, seats: Number(editing.seats) || 1, features, created_at: new Date().toISOString() }]);
+      if (!persist([...plans, { id, name: editing.name!.trim(), price, seats: Number(editing.seats) || 1, features, created_at: new Date().toISOString() }])) return;
+      logPlatformAudit('plan.created', 'plan', id, { name: editing.name!.trim(), price });
       toast(`Plan “${editing.name!.trim()}” created.`);
     }
     setEditing(null);
@@ -868,7 +891,11 @@ function PlansTab({ highlightId, nonce }: { highlightId?: string; nonce: number 
     }
     confirm({
       title: 'Delete plan?', body: `“${p.name}” will be removed from the catalog.`,
-      action: () => { persist(plans.filter((x) => x.id !== p.id)); toast('Plan deleted.'); },
+      action: () => {
+        if (!persist(plans.filter((x) => x.id !== p.id))) return;
+        logPlatformAudit('plan.deleted', 'plan', p.id, { name: p.name });
+        toast('Plan deleted.');
+      },
     });
   };
 
@@ -1019,7 +1046,7 @@ function providerKeys(): Record<string, string> {
 }
 
 function SystemTab() {
-  const { toast } = useToast();
+  const { toast, toastError } = useToast();
   const { confirm, dialog } = useConfirm();
   const [errors, setErrors] = useState(getPlatformErrors());
   const [keys, setKeys] = useState<Record<string, string>>(providerKeys());
@@ -1043,7 +1070,12 @@ function SystemTab() {
     const v = (explicit ?? drafts[id] ?? '').trim();
     const next = { ...keys };
     if (v) next[id] = v; else delete next[id];
-    try { localStorage.setItem(PROVIDER_KEYS_LS, JSON.stringify(next)); } catch { /* ignore */ }
+    try {
+      localStorage.setItem(PROVIDER_KEYS_LS, JSON.stringify(next));
+    } catch {
+      toastError('Could not save — browser storage is full. Free up space and try again.');
+      return;
+    }
     setKeys(next);
     setDrafts((d) => ({ ...d, [id]: '' }));
     toast(v ? 'Provider key saved locally.' : 'Provider key removed.');
@@ -1262,7 +1294,7 @@ function AuditTab() {
 // --- settings (platform) -------------------------------------------------------------------
 
 function SettingsTab() {
-  const { toast } = useToast();
+  const { toast, toastError } = useToast();
   const [draft, setDraft] = useState(getPlatformSettings());
   const [error, setError] = useState('');
 
@@ -1271,7 +1303,11 @@ function SettingsTab() {
     if (draft.session_timeout_mins < 5 || draft.session_timeout_mins > 1440) { setError('Session timeout must be 5–1440 minutes.'); return; }
     if (draft.passcode_min_length < 4 || draft.passcode_min_length > 12) { setError('Passcode length must be 4–12.'); return; }
     setError('');
-    savePlatformSettings({ ...draft, platform_name: draft.platform_name.trim() });
+    if (!savePlatformSettings({ ...draft, platform_name: draft.platform_name.trim() })) {
+      setError('Could not save — browser storage is full. Try a smaller logo or free up space.');
+      toastError('Settings not saved — storage is full.');
+      return;
+    }
     toast('Platform settings saved.');
   };
 
@@ -1371,7 +1407,10 @@ function AdminInner() {
   const openPalette = () => {
     setPaletteOpen(true);
     setItemsLoading(true);
-    collectPlatformSearchItems().then((list) => { setItems(list); setItemsLoading(false); });
+    collectPlatformSearchItems()
+      .then((list) => setItems(list))
+      .catch(() => setItems([]))
+      .finally(() => setItemsLoading(false));
   };
 
   useAdminShortcuts({

@@ -305,7 +305,7 @@ function NotificationBell() {
       const notif = new Notification(n.title, { body: n.body });
       notif.onclick = () => {
         window.focus();
-        if (n.link) window.location.hash = `#${n.link}`;
+        if (n.link) navigate(n.link); // BrowserRouter — use the router, not location.hash
         notif.close();
       };
     } catch {

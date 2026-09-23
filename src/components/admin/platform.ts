@@ -67,6 +67,8 @@ export interface PlatformError {
   source: string;
 }
 
+const LS_AUDIT = 'brix.platform.v1.audit';
+
 function read<T>(key: string, fallback: T): T {
   try {
     const raw = localStorage.getItem(key);
@@ -75,10 +77,14 @@ function read<T>(key: string, fallback: T): T {
   return fallback;
 }
 
-function write(key: string, value: unknown): void {
+/** Returns false when the write failed (usually quota) so callers can warn the user. */
+function write(key: string, value: unknown): boolean {
   try {
     localStorage.setItem(key, JSON.stringify(value));
-  } catch { /* storage full — reads still work */ }
+    return true;
+  } catch {
+    return false; // storage full — reads still work
+  }
 }
 
 const uid = (p: string) => `${p}_${Math.random().toString(36).slice(2, 10)}`;
@@ -134,8 +140,14 @@ export function listClients(): ClientRecord[] {
   return read<ClientRecord[]>(LS_CLIENTS, []);
 }
 
-export function saveClients(clients: ClientRecord[]): void {
-  write(LS_CLIENTS, clients);
+export function saveClients(clients: ClientRecord[]): boolean {
+  return write(LS_CLIENTS, clients);
+}
+
+/** Platform client status, for enforcing suspension at login. */
+export function clientStatus(slug: string): ClientStatus | null {
+  ensurePlatformSeed();
+  return listClients().find((c) => c.slug === slug)?.status ?? null;
 }
 
 export function listPlans(): PlanRecord[] {
@@ -143,8 +155,8 @@ export function listPlans(): PlanRecord[] {
   return read<PlanRecord[]>(LS_PLANS, []);
 }
 
-export function savePlans(plans: PlanRecord[]): void {
-  write(LS_PLANS, plans);
+export function savePlans(plans: PlanRecord[]): boolean {
+  return write(LS_PLANS, plans);
 }
 
 export function getPlatformSettings(): PlatformSettings {
@@ -152,12 +164,58 @@ export function getPlatformSettings(): PlatformSettings {
   return { ...defaultSettings(), ...read<Partial<PlatformSettings>>(LS_SETTINGS, {}) };
 }
 
-export function savePlatformSettings(s: PlatformSettings): void {
-  write(LS_SETTINGS, s);
+export function savePlatformSettings(s: PlatformSettings): boolean {
+  return write(LS_SETTINGS, s);
 }
 
 export function planById(plans: PlanRecord[], id: string): PlanRecord | undefined {
   return plans.find((p) => p.id === id);
+}
+
+// ---------------------------------------------------------------------------
+// Platform audit log — operator actions (suspend, plan changes, …). These are
+// platform-level destructive actions outside any workspace DB, so they get
+// their own trail that the Audit tab aggregates alongside workspace audits.
+// ---------------------------------------------------------------------------
+
+export interface PlatformAuditEntry {
+  id: string;
+  at: string;
+  actor: string;
+  action: string;
+  entity: string;
+  entity_id: string;
+  meta: Record<string, unknown>;
+}
+
+export function logPlatformAudit(
+  action: string,
+  entity: string,
+  entityId = '',
+  meta: Record<string, unknown> = {},
+  actor = 'platform operator',
+): void {
+  try {
+    const entries = read<PlatformAuditEntry[]>(LS_AUDIT, []);
+    entries.unshift({
+      id: uid('paud'),
+      at: new Date().toISOString(),
+      actor,
+      action,
+      entity,
+      entity_id: entityId,
+      meta,
+    });
+    write(LS_AUDIT, entries.slice(0, 500));
+  } catch { /* ignore */ }
+}
+
+export function getPlatformAudit(): PlatformAuditEntry[] {
+  return read<PlatformAuditEntry[]>(LS_AUDIT, []);
+}
+
+export function clearPlatformAudit(): void {
+  write(LS_AUDIT, []);
 }
 
 // ---------------------------------------------------------------------------
@@ -241,6 +299,15 @@ export async function aggregateAudit(clients: ClientRecord[], perWorkspaceLimit 
     const { data } = await api.auditLog.list({ limit: perWorkspaceLimit });
     (data?.items ?? []).forEach((e) => out.push({ ...e, workspaceSlug: 'demo', workspaceName: 'Brix (operator)' }));
   } catch { /* skip */ }
+  // Platform-level operator actions (suspend, plan changes…) live outside
+  // workspace DBs — surface them here so destructive actions are traceable.
+  getPlatformAudit().slice(0, perWorkspaceLimit).forEach((e) => {
+    out.push({
+      id: e.id, actor: e.actor, action: e.action, entity: e.entity,
+      entity_id: e.entity_id, meta: e.meta, created_at: e.at,
+      workspaceSlug: 'platform', workspaceName: 'Platform (operator actions)',
+    });
+  });
   return out.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
 }
 
@@ -297,11 +364,12 @@ export function exportAllData(): Record<string, unknown> {
       clients: read(LS_CLIENTS, []),
       plans: read(LS_PLANS, []),
       settings: read(LS_SETTINGS, {}),
+      audit: read(LS_AUDIT, []),
     },
   };
 }
 
-const RESET_KEYS = [API_LS_KEY, 'brixchat_v1', 'brixchat_session_v1', LS_CLIENTS, LS_PLANS, LS_SETTINGS, LS_ERRORS];
+const RESET_KEYS = [API_LS_KEY, 'brixchat_v1', 'brixchat_session_v1', LS_CLIENTS, LS_PLANS, LS_SETTINGS, LS_ERRORS, LS_AUDIT];
 
 export function resetAllData(): void {
   RESET_KEYS.forEach((k) => {

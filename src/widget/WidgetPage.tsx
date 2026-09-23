@@ -816,7 +816,7 @@ export default function WidgetPage() {
           const to = String(pl.to ?? pl.agent ?? pl.department ?? '').slice(0, 120);
           const note = String(pl.note ?? '').slice(0, 300);
           pushLocal({ from: 'system', kind: 'transfer', text: '', transferTo: to || undefined, transferNote: note || undefined });
-          if (pl.agent) void resolveAgent(null, pl.agent).then(setAssignedAgent);
+          if (pl.agent) resolveAgent(null, pl.agent).then(setAssignedAgent).catch(() => {});
           break;
         }
         case 'setVisitor': {
