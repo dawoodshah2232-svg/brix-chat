@@ -245,7 +245,7 @@ export default function Landing() {
           <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.03)_1px,transparent_1px)] bg-[size:64px_64px] [mask-image:radial-gradient(ellipse_70%_60%_at_50%_35%,black,transparent)]" />
         </div>
         <div className="relative mx-auto max-w-7xl px-4 sm:px-6 pt-20 pb-24 sm:pt-28 sm:pb-32 grid lg:grid-cols-2 gap-14 items-center">
-          <div>
+          <div className="max-sm:text-center">
             <div className="inline-flex items-center gap-2 text-xs font-semibold text-aqua-300 bg-aqua-500/10 border border-aqua-500/25 rounded-full px-3.5 py-1.5 mb-6">
               <span className="w-1.5 h-1.5 rounded-full bg-aqua-400" /> Core product free forever
             </div>
@@ -274,7 +274,7 @@ export default function Landing() {
                 Try the live demo ↓
               </a>
             </div>
-            <dl className="mt-10 flex gap-8">
+            <dl className="mt-10 flex gap-8 max-sm:justify-center">
               {[
                 ['∞', 'Agents & sites'],
                 ['50+', 'Languages'],
@@ -359,11 +359,11 @@ export default function Landing() {
           <SectionHeading eyebrow="How it works" title="Live in three steps" />
           <div className="grid md:grid-cols-3 gap-6">
             {STEPS.map((s) => (
-              <div key={s.n} className="relative rounded-3xl bg-ink-950 p-8 overflow-hidden">
-                <div className="absolute -top-6 -right-2 font-display text-[120px] font-extrabold text-white/5 select-none" aria-hidden>
+              <div key={s.n} className="relative rounded-3xl bg-ink-950 p-8 overflow-hidden max-sm:text-center">
+                <div className="absolute -top-6 -right-2 font-display text-[120px] font-extrabold text-white/5 select-none max-sm:hidden" aria-hidden>
                   {s.n}
                 </div>
-                <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-brix-500 to-aqua-400 grid place-items-center text-white font-display font-bold">
+                <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-brix-500 to-aqua-400 grid place-items-center text-white font-display font-bold max-sm:mx-auto">
                   {s.n}
                 </div>
                 <h3 className="mt-5 font-display text-xl font-bold text-white">{s.title}</h3>
@@ -417,22 +417,22 @@ export default function Landing() {
             sub="The entire core is free forever. You only pay when you add superpowers."
           />
           <div className="grid md:grid-cols-2 gap-6 max-w-4xl mx-auto">
-            <div className="rounded-3xl border-2 border-brix-600 bg-white p-8 shadow-xl shadow-brix-600/10 relative">
-              <div className="absolute -top-3.5 left-8 bg-brix-600 text-white text-xs font-bold uppercase tracking-widest px-3 py-1 rounded-full">
+            <div className="rounded-3xl border-2 border-brix-600 bg-white p-8 shadow-xl shadow-brix-600/10 relative max-sm:text-center">
+              <div className="absolute -top-3.5 left-8 max-sm:left-1/2 max-sm:-translate-x-1/2 bg-brix-600 text-white text-xs font-bold uppercase tracking-widest px-3 py-1 rounded-full">
                 Most popular
               </div>
               <h3 className="font-display text-xl font-extrabold text-slate-900">Starter</h3>
               <p className="mt-2"><span className="font-display text-4xl font-extrabold text-slate-900">$0</span> <span className="text-slate-500">/ forever</span></p>
               <ul className="mt-6 space-y-2.5 text-sm text-slate-600">
                 {['Unlimited agents, sites & history', 'Chat widget + agent dashboard', 'Proactive triggers & campaigns', 'Knowledge base & tickets'].map((i) => (
-                  <li key={i} className="flex gap-2.5"><span className="text-emerald-500 font-bold">✓</span>{i}</li>
+                  <li key={i} className="flex gap-2.5 max-sm:justify-center"><span className="text-emerald-500 font-bold">✓</span>{i}</li>
                 ))}
               </ul>
               <Link to="/signup" className="mt-8 block text-center px-6 py-3 rounded-xl bg-brix-600 hover:bg-brix-700 text-white font-semibold transition">
                 Start free
               </Link>
             </div>
-            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-8">
+            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-8 max-sm:text-center">
               <h3 className="font-display text-xl font-extrabold text-slate-900">Add-ons</h3>
               <p className="mt-2 text-sm text-slate-500">Flat, per-account pricing. No per-site stacking.</p>
               <ul className="mt-6 space-y-4">
@@ -464,10 +464,10 @@ export default function Landing() {
           <SectionHeading eyebrow="Loved by teams" title="Don't take our word for it" />
           <div className="grid md:grid-cols-3 gap-6">
             {QUOTES.map((q) => (
-              <figure key={q.name} className="rounded-3xl bg-white border border-slate-200 p-7 flex flex-col">
+              <figure key={q.name} className="rounded-3xl bg-white border border-slate-200 p-7 flex flex-col max-sm:text-center">
                 <div className="text-aqua-500 text-4xl font-display leading-none" aria-hidden>“</div>
                 <blockquote className="mt-2 text-slate-700 leading-relaxed flex-1">{q.quote}</blockquote>
-                <figcaption className="mt-6 flex items-center gap-3">
+                <figcaption className="mt-6 flex items-center gap-3 max-sm:justify-center">
                   <span className="w-11 h-11 rounded-full bg-gradient-to-br from-brix-500 to-aqua-400 grid place-items-center text-white font-bold">
                     {q.name.split(' ').map((w) => w[0]).join('')}
                   </span>

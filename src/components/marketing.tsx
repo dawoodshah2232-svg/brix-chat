@@ -184,12 +184,12 @@ export function PageHero({ kicker, title, sub }: { kicker: string; title: ReactN
       <div className="absolute inset-0 pointer-events-none" aria-hidden>
         <div className="absolute -top-32 right-0 w-[480px] h-[480px] rounded-full bg-brix-600/25 blur-[140px]" />
       </div>
-      <div className="relative mx-auto max-w-7xl px-4 sm:px-6 py-16 sm:py-24">
+      <div className="relative mx-auto max-w-7xl px-4 sm:px-6 py-16 sm:py-24 max-sm:text-center">
         <div className="text-xs font-bold uppercase tracking-widest text-aqua-400">{kicker}</div>
-        <h1 className="mt-3 font-display text-4xl sm:text-5xl font-extrabold tracking-tight text-white max-w-3xl">
+        <h1 className="mt-3 font-display text-4xl sm:text-5xl font-extrabold tracking-tight text-white max-w-3xl max-sm:mx-auto">
           {title}
         </h1>
-        {sub && <p className="mt-4 text-lg text-slate-400 max-w-2xl">{sub}</p>}
+        {sub && <p className="mt-4 text-lg text-slate-400 max-w-2xl max-sm:mx-auto">{sub}</p>}
       </div>
     </section>
   );
