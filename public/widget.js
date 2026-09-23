@@ -9,14 +9,17 @@
  *   <script async src="https://YOUR-HOST/brix-chat/widget.js" data-property="bx_..."></script>
  *
  * data-* overrides: data-property (required; legacy data-key also works),
- *   data-color, data-position (bottom-right|bottom-left), data-greeting, data-locale.
+ *   data-color, data-position (bottom-right|bottom-left), data-greeting, data-locale,
+ *   data-theme (light|dark|auto — widget color scheme; default follows the
+ *   property branding theme set in Admin → Branding).
  *
  * JS API (all calls are safe before the widget finishes loading — they queue):
- *   BrixChat('boot', { property, visitor })   // start (auto-boots from data-* if omitted)
+ *   BrixChat('boot', { property, visitor, theme }) // start (auto-boots from data-* if omitted)
  *   BrixChat('config', { prechat, offline, language }) // host overrides forwarded to widget (phase 2)
  *   BrixChat('prompt', { text, delay, dismissAfter })  // proactive teaser bubble, queued (phase 2)
  *   BrixChat('emailTranscript', email)       // ask the widget to send/save a transcript (phase 2)
  *   BrixChat('setLanguage', code)            // en|es|fr|de|ar|ur (phase 2)
+ *   BrixChat('setTheme', code)               // light|dark|auto — switch the widget color scheme (phase 3)
  *   BrixChat.show() / .hide() / .toggle()     // launcher visibility
  *   BrixChat.open() / .close()                // chat panel (maximize/minimize aliases)
  *   BrixChat.endChat()                        // end the current chat
@@ -98,12 +101,15 @@
   var validLocale = (function (l) { return LANGS[l] ? l : 'en'; })(dataAttr('locale', 'en'));
   function t(key) { var p = langPack(cfg.locale); return p[key] !== undefined ? p[key] : LANGS.en[key]; }
 
+  var validTheme = function (th) { return th === 'light' || th === 'dark' || th === 'auto' ? th : ''; };
+
   var cfg = {
     property: dataAttr('property', dataAttr('key', '')),
     color: dataAttr('color', '#4f46e5'),
     position: dataAttr('position', 'bottom-right'),
     greeting: dataAttr('greeting', ''),
     locale: validLocale,
+    theme: validTheme(dataAttr('theme', '')), // phase 3: widget color scheme override
     // phase 2: host overrides for the widget's pre-chat / offline forms,
     // forwarded to the iframe; WidgetPage merges them over property settings
     prechat: null,   // { enabled?: boolean, fields?: string[] }
@@ -157,6 +163,16 @@
   var ICON_CHAT = '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" style="margin:auto;display:block"><path d="M21 12a8 8 0 0 1-8 8H4l2-3a8 8 0 1 1 15-5z" fill="white"/></svg>';
   var ICON_X = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" style="margin:auto;display:block"><path d="M6 6l12 12M18 6L6 18" stroke="white" stroke-width="2.5" stroke-linecap="round"/></svg>';
 
+  /* phase 3: loader-side dark check (mirrors the widget's own resolution for
+   * the iframe shell + proactive teaser; the widget re-resolves inside too) */
+  function loaderDark() {
+    if (cfg.theme === 'dark') return true;
+    if (cfg.theme === 'auto' && typeof WIN.matchMedia === 'function') {
+      try { return WIN.matchMedia('(prefers-color-scheme: dark)').matches; } catch (e) { return false; }
+    }
+    return false;
+  }
+
   function buildDom() {
     var side = cfg.position === 'bottom-left' ? 'left' : 'right';
 
@@ -183,7 +199,7 @@
       position: 'fixed', bottom: '94px', zIndex: '2147483000',
       width: '380px', height: '560px', maxHeight: 'calc(100vh - 120px)',
       maxWidth: 'calc(100vw - 32px)', border: 'none', borderRadius: '18px',
-      boxShadow: '0 24px 70px rgba(2,6,23,.35)', display: 'none', background: '#fff'
+      boxShadow: '0 24px 70px rgba(2,6,23,.35)', display: 'none', background: loaderDark() ? '#020617' : '#fff'
     }, { id: NS + '-frame', title: t('chatPanel'), role: 'dialog', 'aria-modal': 'false', 'aria-label': t('chatPanel'), tabindex: '-1' });
     frame.style[side] = '20px';
     frame.src = widgetUrl();
@@ -265,10 +281,11 @@
     teaserWrap.style.display = 'block';
 
     var card = el('div', {
-      background: '#fff', borderRadius: '14px', padding: '12px 36px 12px 14px',
-      boxShadow: '0 12px 32px rgba(2,6,23,.22)', fontSize: '13px', color: '#1e293b',
+      background: loaderDark() ? '#0f172a' : '#fff', borderRadius: '14px', padding: '12px 36px 12px 14px',
+      boxShadow: '0 12px 32px rgba(2,6,23,.22)', fontSize: '13px', color: loaderDark() ? '#e2e8f0' : '#1e293b',
       fontFamily: 'system-ui,sans-serif', lineHeight: '1.45', cursor: 'pointer',
-      border: '1px solid rgba(99,102,241,.18)', animation: NS + '-pop .25s ease-out'
+      border: loaderDark() ? '1px solid rgba(148,163,184,.25)' : '1px solid rgba(99,102,241,.18)',
+      animation: NS + '-pop .25s ease-out'
     });
     if (RTL[cfg.locale]) { card.style.padding = '12px 14px 12px 36px'; }
     card.textContent = p.text;
@@ -309,6 +326,7 @@
     var q = 'property=' + encodeURIComponent(cfg.property) +
       '&color=' + encodeURIComponent(cfg.color) +
       '&locale=' + encodeURIComponent(cfg.locale) +
+      (cfg.theme ? '&theme=' + encodeURIComponent(cfg.theme) : '') + // phase 3
       '&v=' + encodeURIComponent(cfg.visitor.name) +
       '&e=' + encodeURIComponent(cfg.visitor.email) +
       '&h=' + encodeURIComponent(cfg.visitor.hash) +
@@ -403,6 +421,7 @@
     if (opts.position) cfg.position = opts.position;
     if (opts.greeting) cfg.greeting = opts.greeting;
     if (opts.locale && LANGS[opts.locale]) { cfg.locale = opts.locale; applyLang(); }
+    if (opts.theme && validTheme(opts.theme)) cfg.theme = opts.theme; // phase 3: boot-time theme override
     if (opts.prechat) cfg.prechat = opts.prechat;   // phase 2 host overrides
     if (opts.offline) cfg.offline = opts.offline;   // phase 2 host overrides
     if (opts.visitor) {
@@ -437,6 +456,14 @@
     prompt: function (opts) { ensureBoot(); queuePrompt(opts || {}); },
     /* phase 2: ask the widget to save/email the chat transcript */
     emailTranscript: function (email) { ensureBoot(); sendCmd('emailTranscript', { email: String(email || '') }); },
+    /* phase 3: switch the widget color scheme (light|dark|auto) — reloads the panel */
+    setTheme: function (code) {
+      ensureBoot();
+      if (!validTheme(code)) return false;
+      cfg.theme = code;
+      if (frame) { frame.style.background = loaderDark() ? '#020617' : '#fff'; frame.src = widgetUrl(); state.ready = false; }
+      return true;
+    },
     /* phase 2: switch the widget UI language */
     setLanguage: function (code) {
       ensureBoot();

@@ -306,6 +306,13 @@ export default function WidgetPage() {
   const visitorName = params.get('v') || '';
   const visitorEmail = params.get('e') || '';
   const visitorHash = params.get('h') || '';
+  // Worker D (phase 3): widget color scheme. Precedence: ?theme= URL param
+  // (loader data-theme / boot {theme}) → property branding theme → the last
+  // choice stored for this property → light. 'auto' follows the OS setting
+  // via prefers-color-scheme and is the only mode that consults it.
+  const paramTheme = (params.get('theme') || '').toLowerCase();
+  const THEME_KEY = `brixchat_widget_theme_v1:${propertyKey}`;
+  const validTheme = (v: string) => v === 'light' || v === 'dark' || v === 'auto';
 
   const [property, setProperty] = useState<ApiProperty | null>(null);
   const [settings, setSettings] = useState<P2PropertySettings>(DEFAULT_SETTINGS);
@@ -344,6 +351,34 @@ export default function WidgetPage() {
       return validLang(s) ? s : 'en';
     } catch { return 'en'; }
   });
+  // Persisted per-property theme choice (light/dark/auto); explicit param or
+  // property-branding values overwrite it.
+  const [storedTheme, setStoredTheme] = useState<string>(() => {
+    try { return localStorage.getItem(THEME_KEY) || ''; } catch { return ''; }
+  });
+  const [osDark, setOsDark] = useState<boolean>(() =>
+    typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      ? window.matchMedia('(prefers-color-scheme: dark)').matches : false);
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return;
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const onChange = (e: MediaQueryListEvent) => setOsDark(e.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+  const rawTheme = validTheme(paramTheme) ? paramTheme
+    : validTheme(settings.theme || '') ? (settings.theme as string)
+    : validTheme(storedTheme) ? storedTheme : 'light';
+  const dark = rawTheme === 'dark' || (rawTheme === 'auto' && osDark);
+  // Persist the resolved choice per property so the next visit matches.
+  useEffect(() => {
+    const chosen = validTheme(paramTheme) ? paramTheme
+      : validTheme(settings.theme || '') ? (settings.theme as string) : '';
+    if (chosen && chosen !== storedTheme) {
+      try { localStorage.setItem(THEME_KEY, chosen); } catch { /* ignore */ }
+      setStoredTheme(chosen);
+    }
+  }, [paramTheme, settings.theme, storedTheme, THEME_KEY]);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -785,11 +820,11 @@ export default function WidgetPage() {
     const val = formVals[f] ?? '';
     const set = (v: string) => setFormVals((p) => ({ ...p, [f]: v }));
     const label = t(f) === f ? f : t(f);
-    const cls = 'w-full px-3 py-2.5 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-brix-500/40 focus:border-brix-500 bg-white';
+    const cls = 'w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 outline-none focus:ring-2 focus:ring-brix-500/40 focus:border-brix-500 bg-white dark:bg-slate-900';
     if (f === 'department' && depts.length) {
       return (
         <label key={f} className="block">
-          <span className="block text-xs font-semibold text-slate-600 mb-1">{t('chooseTeam')}</span>
+          <span className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">{t('chooseTeam')}</span>
           <select value={deptId} onChange={(e) => {
             const id = e.target.value;
             setDeptId(id);
@@ -805,14 +840,14 @@ export default function WidgetPage() {
     if (f === 'message') {
       return (
         <label key={f} className="block">
-          <span className="block text-xs font-semibold text-slate-600 mb-1">{t('message')}</span>
+          <span className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">{t('message')}</span>
           <textarea value={val} onChange={(e) => set(e.target.value)} rows={3} className={cx(cls, 'resize-none')} aria-label={t('message')} />
         </label>
       );
     }
     return (
       <label key={f} className="block">
-        <span className="block text-xs font-semibold text-slate-600 mb-1">{label}</span>
+        <span className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">{label}</span>
         <input value={val} onChange={(e) => set(e.target.value)}
           type={f === 'email' ? 'email' : f === 'phone' ? 'tel' : 'text'}
           autoComplete={f === 'email' ? 'email' : f === 'name' ? 'name' : 'off'}
@@ -824,11 +859,11 @@ export default function WidgetPage() {
   /* ================================================================== */
   if (propError) {
     return (
-      <div className="h-screen w-screen grid place-items-center bg-slate-50 p-6 text-center">
+      <div className="h-screen w-screen grid place-items-center bg-slate-50 dark:bg-slate-950 p-6 text-center">
         <div className="max-w-sm">
           <div className="text-4xl mb-3" aria-hidden>🧱</div>
-          <div className="font-bold text-slate-900 mb-1">Widget not configured</div>
-          <p className="text-sm text-slate-500">{propError}</p>
+          <div className="font-bold text-slate-900 dark:text-slate-50 mb-1">Widget not configured</div>
+          <p className="text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500">{propError}</p>
         </div>
       </div>
     );
@@ -836,10 +871,10 @@ export default function WidgetPage() {
 
   if (!property || !w || stage === 'loading') {
     return (
-      <div className="h-screen w-screen grid place-items-center bg-white" role="status" aria-label="Loading">
+      <div className="h-screen w-screen grid place-items-center bg-white dark:bg-slate-900" role="status" aria-label="Loading">
         <div className="flex gap-1.5">
           {[0, 1, 2].map((i) => (
-            <span key={i} className="typing-dot w-2 h-2 rounded-full bg-slate-400 inline-block" />
+            <span key={i} className="typing-dot w-2 h-2 rounded-full bg-slate-400 dark:bg-slate-500 inline-block" />
           ))}
         </div>
       </div>
@@ -867,8 +902,8 @@ export default function WidgetPage() {
   ) : null;
 
   return (
-    <div className="h-screen w-screen flex flex-col bg-white overflow-hidden brix-widget-panel"
-      style={{ fontFamily: 'Inter, system-ui, sans-serif' }}
+    <div className={cx('h-screen w-screen flex flex-col bg-white dark:bg-slate-900 overflow-hidden brix-widget-panel', dark && 'dark')}
+      style={{ fontFamily: 'Inter, system-ui, sans-serif', colorScheme: dark ? 'dark' : 'light' }}
       dir={RTL[lang] ? 'rtl' : 'ltr'} role="dialog" aria-modal="false" aria-label={t('chatPanel')}>
       {/* header */}
       <div className="px-4 py-3.5 flex items-center gap-3 text-white shrink-0" style={{ background: headerGradient }}>
@@ -913,59 +948,59 @@ export default function WidgetPage() {
 
       {/* chat menu */}
       {menu && stage === 'chat' && (
-        <div className="absolute top-16 end-3 z-20 w-64 bg-white rounded-2xl shadow-xl border border-slate-200 p-3 space-y-1" role="menu">
+        <div className="absolute top-16 end-3 z-20 w-64 bg-white dark:bg-slate-900 rounded-2xl shadow-xl border border-slate-200 dark:border-slate-700 p-3 space-y-1" role="menu">
           {menu === 'main' ? (
             <>
-              <div className="px-2 py-1 text-xs font-bold text-slate-500 uppercase tracking-wide">{t('menuLabel')}</div>
+              <div className="px-2 py-1 text-xs font-bold text-slate-500 dark:text-slate-400 dark:text-slate-500 uppercase tracking-wide">{t('menuLabel')}</div>
               <button onClick={() => { setMenu('transcript'); setTranscriptDone(false); }}
-                className="w-full text-start px-3 py-2 rounded-xl text-sm hover:bg-slate-50 text-slate-700" role="menuitem">
+                className="w-full text-start px-3 py-2 rounded-xl text-sm hover:bg-slate-50 dark:hover:bg-slate-800 dark:bg-slate-950 text-slate-700 dark:text-slate-200" role="menuitem">
                 ✉️ {t('transcriptTitle')}
               </button>
-              <label className="flex items-center gap-2 px-3 py-2 text-sm text-slate-700">
+              <label className="flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-200">
                 <span aria-hidden>🌐</span>
                 <select value={lang} onChange={(e) => setLanguage(e.target.value)}
-                  className="flex-1 text-sm border border-slate-200 rounded-lg px-2 py-1.5 outline-none" aria-label={t('languageLabel')}>
+                  className="flex-1 text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 outline-none" aria-label={t('languageLabel')}>
                   {LANGS.map((l) => <option key={l} value={l}>{LANG_NAMES[l]}</option>)}
                 </select>
               </label>
               <button onClick={() => { setMenu(null); void endChat(); }}
-                className="w-full text-start px-3 py-2 rounded-xl text-sm hover:bg-rose-50 text-rose-600" role="menuitem">
+                className="w-full text-start px-3 py-2 rounded-xl text-sm hover:bg-rose-50 dark:hover:bg-rose-950 text-rose-600 dark:text-rose-400" role="menuitem">
                 ⏻ {t('endChat')}
               </button>
             </>
           ) : (
             <>
               {hasBranding && (
-                <div className="flex items-center gap-2 px-2 py-1 border-b border-slate-100 mb-1">
+                <div className="flex items-center gap-2 px-2 py-1 border-b border-slate-100 dark:border-slate-800 mb-1">
                   {logoUrl ? (
                     <img src={logoUrl} alt="" className="w-6 h-6 rounded-full object-cover shrink-0" />
                   ) : (
                     <div className="w-6 h-6 rounded-full grid place-items-center text-white text-[10px] font-bold shrink-0" style={{ background: accent }} aria-hidden>{agentInitials}</div>
                   )}
-                  <span className="text-xs font-bold text-slate-800 truncate">{brandName}</span>
+                  <span className="text-xs font-bold text-slate-800 dark:text-slate-100 truncate">{brandName}</span>
                 </div>
               )}
-              <div className={cx('px-2 py-1 text-xs font-bold uppercase tracking-wide', !hasBranding && 'text-slate-500')}
+              <div className={cx('px-2 py-1 text-xs font-bold uppercase tracking-wide', !hasBranding && 'text-slate-500 dark:text-slate-400 dark:text-slate-500')}
                 style={{ color: hasBranding ? accent : undefined }}>{t('transcriptTitle')}</div>
               {transcriptDone ? (
                 <div className="px-2 py-2">
-                  <div className="text-sm font-semibold text-emerald-700">{t('transcriptDone')}</div>
-                  <p className="text-xs text-slate-500 mt-1">{t('transcriptHint')}</p>
-                  <button onClick={() => setMenu(null)} className="mt-3 text-xs font-semibold text-slate-600 underline">{t('dismiss')}</button>
+                  <div className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">{t('transcriptDone')}</div>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500 mt-1">{t('transcriptHint')}</p>
+                  <button onClick={() => setMenu(null)} className="mt-3 text-xs font-semibold text-slate-600 dark:text-slate-300 underline">{t('dismiss')}</button>
                 </div>
               ) : (
                 <div className="px-2 py-1 space-y-2">
                   <input value={transcriptEmail} onChange={(e) => setTranscriptEmail(e.target.value)}
                     type="email" placeholder={t('transcriptPh')} aria-label={t('email')}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-brix-500/40" />
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-sm outline-none focus:ring-2 focus:ring-brix-500/40" />
                   <div className="flex gap-2">
                     <button onClick={() => void requestTranscript(transcriptEmail)} disabled={!transcriptEmail.trim()}
                       className="flex-1 px-3 py-2 rounded-xl text-white text-sm font-semibold disabled:opacity-40" style={{ background: accent }}>
                       {t('transcriptSend')}
                     </button>
-                    <button onClick={() => setMenu('main')} className="px-3 py-2 rounded-xl text-sm text-slate-500 hover:bg-slate-100">{t('dismiss')}</button>
+                    <button onClick={() => setMenu('main')} className="px-3 py-2 rounded-xl text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 dark:bg-slate-800">{t('dismiss')}</button>
                   </div>
-                  <p className="text-[11px] text-slate-400">{t('transcriptHint')}</p>
+                  <p className="text-[11px] text-slate-400 dark:text-slate-500">{t('transcriptHint')}</p>
                 </div>
               )}
             </>
@@ -975,7 +1010,7 @@ export default function WidgetPage() {
 
       {/* ============================ HOME ============================ */}
       {stage === 'home' && (
-        <div className="flex-1 overflow-y-auto slim-scroll px-5 py-6 bg-slate-50">
+        <div className="flex-1 overflow-y-auto slim-scroll px-5 py-6 bg-slate-50 dark:bg-slate-950">
           <div className="text-center mb-5">
             {logoUrl ? (
               <img src={logoUrl} alt="" className="w-14 h-14 mx-auto rounded-full object-cover mb-3 shadow-lg" />
@@ -985,8 +1020,8 @@ export default function WidgetPage() {
                 {agentInitials}
               </div>
             )}
-            <h1 className="text-lg font-bold text-slate-900">{greeting}</h1>
-            <p className="text-sm text-slate-500 mt-1">{status === 'online' ? t('onlineNow') : t('offlineNow')}</p>
+            <h1 className="text-lg font-bold text-slate-900 dark:text-slate-50">{greeting}</h1>
+            <p className="text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500 mt-1">{status === 'online' ? t('onlineNow') : t('offlineNow')}</p>
           </div>
 
           <div className="space-y-2.5">
@@ -997,7 +1032,7 @@ export default function WidgetPage() {
                   ✉️ {t('leaveMessage')}
                 </button>
                 <button onClick={startFromHome}
-                  className="w-full py-3 rounded-2xl bg-white border border-slate-200 font-semibold text-sm text-slate-700">
+                  className="w-full py-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 font-semibold text-sm text-slate-700 dark:text-slate-200">
                   {t('startChatAnyway')}
                 </button>
               </>
@@ -1009,7 +1044,7 @@ export default function WidgetPage() {
             )}
             {settings.booking_url && (
               <a href={settings.booking_url} target="_blank" rel="noopener noreferrer"
-                className="block w-full py-3 rounded-2xl bg-white border border-slate-200 font-semibold text-sm text-slate-700 text-center">
+                className="block w-full py-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 font-semibold text-sm text-slate-700 dark:text-slate-200 text-center">
                 📅 {t('bookMeeting')}
               </a>
             )}
@@ -1017,19 +1052,19 @@ export default function WidgetPage() {
 
           {faq.length > 0 && (
             <div className="mt-6">
-              <h2 className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">{t('faqTitle')}</h2>
+              <h2 className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400 dark:text-slate-500 mb-2">{t('faqTitle')}</h2>
               <div className="space-y-2">
                 {faq.map((a) => (
-                  <div key={a.id} className="bg-white border border-slate-200/80 rounded-xl overflow-hidden"
+                  <div key={a.id} className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-700/70 rounded-xl overflow-hidden"
                     style={hasBranding ? { borderLeft: `3px solid ${accent}` } : undefined}>
                     <button onClick={() => setFaqOpen(faqOpen === a.id ? null : a.id)}
-                      className="w-full text-start px-3.5 py-2.5 text-sm font-medium text-slate-800 flex items-center justify-between gap-2"
+                      className="w-full text-start px-3.5 py-2.5 text-sm font-medium text-slate-800 dark:text-slate-100 flex items-center justify-between gap-2"
                       aria-expanded={faqOpen === a.id}>
                       <span className="truncate">{a.title}</span>
-                      <span className="text-slate-400 text-xs shrink-0">{faqOpen === a.id ? '▴' : '▾'}</span>
+                      <span className="text-slate-400 dark:text-slate-500 text-xs shrink-0">{faqOpen === a.id ? '▴' : '▾'}</span>
                     </button>
                     {faqOpen === a.id && (
-                      <div className="px-3.5 pb-3 text-[13px] text-slate-600 leading-relaxed whitespace-pre-wrap max-h-40 overflow-y-auto slim-scroll">
+                      <div className="px-3.5 pb-3 text-[13px] text-slate-600 dark:text-slate-300 leading-relaxed whitespace-pre-wrap max-h-40 overflow-y-auto slim-scroll">
                         {a.body || a.title}
                       </div>
                     )}
@@ -1040,59 +1075,59 @@ export default function WidgetPage() {
           )}
 
           <div className="mt-6 flex items-center justify-center gap-2">
-            <span className="text-xs text-slate-400" aria-hidden>🌐</span>
+            <span className="text-xs text-slate-400 dark:text-slate-500" aria-hidden>🌐</span>
             <select value={lang} onChange={(e) => setLanguage(e.target.value)}
-              className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 text-slate-600 bg-white outline-none" aria-label={t('languageLabel')}>
+              className="text-xs border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-900 outline-none" aria-label={t('languageLabel')}>
               {LANGS.map((l) => <option key={l} value={l}>{LANG_NAMES[l]}</option>)}
             </select>
           </div>
           {w.show_branding && (
-            <p className="text-center text-[10px] text-slate-400 mt-4">Powered by <span className="font-semibold text-slate-500">Brix Chat</span></p>
+            <p className="text-center text-[10px] text-slate-400 dark:text-slate-500 mt-4">Powered by <span className="font-semibold text-slate-500 dark:text-slate-400 dark:text-slate-500">Brix Chat</span></p>
           )}
         </div>
       )}
 
       {/* ========================== PRE-CHAT ========================== */}
       {stage === 'prechat' && (
-        <div className="flex-1 overflow-y-auto slim-scroll px-5 py-6 bg-slate-50">
+        <div className="flex-1 overflow-y-auto slim-scroll px-5 py-6 bg-slate-50 dark:bg-slate-950">
           <BrandStrip />
-          <h1 className="text-lg font-bold text-slate-900 text-center">{t('prechatTitle')}</h1>
-          <p className="text-sm text-slate-500 text-center mt-1 mb-5">{t('prechatHint')}</p>
+          <h1 className="text-lg font-bold text-slate-900 dark:text-slate-50 text-center">{t('prechatTitle')}</h1>
+          <p className="text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500 text-center mt-1 mb-5">{t('prechatHint')}</p>
           <form onSubmit={submitPrechat} className="space-y-3.5">
             {prechatCfg.fields.map(renderField)}
             {depts.length > 0 && !prechatCfg.fields.includes('department') && renderField('department')}
-            {formErr && <p className="text-xs font-medium text-rose-600" role="alert">{formErr}</p>}
+            {formErr && <p className="text-xs font-medium text-rose-600 dark:text-rose-400" role="alert">{formErr}</p>}
             <button type="submit" className="w-full py-3 rounded-2xl text-white font-semibold text-sm shadow-lg" style={{ background: accent }}>
               {t('submit')}
             </button>
-            <button type="button" onClick={() => setStage('home')} className="w-full text-xs text-slate-400 underline">{t('dismiss')}</button>
+            <button type="button" onClick={() => setStage('home')} className="w-full text-xs text-slate-400 dark:text-slate-500 underline">{t('dismiss')}</button>
           </form>
         </div>
       )}
 
       {/* ========================== OFFLINE ========================== */}
       {stage === 'offline' && (
-        <div className="flex-1 overflow-y-auto slim-scroll px-5 py-6 bg-slate-50">
+        <div className="flex-1 overflow-y-auto slim-scroll px-5 py-6 bg-slate-50 dark:bg-slate-950">
           <BrandStrip />
           {offlineDone ? (
             <div className="text-center py-8">
               <div className="text-4xl mb-3" aria-hidden>✅</div>
-              <h1 className="text-lg font-bold text-slate-900">{t('offlineDone')}</h1>
-              <p className="text-sm text-slate-500 mt-1">{t('offlineDoneHint')}</p>
+              <h1 className="text-lg font-bold text-slate-900 dark:text-slate-50">{t('offlineDone')}</h1>
+              <p className="text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500 mt-1">{t('offlineDoneHint')}</p>
               <button onClick={() => setStage('home')} className="mt-5 text-sm font-semibold underline" style={{ color: accent }}>{t('dismiss')}</button>
             </div>
           ) : (
             <>
-              <h1 className="text-lg font-bold text-slate-900 text-center">{t('offlineTitle')}</h1>
-              <p className="text-sm text-slate-500 text-center mt-1 mb-5">{t('offlineHint')}</p>
+              <h1 className="text-lg font-bold text-slate-900 dark:text-slate-50 text-center">{t('offlineTitle')}</h1>
+              <p className="text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500 text-center mt-1 mb-5">{t('offlineHint')}</p>
               <form onSubmit={submitOffline} className="space-y-3.5">
                 {offlineCfg.fields.map(renderField)}
-                {formErr && <p className="text-xs font-medium text-rose-600" role="alert">{formErr}</p>}
+                {formErr && <p className="text-xs font-medium text-rose-600 dark:text-rose-400" role="alert">{formErr}</p>}
                 <button type="submit" disabled={sendingForm}
                   className="w-full py-3 rounded-2xl text-white font-semibold text-sm shadow-lg disabled:opacity-50" style={{ background: accent }}>
                   {sendingForm ? t('sending') : t('submit')}
                 </button>
-                <button type="button" onClick={() => setStage('home')} className="w-full text-xs text-slate-400 underline">{t('dismiss')}</button>
+                <button type="button" onClick={() => setStage('home')} className="w-full text-xs text-slate-400 dark:text-slate-500 underline">{t('dismiss')}</button>
               </form>
             </>
           )}
@@ -1102,25 +1137,25 @@ export default function WidgetPage() {
       {/* ============================ CHAT ============================ */}
       {stage === 'chat' && (
         <>
-          <div className="flex-1 overflow-y-auto slim-scroll px-4 py-4 space-y-3 bg-slate-50" role="log" aria-live="polite" aria-label={t('chatPanel')}>
+          <div className="flex-1 overflow-y-auto slim-scroll px-4 py-4 space-y-3 bg-slate-50 dark:bg-slate-950" role="log" aria-live="polite" aria-label={t('chatPanel')}>
             {msgs.map((m) => m.kind === 'transfer' ? (
               <div key={m.id} className="text-center">
-                <span className="inline-block text-[11px] text-slate-600 bg-slate-200/80 px-3 py-1.5 rounded-full">
+                <span className="inline-block text-[11px] text-slate-600 dark:text-slate-300 bg-slate-200/80 dark:bg-slate-700/60 px-3 py-1.5 rounded-full">
                   🔀 {t('transferredTo')}{m.transferTo ? ` ${m.transferTo}` : ''}{m.transferNote ? ` — ${t('transferNote')}: ${m.transferNote}` : ''}
                 </span>
               </div>
             ) : m.from === 'system' ? (
               <div key={m.id} className="text-center">
-                <span className="inline-block text-[11px] text-slate-500 bg-slate-200/70 px-3 py-1 rounded-full">{m.text}</span>
+                <span className="inline-block text-[11px] text-slate-500 dark:text-slate-400 dark:text-slate-500 bg-slate-200/70 dark:bg-slate-700/60 px-3 py-1 rounded-full">{m.text}</span>
               </div>
             ) : (
               <div key={m.id} className={cx('flex', m.from === 'visitor' ? 'justify-end' : 'justify-start')}>
                 <div className="max-w-[82%]">
-                  <div className={cx('px-3.5 py-2.5 text-[13.5px] leading-relaxed shadow-sm break-words', m.from === 'visitor' ? 'text-white' : 'bg-white text-slate-800 border border-slate-100')}
+                  <div className={cx('px-3.5 py-2.5 text-[13.5px] leading-relaxed shadow-sm break-words', m.from === 'visitor' ? 'text-white' : 'bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 border border-slate-100 dark:border-slate-800')}
                     style={{ borderRadius: radius, background: m.from === 'visitor' ? accent : undefined }}>
                     {m.text}
                   </div>
-                  <div className={cx('text-[10px] text-slate-400 mt-1', m.from === 'visitor' ? 'text-right' : 'text-left')}>
+                  <div className={cx('text-[10px] text-slate-400 dark:text-slate-500 mt-1', m.from === 'visitor' ? 'text-right' : 'text-left')}>
                     {fmtTime(m.ts)}
                   </div>
                 </div>
@@ -1128,9 +1163,9 @@ export default function WidgetPage() {
             ))}
             {showAgentTyping && (
               <div className="flex justify-start" aria-label="typing">
-                <div className="bg-white border border-slate-100 rounded-2xl px-4 py-3 shadow-sm flex gap-1.5">
+                <div className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl px-4 py-3 shadow-sm flex gap-1.5">
                   {[0, 1, 2].map((i) => (
-                    <span key={i} className="typing-dot w-1.5 h-1.5 rounded-full bg-slate-400 inline-block" />
+                    <span key={i} className="typing-dot w-1.5 h-1.5 rounded-full bg-slate-400 dark:bg-slate-500 inline-block" />
                   ))}
                 </div>
               </div>
@@ -1140,21 +1175,21 @@ export default function WidgetPage() {
 
           {/* proactive prompt bubbles */}
           {prompts.map((p) => (
-            <div key={p.id} className="px-4 pb-1 bg-slate-50 shrink-0">
-              <div className="relative bg-white border border-brix-200 rounded-2xl px-3.5 py-2.5 text-[13px] text-slate-800 shadow-md animate-fade-up" role="status"
+            <div key={p.id} className="px-4 pb-1 bg-slate-50 dark:bg-slate-950 shrink-0">
+              <div className="relative bg-white dark:bg-slate-900 border border-brix-200 dark:border-brix-700 rounded-2xl px-3.5 py-2.5 text-[13px] text-slate-800 dark:text-slate-100 shadow-md animate-fade-up" role="status"
                 style={hasBranding ? { borderColor: accent } : undefined}>
                 {p.text}
                 <button onClick={() => dismissPrompt(p.id, 'dismiss')}
-                  className="absolute -top-2 -end-2 w-6 h-6 rounded-full bg-slate-700 text-white text-xs grid place-items-center"
+                  className="absolute -top-2 -end-2 w-6 h-6 rounded-full bg-slate-700 dark:bg-slate-200 text-white dark:text-slate-900 text-xs grid place-items-center"
                   aria-label={t('dismiss')}>✕</button>
               </div>
             </div>
           ))}
 
           {/* input */}
-          <div className="p-3 border-t border-slate-100 bg-white shrink-0">
+          <div className="p-3 border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 shrink-0">
             {showEmoji && (
-              <div className="grid grid-cols-8 gap-1 mb-2 p-2 bg-slate-50 rounded-xl">
+              <div className="grid grid-cols-8 gap-1 mb-2 p-2 bg-slate-50 dark:bg-slate-950 rounded-xl">
                 {EMOJIS.map((e) => (
                   <button key={e} onClick={() => { setInput((v) => v + e); setShowEmoji(false); inputRef.current?.focus(); }}
                     className="text-xl hover:scale-125 transition-transform" aria-label={e}>{e}</button>
@@ -1162,8 +1197,8 @@ export default function WidgetPage() {
               </div>
             )}
             <div className="flex items-center gap-2">
-              <button onClick={() => setShowEmoji((v) => !v)} className="w-9 h-9 grid place-items-center rounded-full hover:bg-slate-100 text-lg shrink-0" aria-label={t('emojiBtn')} aria-expanded={showEmoji}>😊</button>
-              <button onClick={() => fileRef.current?.click()} className="w-9 h-9 grid place-items-center rounded-full hover:bg-slate-100 text-slate-500 shrink-0" aria-label={t('attachFile')}>📎</button>
+              <button onClick={() => setShowEmoji((v) => !v)} className="w-9 h-9 grid place-items-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 dark:bg-slate-800 text-lg shrink-0" aria-label={t('emojiBtn')} aria-expanded={showEmoji}>😊</button>
+              <button onClick={() => fileRef.current?.click()} className="w-9 h-9 grid place-items-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 dark:bg-slate-800 text-slate-500 dark:text-slate-400 dark:text-slate-500 shrink-0" aria-label={t('attachFile')}>📎</button>
               <input ref={fileRef} type="file" className="hidden" onChange={onFile} aria-hidden tabIndex={-1} />
               <input ref={inputRef}
                 value={input}
@@ -1171,7 +1206,7 @@ export default function WidgetPage() {
                 onKeyDown={(e) => e.key === 'Enter' && send(input)}
                 placeholder={t('typeMessage')}
                 aria-label={t('typeMessage')}
-                className="flex-1 min-w-0 px-3.5 py-2.5 rounded-full border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-brix-500/40 focus:border-brix-500"
+                className="flex-1 min-w-0 px-3.5 py-2.5 rounded-full border border-slate-200 dark:border-slate-700 text-sm outline-none focus:ring-2 focus:ring-brix-500/40 focus:border-brix-500"
               />
               <button onClick={() => send(input)} disabled={!input.trim()}
                 className="w-10 h-10 rounded-full grid place-items-center text-white disabled:opacity-40 shrink-0"
@@ -1181,9 +1216,9 @@ export default function WidgetPage() {
             </div>
             <div className="flex items-center justify-between mt-2 px-1">
               {w.show_branding ? (
-                <span className="text-[10px] text-slate-400">Powered by <span className="font-semibold text-slate-500">Brix Chat</span></span>
+                <span className="text-[10px] text-slate-400 dark:text-slate-500">Powered by <span className="font-semibold text-slate-500 dark:text-slate-400 dark:text-slate-500">Brix Chat</span></span>
               ) : <span />}
-              <button onClick={() => void endChat()} className="text-[10px] text-slate-400 hover:text-slate-600 underline">{t('endChat')}</button>
+              <button onClick={() => void endChat()} className="text-[10px] text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:text-slate-300 underline">{t('endChat')}</button>
             </div>
           </div>
         </>
@@ -1191,21 +1226,21 @@ export default function WidgetPage() {
 
       {/* ============================ ENDED + CSAT ============================ */}
       {stage === 'ended' && (
-        <div className="flex-1 overflow-y-auto slim-scroll px-5 py-6 bg-slate-50">
+        <div className="flex-1 overflow-y-auto slim-scroll px-5 py-6 bg-slate-50 dark:bg-slate-950">
           <div className="text-center mb-5">
             <div className="text-4xl mb-3" aria-hidden>👋</div>
-            <h1 className="text-lg font-bold text-slate-900">{t('chatEnded')}</h1>
-            <p className="text-sm text-slate-500 mt-1">{t('chatEndedHint')}</p>
+            <h1 className="text-lg font-bold text-slate-900 dark:text-slate-50">{t('chatEnded')}</h1>
+            <p className="text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500 mt-1">{t('chatEndedHint')}</p>
           </div>
           {rateStep !== 'done' ? (
-            <div className="bg-white rounded-2xl border border-slate-200 p-5">
-              <p className="text-[11px] font-bold uppercase tracking-widest text-slate-400 text-center mb-2">
+            <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
+              <p className="text-[11px] font-bold uppercase tracking-widest text-slate-400 dark:text-slate-500 text-center mb-2">
                 {t(rateStep === 'csat' ? 'step1of2' : 'step2of2')}
               </p>
               {rateStep === 'csat' ? (
                 <>
-                  <h2 className="text-sm font-bold text-slate-900 text-center">{t('csatTitle')}</h2>
-                  <p className="text-xs text-slate-500 text-center mt-1 mb-4">{t('csatHint')}</p>
+                  <h2 className="text-sm font-bold text-slate-900 dark:text-slate-50 text-center">{t('csatTitle')}</h2>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500 text-center mt-1 mb-4">{t('csatHint')}</p>
                   <div className="flex justify-center gap-2 mb-4" role="radiogroup" aria-label={t('csatTitle')}>
                     {[1, 2, 3, 4, 5].map((n) => (
                       <button key={n} onClick={() => setCsat(n)} role="radio" aria-checked={csat === n}
@@ -1219,33 +1254,33 @@ export default function WidgetPage() {
                       className="flex-1 py-2.5 rounded-xl text-white text-sm font-semibold disabled:opacity-40" style={{ background: accent }}>
                       {t('submit')}
                     </button>
-                    <button onClick={() => setRateStep('nps')} className="px-4 py-2.5 rounded-xl text-sm text-slate-500 hover:bg-slate-100">
+                    <button onClick={() => setRateStep('nps')} className="px-4 py-2.5 rounded-xl text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 dark:bg-slate-800">
                       {t('skip')}
                     </button>
                   </div>
                 </>
               ) : (
                 <>
-                  <h2 className="text-sm font-bold text-slate-900 text-center">{t('npsTitle')}</h2>
-                  <p className="text-xs text-slate-500 text-center mt-1 mb-4">{t('npsHint')}</p>
+                  <h2 className="text-sm font-bold text-slate-900 dark:text-slate-50 text-center">{t('npsTitle')}</h2>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500 text-center mt-1 mb-4">{t('npsHint')}</p>
                   <div className="grid grid-cols-11 gap-1 mb-4" role="radiogroup" aria-label={t('npsTitle')}>
                     {Array.from({ length: 11 }, (_, n) => (
                       <button key={n} onClick={() => setNps(n)} role="radio" aria-checked={nps === n}
                         className={cx('h-9 rounded-lg text-sm font-bold transition-colors',
-                          nps === n ? 'text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200')}
+                          nps === n ? 'text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700')}
                         style={nps === n ? { background: accent } : undefined}
                         aria-label={String(n)}>{n}</button>
                     ))}
                   </div>
                   <textarea value={ratingComment} onChange={(e) => setRatingComment(e.target.value)} rows={2}
                     placeholder={t('commentPh')} aria-label={t('commentPh')}
-                    className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-brix-500/40 resize-none mb-3" />
+                    className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-sm outline-none focus:ring-2 focus:ring-brix-500/40 resize-none mb-3" />
                   <div className="flex gap-2">
                     <button onClick={submitNps} disabled={nps < 0}
                       className="flex-1 py-2.5 rounded-xl text-white text-sm font-semibold disabled:opacity-40" style={{ background: accent }}>
                       {t('submit')}
                     </button>
-                    <button onClick={() => setRateStep('done')} className="px-4 py-2.5 rounded-xl text-sm text-slate-500 hover:bg-slate-100">
+                    <button onClick={() => setRateStep('done')} className="px-4 py-2.5 rounded-xl text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 dark:bg-slate-800">
                       {t('skip')}
                     </button>
                   </div>
@@ -1253,14 +1288,14 @@ export default function WidgetPage() {
               )}
             </div>
           ) : (
-            <div className="text-center text-sm font-semibold text-emerald-700 mb-5">{t('csatThanks')}</div>
+            <div className="text-center text-sm font-semibold text-emerald-700 dark:text-emerald-400 mb-5">{t('csatThanks')}</div>
           )}
           <button onClick={() => window.location.reload()}
-            className="w-full py-3 rounded-2xl bg-white border border-slate-200 font-semibold text-sm text-slate-700">
+            className="w-full py-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 font-semibold text-sm text-slate-700 dark:text-slate-200">
             💬 {t('newChat')}
           </button>
           {w.show_branding && (
-            <p className="text-center text-[10px] text-slate-400 mt-4">Powered by <span className="font-semibold text-slate-500">Brix Chat</span></p>
+            <p className="text-center text-[10px] text-slate-400 dark:text-slate-500 mt-4">Powered by <span className="font-semibold text-slate-500 dark:text-slate-400 dark:text-slate-500">Brix Chat</span></p>
           )}
         </div>
       )}

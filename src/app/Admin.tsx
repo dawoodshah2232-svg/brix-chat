@@ -22,9 +22,12 @@ import type {
   SignedPayload,
   TeamRole,
   WidgetConfig,
+  ApiIntegration,
 } from '../lib/api';
 import { Badge, Button, Card, EmptyState, Input, Label, Modal, Select, StatCard, Textarea, Toggle, useConfirm } from '../components/ui';
 import { cx } from '../lib/utils';
+import { INTEGRATION_REGISTRY, getIntegration, providerConfigured } from '../lib/integrations';
+import { testIntegration, supabaseEnabled, type IntegrationTestResult } from '../lib/integrationClient';
 import {
   asP2,
   fmtTs,
@@ -50,7 +53,7 @@ import type {
   HelpSeed,
 } from '../lib/contentSeed';
 
-type Tab = 'overview' | 'content' | 'properties' | 'branding' | 'ratings' | 'departments' | 'keys' | 'webhooks' | 'team' | 'audit' | 'install';
+type Tab = 'overview' | 'content' | 'properties' | 'branding' | 'ratings' | 'departments' | 'keys' | 'integrations' | 'webhooks' | 'team' | 'audit' | 'install';
 
 const TABS: Array<{ id: Tab; label: string; icon: string }> = [
   { id: 'overview', label: 'Overview', icon: '📊' },
@@ -60,6 +63,7 @@ const TABS: Array<{ id: Tab; label: string; icon: string }> = [
   { id: 'ratings', label: 'Ratings', icon: '⭐' },
   { id: 'departments', label: 'Departments', icon: '🏢' },
   { id: 'keys', label: 'API keys', icon: '🔑' },
+  { id: 'integrations', label: 'Integrations', icon: '🔌' },
   { id: 'webhooks', label: 'Webhooks', icon: '🪝' },
   { id: 'team', label: 'Team', icon: '👥' },
   { id: 'audit', label: 'Audit log', icon: '📜' },
@@ -500,6 +504,197 @@ function ApiKeysTab({ refresh }: { refresh: () => void }) {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Integrations (phase 3, Worker D)
+//
+// Per-provider connect cards: what it does, key fields, honest Test button
+// (local format validation + a clearly-labeled local stub until Supabase is
+// connected, then a real Edge Function call), enable toggle, connected
+// status, and the "wires into" mapping. Keys stay in this browser.
+// ---------------------------------------------------------------------------
+
+function IntegrationsTab({ readOnly }: { readOnly: boolean }) {
+  const api = useApi();
+  const [items, setItems] = useState<ApiIntegration[]>([]);
+  const [drafts, setDrafts] = useState<Record<string, Record<string, string>>>({});
+  const [revealed, setRevealed] = useState<Record<string, boolean>>({});
+  const [testing, setTesting] = useState<string | null>(null);
+  const [results, setResults] = useState<Record<string, IntegrationTestResult>>({});
+  const [savedAt, setSavedAt] = useState<Record<string, number>>({});
+
+  const load = async () => {
+    const { data } = await api.integrations.list();
+    setItems(data);
+    setDrafts((prev) => {
+      const next: Record<string, Record<string, string>> = {};
+      for (const i of data) next[i.id] = prev[i.id] ?? { ...(i.values || {}) };
+      return next;
+    });
+  };
+  useEffect(() => { void load(); }, []);
+
+  const setVal = (id: string, name: string, v: string) =>
+    setDrafts((d) => ({ ...d, [id]: { ...(d[id] || {}), [name]: v } }));
+
+  const save = async (id: string) => {
+    await api.integrations.patch(id, { values: drafts[id] || {} });
+    setSavedAt((s) => ({ ...s, [id]: Date.now() }));
+    await load();
+  };
+
+  const clearKeys = (id: string) => {
+    if (readOnly) return;
+    setDrafts((d) => ({ ...d, [id]: {} }));
+    void api.integrations.patch(id, { values: {} }).then(() => load());
+  };
+
+  const toggleEnabled = (id: string, v: boolean) => {
+    if (readOnly) return;
+    void api.integrations.patch(id, { enabled: v }).then(() => load());
+  };
+
+  const runTest = async (id: string) => {
+    const def = getIntegration(id);
+    if (!def) return;
+    setTesting(id);
+    try {
+      const r = await testIntegration(def, drafts[id] || {});
+      setResults((p) => ({ ...p, [id]: r }));
+    } finally {
+      setTesting(null);
+    }
+  };
+
+  const edgeLive = supabaseEnabled();
+
+  return (
+    <div>
+      <h2 className="font-display font-bold text-xl mb-1">Integrations</h2>
+      <p className="text-sm text-slate-500 mb-6">Connect third-party services. Each card shows where the provider plugs into Brix Chat and what the backend will do with its credentials.</p>
+      <Notice>
+        <span><strong>Local mode.</strong> Keys are stored locally in this demo. Live calls activate with the backend phase — the Test button says exactly what it checked.</span>
+      </Notice>
+
+      <div className="grid lg:grid-cols-2 gap-5">
+        {items.map((item) => {
+          const def = getIntegration(item.id) ?? INTEGRATION_REGISTRY.find((r) => r.id === item.id);
+          if (!def) return null;
+          const savedVals = item.values || {};
+          const configured = providerConfigured(def, savedVals);
+          const draft = drafts[item.id] || {};
+          const dirty = JSON.stringify(draft) !== JSON.stringify(savedVals);
+          const result = results[item.id];
+          return (
+            <Card key={item.id} className="p-5 flex flex-col">
+              <div className="flex items-start gap-3 mb-2">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-bold text-slate-900">{def.name}</span>
+                    {item.enabled ? <Badge tone="green">Enabled</Badge> : <Badge tone="slate">Disabled</Badge>}
+                    {configured ? <Badge tone="green">● Connected</Badge> : <Badge tone="amber">Not configured</Badge>}
+                    {def.status === 'local'
+                      ? <Badge tone="indigo">Local keys</Badge>
+                      : <Badge tone="amber">Backend phase</Badge>}
+                  </div>
+                  <p className="text-[13px] text-slate-600 mt-1.5">{def.description}</p>
+                </div>
+                <Toggle checked={item.enabled} onChange={(v) => toggleEnabled(item.id, v)} label={`Enable ${def.name}`} />
+              </div>
+
+              <div className="rounded-xl bg-slate-50 border border-slate-200/70 px-3.5 py-2.5 text-[13px] text-slate-700 space-y-1 mb-4">
+                <p><span className="font-semibold">🔌 Wires into:</span> {def.wiresInto}</p>
+                <p><span className="font-semibold">⚙️ Live call:</span>{' '}
+                  {def.edgeFunction ? (
+                    <code className="font-mono text-[12px] bg-white border border-slate-200 rounded px-1.5 py-0.5">POST /functions/v1/{def.edgeFunction}</code>
+                  ) : (
+                    <span className="text-slate-500">no Edge Function documented yet</span>
+                  )}{' '}— {def.liveCall}</p>
+              </div>
+
+              <div className="space-y-3 mb-4">
+                {def.keyFields.map((f) => (
+                  <div key={f.name}>
+                    <Label>{f.label}</Label>
+                    <div className="relative">
+                      <Input
+                        type={f.secret && !revealed[item.id] ? 'password' : 'text'}
+                        value={draft[f.name] || ''}
+                        onChange={(e) => setVal(item.id, f.name, e.target.value)}
+                        placeholder={f.placeholder}
+                        disabled={readOnly}
+                        autoComplete="off"
+                        spellCheck={false}
+                        className={f.secret ? 'pr-16 font-mono' : 'font-mono'}
+                      />
+                      {f.secret && (
+                        <button
+                          type="button"
+                          onClick={() => setRevealed((r) => ({ ...r, [item.id]: !r[item.id] }))}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 text-xs font-semibold text-slate-500 hover:text-slate-700"
+                        >
+                          {revealed[item.id] ? 'Hide' : 'Show'}
+                        </button>
+                      )}
+                    </div>
+                    {f.format && <p className="text-[11px] text-slate-400 mt-1">{f.format.note}</p>}
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 mt-auto">
+                <Button size="sm" onClick={() => void save(item.id)} disabled={readOnly || !dirty}>
+                  {savedAt[item.id] && !dirty ? '✓ Saved' : 'Save keys'}
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => clearKeys(item.id)} disabled={readOnly || Object.keys(savedVals).length === 0} className="text-rose-600">
+                  Clear
+                </Button>
+                <Button size="sm" variant="secondary" onClick={() => void runTest(item.id)} disabled={testing === item.id}>
+                  {testing === item.id ? 'Testing…' : 'Test'}
+                </Button>
+                <span className="text-[11px] text-slate-400 ml-auto">
+                  {edgeLive && def.edgeFunction
+                    ? 'Supabase connected — Test dry-runs the Edge Function (no side effects).'
+                    : 'Local stub — Test validates key format only.'}
+                </span>
+              </div>
+
+              {result && (
+                <div className={cx('mt-4 rounded-xl border px-3.5 py-3 text-[13px]', result.ok ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50')}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <Badge tone={result.mode === 'edge' ? 'indigo' : 'amber'}>
+                      {result.mode === 'edge' ? 'LIVE EDGE TEST' : 'LOCAL STUB'}
+                    </Badge>
+                    <span className={cx('font-semibold', result.ok ? 'text-emerald-800' : 'text-amber-800')}>
+                      {result.ok ? '✓ Passed' : '✗ Needs attention'}
+                    </span>
+                  </div>
+                  <ul className="space-y-1 mb-2">
+                    {result.checks.map((c) => (
+                      <li key={c.field} className={cx('flex gap-2', c.ok ? 'text-emerald-800' : 'text-amber-800')}>
+                        <span aria-hidden>{c.ok ? '✓' : '✗'}</span>
+                        <span>{c.message}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  <p className={result.ok ? 'text-emerald-800' : 'text-amber-800'}>{result.summary}</p>
+                  {result.detail && <p className="font-mono text-[11px] text-slate-500 mt-1.5 break-all">{result.detail}</p>}
+                </div>
+              )}
+            </Card>
+          );
+        })}
+      </div>
+
+      <p className="text-xs text-slate-400 mt-6">
+        Endpoint names follow <span className="font-mono">supabase/README.md</span> (backend phase):
+        {' '}<span className="font-mono">ai-copilot</span> (OpenAI, Anthropic), <span className="font-mono">send-email</span> (Resend),
+        {' '}<span className="font-mono">webhook-dispatcher</span> (Zapier). Providers with no documented function yet
+        get local format validation only — stated on the card. Saved keys never leave this browser today.
+      </p>
     </div>
   );
 }
@@ -1823,7 +2018,7 @@ function BrandingTab({ readOnly }: { readOnly: boolean }) {
         logo_data_url: s.logo_data_url, brand_name: s.brand_name, tagline: s.tagline,
         accent_color: s.accent_color, custom_domain: s.custom_domain,
         custom_subdomain: (s.custom_subdomain || '').trim().toLowerCase(),
-        widget_color: s.widget_color,
+        widget_color: s.widget_color, theme: s.theme,
       });
       setSaved(true);
     } catch (e) { setError(errMsg(e)); }
@@ -1926,6 +2121,15 @@ function BrandingTab({ readOnly }: { readOnly: boolean }) {
                     <Input value={s.accent_color || ''} onChange={(e) => patch('accent_color', e.target.value)} disabled={readOnly} className="font-mono" />
                   </div>
                 </div>
+              </div>
+              <div className="mt-4 max-w-sm">
+                <Label>Widget theme</Label>
+                <Select value={s.theme || 'light'} onChange={(e) => patch('theme', e.target.value)} disabled={readOnly} className="w-full">
+                  <option value="light">Light</option>
+                  <option value="dark">Dark</option>
+                  <option value="auto">Auto — follow the visitor's device</option>
+                </Select>
+                <p className="text-xs text-slate-400 mt-1.5">Dark re-skins the whole widget — chat, forms, prompts, ratings. Saved per property.</p>
               </div>
             </Card>
 
@@ -2814,6 +3018,7 @@ export default function Admin() {
           {tab === 'ratings' && <RatingsTab />}
           {tab === 'departments' && <DepartmentsTab readOnly={readOnly} />}
           {tab === 'keys' && <ApiKeysTab refresh={refresh} />}
+          {tab === 'integrations' && <IntegrationsTab readOnly={readOnly} />}
           {tab === 'webhooks' && <WebhooksTab refresh={refresh} />}
           {tab === 'team' && <TeamTab refresh={refresh} readOnly={readOnly} />}
           {tab === 'audit' && <AuditTab />}

@@ -664,6 +664,8 @@ export interface PropertySettings2 {
   // they persist, and the adapter carries them here.
   logo_data_url: string | null; brand_name: string; tagline: string;
   accent_color: string; custom_domain: string; custom_subdomain: string;
+  // Widget color scheme: 'light' | 'dark' | 'auto' — honored by the widget (phase 3, Worker D).
+  theme: string;
   // Routing: default department for "when chat starts → route to department X".
   default_department_id: string;
 }
