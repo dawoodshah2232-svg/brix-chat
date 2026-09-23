@@ -25,6 +25,8 @@ export interface InternalNote {
 
 export type ConvStatus = 'open' | 'closed' | 'spam' | 'missed';
 
+export type ConvPriority = 'low' | 'medium' | 'high' | 'urgent';
+
 export interface Conversation {
   id: string;
   visitor: string;
@@ -45,6 +47,8 @@ export interface Conversation {
   createdAt: number;
   updatedAt: number;
   live?: boolean; // simulated live visitor (bot keeps chatting)
+  priority?: ConvPriority; // phase 2: inbox priority flag
+  snoozeUntil?: number; // phase 2: local snooze — hidden from inbox until this timestamp
 }
 
 export interface Visitor {
@@ -84,6 +88,8 @@ export interface Article {
   status: 'draft' | 'published';
   updatedAt: number;
   views: number;
+  helpful?: number; // phase 2: "was this helpful" up-votes
+  notHelpful?: number; // phase 2: down-votes
 }
 
 export interface Canned {
@@ -91,6 +97,9 @@ export interface Canned {
   shortcut: string;
   title: string;
   body: string;
+  shared?: boolean; // phase 2: false = personal to owner
+  owner?: string; // phase 2: display name of the personal owner
+  usage?: number; // phase 2: times inserted from the inbox
 }
 
 export interface TriggerRule {
@@ -100,6 +109,28 @@ export interface TriggerRule {
   conditions: string[];
   action: string;
   enabled: boolean;
+  // phase 2: visual step-builder fields (legacy rules keep conditions/action)
+  event?: TriggerEvent;
+  conditionGroups?: TriggerConditionGroup[];
+  actions?: TriggerAction[];
+}
+
+export type TriggerEvent = 'chat.started' | 'message.received' | 'visitor.idle' | 'page.viewed' | 'chat.missed';
+
+export interface TriggerCondition {
+  field: 'page_url' | 'time_on_page' | 'cart_value' | 'message_contains' | 'contact_tag' | 'department';
+  op: 'contains' | 'equals' | 'greater_than' | 'less_than' | 'is';
+  value: string;
+}
+
+export interface TriggerConditionGroup {
+  op: 'and' | 'or';
+  conditions: TriggerCondition[];
+}
+
+export interface TriggerAction {
+  kind: 'message' | 'assign' | 'tag' | 'priority' | 'campaign' | 'ticket';
+  value: string;
 }
 
 export interface Campaign {
@@ -109,6 +140,10 @@ export interface Campaign {
   message: string;
   schedule: string;
   status: 'draft' | 'scheduled' | 'sent';
+  // phase 2: scheduling + audience rules + goal tracking
+  scheduleAt?: number; // timestamp for "send later"
+  audienceRules?: { urlContains?: string; visitorType?: 'any' | 'new' | 'returning'; tags?: string[] };
+  goalId?: string;
 }
 
 export interface TeamMember {
@@ -136,6 +171,12 @@ export interface OnlineSegment {
   enabled: boolean;
 }
 
+export interface NotifyPrefs {
+  sound: boolean;
+  desktopBell: boolean;
+  events: Record<string, boolean>; // event key -> enabled
+}
+
 export interface Settings {
   widget: WidgetSettings;
   departments: string[];
@@ -144,6 +185,7 @@ export interface Settings {
   whiteLabel: boolean;
   aiEnabled: boolean;
   notifySound: boolean;
+  notifyPrefs?: NotifyPrefs; // phase 2
 }
 
 export type MemberRole = 'admin' | 'agent' | 'developer' | 'viewer';

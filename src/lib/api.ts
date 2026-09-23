@@ -9,6 +9,8 @@
 // LOCAL-ONLY: all data lives in this browser's localStorage. There is no
 // cross-device sync until a backend phase lands.
 
+import { INTEGRATION_REGISTRY } from './integrations';
+
 export interface Envelope<T> {
   data: T;
 }
@@ -67,6 +69,7 @@ export interface ApiConversation {
   agent_id: string | null;
   agent_name: string | null;
   tags: string[];
+  priority: TicketPriority;
   notes: ConvNote[];
   rating: number | null;
   unread: number;
@@ -122,6 +125,8 @@ export interface ApiAgent {
   last_login_at: string | null;
 }
 
+export type TicketPriority = 'low' | 'medium' | 'high' | 'urgent';
+
 export interface ApiTicket {
   id: string;
   property_id: string | null;
@@ -130,6 +135,12 @@ export interface ApiTicket {
   requester_email: string;
   message: string;
   status: TicketStatus;
+  priority: TicketPriority;
+  assignee_id: string | null;
+  sla_due: string | null; // ISO timestamp or null
+  conversation_id: string | null;
+  tags: string[];
+  category_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -140,6 +151,7 @@ export interface ApiArticle {
   slug: string;
   body: string;
   category: string;
+  category_id: string | null;
   status: 'draft' | 'published';
   views: number;
   updated_at: string;
@@ -150,6 +162,7 @@ export interface ApiCanned {
   shortcut: string;
   title: string;
   body: string;
+  category_id: string | null;
 }
 
 export interface ApiWebhook {
@@ -200,6 +213,212 @@ export interface AuditEntry {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 2 — new domain types (timestamps are ISO strings, matching this
+// file's existing convention; spec §9 shows numbers — see worker report)
+// ---------------------------------------------------------------------------
+
+export interface ApiNotification {
+  id: string;
+  type: 'chat.assigned' | 'ticket.sla' | 'ticket.created' | 'campaign.sent' | 'mention' | 'system';
+  title: string;
+  body: string;
+  link: string | null;
+  read: boolean;
+  created_at: string;
+}
+
+export interface ApiRating {
+  id: string;
+  property_id: string;
+  conversation_id: string | null;
+  agent_id: string | null;
+  kind: 'csat' | 'nps';
+  score: number;
+  comment: string;
+  created_at: number;
+}
+
+export interface ApiDepartment {
+  id: string;
+  property_id: string;
+  name: string;
+  description: string;
+  agent_ids: string[];
+  routing_mode: 'round-robin' | 'least-busy' | 'first-available';
+  hours_override: Array<{ day: number; open: string; close: string }> | null;
+  offline_behavior: 'ticket' | 'message' | 'hide';
+  created_at: number;
+}
+
+export interface ApiCategory {
+  id: string;
+  scope: 'kb' | 'canned' | 'tickets';
+  property_id: string;
+  name: string;
+  color: string;
+  created_at: number;
+}
+
+export interface ApiSavedView {
+  id: string;
+  name: string;
+  filters: { status?: string; priority?: string; tag?: string; assignee?: string; unreadOnly?: boolean };
+  created_at: string;
+}
+
+export type PlayStepKind = 'reply' | 'tag' | 'assign' | 'priority' | 'note';
+export interface ApiPlayStep { kind: PlayStepKind; value: string; }
+export interface ApiPlay {
+  id: string;
+  name: string;
+  steps: ApiPlayStep[];
+  created_at: string;
+}
+
+export interface ApiGoal {
+  id: string;
+  name: string;
+  event: string;
+  revenue: number;
+  created_at: string;
+}
+
+export interface ApiGoalEvent {
+  id: string;
+  goal_id: string;
+  conversation_id: string | null;
+  value: number;
+  created_at: string;
+}
+
+export interface ApiBlogPost {
+  id: string;
+  slug: string;
+  title: string;
+  excerpt: string;
+  body: string;
+  tags: string[];
+  author: string;
+  published: boolean;
+  reading_mins: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ApiHelpArticle {
+  id: string;
+  slug: string;
+  title: string;
+  body: string;
+  category: string;
+  order: number;
+  updated_at: string;
+}
+
+export interface ApiContactMessage {
+  id: string;
+  name: string;
+  email: string;
+  subject: string;
+  message: string;
+  read: boolean;
+  created_at: string;
+}
+
+export interface ApiStatusEntry {
+  id: string;
+  title: string;
+  detail: string;
+  state: 'operational' | 'degraded' | 'incident';
+  created_at: string;
+}
+
+export interface ApiMember {
+  id: string;
+  display_name: string;
+  initials: string;
+  color: string;
+  role: TeamRole;
+  passcode: string;
+  last_login: string | null;
+  status: 'online' | 'away' | 'offline';
+  job_title: string;
+  avatar_data_url: string | null;
+  department_ids: string[];
+  created_at: string;
+}
+
+export interface ApiUnanswered {
+  id: string;
+  question: string;
+  conversation_id: string | null;
+  count: number;
+  dismissed: boolean;
+  created_at: string;
+}
+
+export interface ApiIntegration {
+  id: string;
+  name: string;
+  description: string;
+  fields: Array<{ name: string; label: string; secret: boolean }>;
+  values: Record<string, string>;
+  enabled: boolean;
+  phase: 'local' | 'backend';
+}
+
+export interface PropertySettings {
+  greeting_online: string;
+  greeting_away: string;
+  greeting_offline: string;
+  offline_form_enabled: boolean;
+  offline_form_fields: string[];
+  prechat_enabled: boolean;
+  prechat_fields: string[];
+  departments: Array<{ id: string; name: string }>;
+  business_hours: Array<{ day: number; open: string; close: string }>;
+  timezone: string;
+  blocked: string[];
+  widget_color: string;
+  // Branding (primary styling still comes from widget_color)
+  brand_name: string;
+  tagline: string;
+  logo_data_url: string | null;
+  theme: string;
+  accent_color: string;
+  widget_position: 'bottom-right' | 'bottom-left';
+  launcher_style: 'bubble' | 'bar';
+  language: string;
+  booking_url: string;
+}
+
+export interface CopilotSettings {
+  tone: 'friendly' | 'professional' | 'concise';
+  autosuggest: boolean;
+  summarize: boolean;
+  translate: boolean;
+  sources: string[];
+  provider: 'local' | 'openai' | 'anthropic';
+}
+
+export interface SecuritySettings {
+  session_timeout_mins: number;
+  passcode_min_len: number;
+  passcode_expiry_days: number;
+}
+
+export interface DataSettings {
+  retention_days: number;
+  auto_purge: boolean;
+}
+
+export interface GoalFunnel {
+  visitors: number;
+  chats: number;
+  goals: Array<{ goal: ApiGoal; count: number; revenue: number }>;
+}
+
+// ---------------------------------------------------------------------------
 // Catalogs (shared with UI + docs)
 // ---------------------------------------------------------------------------
 
@@ -216,6 +435,11 @@ export const WEBHOOK_EVENTS: Array<{ name: string; description: string }> = [
   { name: 'contact.updated', description: 'Contact record updated' },
   { name: 'satisfaction.received', description: 'Visitor submits a post-chat rating' },
   { name: 'widget.opened', description: 'Visitor opens the chat widget' },
+  { name: 'ticket.sla_breached', description: 'A ticket passed its SLA due time unresolved' },
+  { name: 'campaign.sent', description: 'A campaign finished sending' },
+  { name: 'goal.completed', description: 'A tracked goal event fired' },
+  { name: 'widget.rating', description: 'Visitor rates the widget experience' },
+  { name: 'rating.created', description: 'Visitor submits a CSAT or NPS rating' },
 ];
 
 export const API_SCOPES: Array<{ name: string; description: string }> = [
@@ -253,6 +477,27 @@ interface ApiDB {
   apiKeys: ApiKeyRecord[];
   fullKeys: Record<string, string>; // key id -> full key (local-only, shown once)
   audit: AuditEntry[];
+  // phase 2
+  notifications: ApiNotification[];
+  ratings: ApiRating[];
+  departments: ApiDepartment[];
+  routing_counters: Record<string, number>; // department id -> round-robin counter
+  categories: ApiCategory[];
+  views: ApiSavedView[];
+  plays: ApiPlay[];
+  goals: ApiGoal[];
+  goalEvents: ApiGoalEvent[];
+  blogPosts: ApiBlogPost[];
+  helpDocs: ApiHelpArticle[];
+  contactMessages: ApiContactMessage[];
+  statusEntries: ApiStatusEntry[];
+  members: ApiMember[];
+  unanswered: ApiUnanswered[];
+  integrations: ApiIntegration[];
+  propertySettings: Record<string, PropertySettings>;
+  copilotSettings: CopilotSettings;
+  securitySettings: SecuritySettings;
+  dataSettings: DataSettings;
 }
 
 type DBMap = Record<string, ApiDB>;
@@ -286,6 +531,226 @@ function defaultWidgetConfig(): WidgetConfig {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Phase 2 seeds
+// ---------------------------------------------------------------------------
+
+function memberInitials(name: string): string {
+  return name.split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
+}
+
+function seedMembers(): ApiMember[] {
+  const now = isoNow();
+  return [
+    { id: uid('mem'), display_name: 'Demo Agent', initials: 'DA', color: '#4f46e5', role: 'admin', passcode: '3456', last_login: now, status: 'online', job_title: 'Support Lead', avatar_data_url: null, department_ids: [], created_at: now },
+    { id: uid('mem'), display_name: 'Sara', initials: 'S', color: '#0891b2', role: 'agent', passcode: '1111', last_login: null, status: 'offline', job_title: '', avatar_data_url: null, department_ids: [], created_at: now },
+    { id: uid('mem'), display_name: 'Omar', initials: 'O', color: '#f59e0b', role: 'viewer', passcode: '2222', last_login: null, status: 'offline', job_title: '', avatar_data_url: null, department_ids: [], created_at: now },
+  ];
+}
+
+/** Demo departments for the demo property; agent_ids reference member ids. */
+function seedDepartments(propId: string, members: ApiMember[]): ApiDepartment[] {
+  const now = Date.now();
+  const lead = members[0]?.id ?? '';
+  const agentIds = lead ? [lead] : [];
+  const defs: Array<[string, string, ApiDepartment['routing_mode'], ApiDepartment['offline_behavior']]> = [
+    ['Sales', 'Pricing, plans and demos.', 'round-robin', 'ticket'],
+    ['Support', 'Product help and troubleshooting.', 'least-busy', 'message'],
+    ['Billing', 'Invoices, refunds and payments.', 'first-available', 'ticket'],
+  ];
+  return defs.map(([name, description, routing_mode, offline_behavior]) => ({
+    id: uid('dep'), property_id: propId, name, description, agent_ids: agentIds,
+    routing_mode, hours_override: null, offline_behavior, created_at: now,
+  }));
+}
+
+function defaultPropertySettings(): PropertySettings {
+  return {
+    greeting_online: 'Hi there! How can we help you today?',
+    greeting_away: 'We stepped away for a moment — leave a message and we will be right back.',
+    greeting_offline: 'We are offline right now — leave a message and we will reply soon.',
+    offline_form_enabled: true,
+    offline_form_fields: ['name', 'email', 'message'],
+    prechat_enabled: false,
+    prechat_fields: ['name', 'email'],
+    departments: [
+      { id: 'sales', name: 'Sales' },
+      { id: 'support', name: 'Support' },
+      { id: 'billing', name: 'Billing' },
+    ],
+    business_hours: [
+      { day: 1, open: '09:00', close: '18:00' },
+      { day: 2, open: '09:00', close: '18:00' },
+      { day: 3, open: '09:00', close: '18:00' },
+      { day: 4, open: '09:00', close: '18:00' },
+      { day: 5, open: '09:00', close: '18:00' },
+    ],
+    timezone: 'Asia/Dubai',
+    blocked: [],
+    widget_color: '#4f46e5',
+    brand_name: 'Brix Chat',
+    tagline: 'Chat with us — we reply fast.',
+    logo_data_url: null,
+    theme: 'light',
+    accent_color: '#4f46e5',
+    widget_position: 'bottom-right',
+    launcher_style: 'bubble',
+    language: 'en',
+    booking_url: '',
+  };
+}
+
+function seedIntegrations(): ApiIntegration[] {
+  return INTEGRATION_REGISTRY.map((r) => ({
+    id: r.id,
+    name: r.name,
+    description: r.description,
+    fields: r.keyFields.map((f) => ({ name: f.name, label: f.label, secret: f.secret })),
+    values: {},
+    enabled: r.enabled,
+    phase: r.status,
+  }));
+}
+
+function seedStatusEntries(): ApiStatusEntry[] {
+  const now = isoNow();
+  return [
+    { id: uid('st'), title: 'All systems operational', detail: 'Chat, tickets and automations are running normally.', state: 'operational', created_at: now },
+  ];
+}
+
+function seedGoals(): ApiGoal[] {
+  const now = isoNow();
+  return [
+    { id: uid('goal'), name: 'Checkout completed', event: 'purchase', revenue: 99, created_at: now },
+    { id: uid('goal'), name: 'Trial signup', event: 'signup', revenue: 0, created_at: now },
+  ];
+}
+
+function seedPlays(): ApiPlay[] {
+  const now = isoNow();
+  return [
+    {
+      id: uid('play'), name: 'Qualify + route sales', created_at: now,
+      steps: [
+        { kind: 'reply', value: 'Thanks for reaching out! To point you at the right person — are you evaluating for a team or just yourself?' },
+        { kind: 'tag', value: 'qualified' },
+        { kind: 'assign', value: 'Sales' },
+        { kind: 'priority', value: 'high' },
+        { kind: 'note', value: 'Qualified via play: sent intro question, routed to Sales.' },
+      ],
+    },
+    {
+      id: uid('play'), name: 'VIP fast-track', created_at: now,
+      steps: [
+        { kind: 'priority', value: 'urgent' },
+        { kind: 'tag', value: 'vip' },
+        { kind: 'reply', value: 'You are on our priority list — a senior agent is joining this chat right now.' },
+      ],
+    },
+  ];
+}
+
+function seedUnanswered(): ApiUnanswered[] {
+  const now = isoNow();
+  return [
+    { id: uid('unq'), question: 'Do you offer SSO / SAML login on the free plan?', conversation_id: null, count: 3, dismissed: false, created_at: now },
+    { id: uid('unq'), question: 'Can the widget be hidden on the checkout page?', conversation_id: null, count: 2, dismissed: false, created_at: now },
+  ];
+}
+
+/** Demo CSAT + NPS ratings for the demo property (numeric created_at timestamps). */
+function seedRatings(propId: string, convs: ApiConversation[], agents: ApiAgent[]): ApiRating[] {
+  const DAY = 86400000;
+  const base = Date.now();
+  const rows: Array<[number, 'csat' | 'nps', number, string, number, number | null]> = [
+    // [daysAgo, kind, score, comment, convIdx (-1 = none), agentIdx (null = none)]
+    [1, 'csat', 5, 'Super helpful, solved in minutes!', 2, 0],
+    [2, 'nps', 9, 'Great product, telling my team.', -1, null],
+    [4, 'csat', 4, '', 2, 0],
+    [6, 'nps', 10, '', -1, null],
+    [8, 'csat', 5, 'Fast and friendly.', 0, 0],
+    [11, 'csat', 2, 'Waited too long for a reply.', 1, null],
+    [14, 'nps', 6, 'Good but onboarding was confusing.', -1, null],
+    [18, 'csat', 5, '', 2, 1],
+    [23, 'nps', 8, '', -1, null],
+    [29, 'csat', 3, 'Okay, but took a while.', 0, 0],
+  ];
+  return rows.map(([daysAgo, kind, score, comment, convIdx, agentIdx], i) => ({
+    id: uid('rt'),
+    property_id: propId,
+    conversation_id: convIdx >= 0 && convs[convIdx] ? convs[convIdx].id : null,
+    agent_id: agentIdx !== null && agents[agentIdx] ? agents[agentIdx].id : null,
+    kind,
+    score,
+    comment,
+    created_at: Math.floor(base - daysAgo * DAY - ((i * 7) % 12) * 3600000),
+  }));
+}
+
+function seedBlogPosts(): ApiBlogPost[] {
+  const now = isoNow();
+  const posts: Array<[string, string, string, string, string[], string, number]> = [
+    ['why-visitors-leave-without-asking', 'Why visitors leave without asking: the 30-second support gap',
+      'Most visitors decide within half a minute whether asking for help is worth it. Here is how to close that gap.',
+      'A visitor lands on your pricing page with one question. They look for a way to ask, do not see it in five seconds, and bounce to a competitor whose chat bubble is already open.\n\nThe gap is not about staffing — it is about visibility. A chat launcher that appears after a short delay, plus one well-timed proactive nudge at 30–45 seconds on high-intent pages, catches the visitors who would otherwise leave silently.\n\nMeasure it: count chats started per 100 pricing-page visits before and after adding the nudge. Teams that do this usually see the number double.',
+      ['strategy', 'conversion'], 'Brix Team', 4],
+    ['pre-chat-forms-3-fields', 'Pre-chat forms: the 3 fields that qualify and the 5 that kill conversion',
+      'Name, email and the question itself are all you need. Everything else costs you chats.',
+      'A pre-chat form exists for one reason: to route the conversation well. Name and email let you follow up; the question (or topic picker) lets you route.\n\nThe five that kill conversion: phone number, company size, job title, budget range, and "how did you hear about us". Each extra field measurably lowers the chance a visitor starts a chat.\n\nRule of thumb: if a field does not change what the agent does in the first 30 seconds, collect it later in the conversation.',
+      ['conversion', 'playbooks'], 'Brix Team', 5],
+    ['canned-responses-that-dont-sound-canned', 'Canned responses that don’t sound canned',
+      'Variables, one editable sentence, and a human review turn templates into conversations.',
+      'The trick is structure, not wording. Start every canned reply with the visitor’s name via a variable, keep the middle sentence fixed, and end with one open question the agent personalizes.\n\nExample: "Hi {{visitor}}! I checked your order — it shipped this morning and arrives Thursday. Want me to text you the tracking link?"\n\nAudit your canned library monthly. Any reply agents consistently edit before sending is a reply that needs rewriting.',
+      ['team', 'playbooks'], 'Brix Team', 4],
+    ['chat-to-ticket-handoff', 'From chat to ticket: a clean handoff playbook',
+      'When a chat cannot be solved live, the handoff to a ticket should carry the full context with it.',
+      'Bad handoff: "I have created a ticket, someone will email you." Good handoff: a ticket created from the chat, carrying the transcript, the visitor’s details, a priority, and an SLA the visitor can see.\n\nThree rules: create the ticket while the visitor is still there, tell them the expected first-update time, and assign an owner — unowned tickets rot.\n\nIn Brix Chat, one click converts a chat into a ticket with the transcript attached and the SLA timer already running.',
+      ['tickets', 'playbooks'], 'Brix Team', 6],
+    ['csat-lagging-indicator', 'CSAT is a lagging indicator — measure first response instead',
+      'By the time CSAT drops, the damage is done. First-response time tells you trouble is coming.',
+      'CSAT measures how a conversation ended, days or hours after the moment that mattered. First-response time measures the moment itself: the seconds between a visitor’s first message and a human (or bot) reply.\n\nSet a target — say 60 seconds — and watch the percentage of chats answered inside it. When that number slips, CSAT will follow within a week. Fix staffing or add an auto-reply before the scores move.\n\nTrack both, but manage to first response.',
+      ['analytics', 'metrics'], 'Brix Team', 4],
+    ['proactive-chat-without-creepy', 'Proactive chat without being creepy: timing rules that work',
+      'One nudge per visit, after real engagement, on a page that signals intent.',
+      'The creepiness line is simple: did the visitor do something first? Page viewed, scrolled, added to cart, lingered — those are invitations. A bubble that opens on page load is an interruption.\n\nWorking defaults: pricing page, 45+ seconds on page → "Questions about plans? I can compare them for you." Cart over $100, idle 60 seconds → checkout help. Once per visit, always dismissible.\n\nTest one rule at a time for a week. If the reply rate is under 5%, the timing or the copy is wrong — not the channel.',
+      ['proactive', 'conversion'], 'Brix Team', 5],
+    ['unanswered-questions-log', 'The unanswered-questions log: turning misses into help articles',
+      'Every question your team could not answer is a help article waiting to be written.',
+      'Support teams lose the same knowledge twice: first when an agent cannot answer, then when nobody records what was asked.\n\nThe fix is a log. Every unanswered question gets recorded with a count of how often it appears. Once a question hits three occurrences, it graduates into a draft help article.\n\nTeams that run this loop for a quarter cut repeat questions by a third — because the articles start answering before the chat starts.',
+      ['knowledge', 'process'], 'Brix Team', 4],
+    ['local-first-support-software', 'Local-first support software: what stays in your browser and why',
+      'Your conversations live in your browser — not on a server you cannot see.',
+      'Most support tools upload every conversation to their cloud the moment it happens. Local-first software flips that: your workspace data lives in your browser’s storage, and nothing leaves the device until you choose to connect a backend.\n\nWhat that means in practice: no account can leak your chats in a breach, demos work offline, and you can export or wipe everything with one click.\n\nThe trade-off is honest: one browser, one dataset, no cross-device sync — until the backend phase arrives and you flip the switch yourself.',
+      ['product', 'privacy'], 'Brix Team', 5],
+  ];
+  return posts.map(([slug, title, excerpt, body, tags, author, reading_mins]) => ({
+    id: uid('post'), slug, title, excerpt, body, tags, author, published: true, reading_mins,
+    created_at: now, updated_at: now,
+  }));
+}
+
+function seedHelpDocs(): ApiHelpArticle[] {
+  const now = isoNow();
+  const docs: Array<[string, string, string, string, number]> = [
+    ['create-workspace', 'Create your workspace', 'Signup takes under a minute: pick a workspace name, choose a display name, and set a passcode. That passcode is your login — share individual passcodes with teammates from the team settings.', 'Getting started', 1],
+    ['install-widget', 'Install the widget', 'Copy the embed snippet from Settings → Embed code and paste it before the closing </body> tag of your site. The chat bubble appears immediately; no build step needed.', 'Getting started', 2],
+    ['invite-team', 'Invite your team', 'Go to Settings → Team, add a member name, and share their passcode. Roles control what each person can see: admin, agent, developer, or viewer.', 'Getting started', 3],
+    ['first-chat', 'Handle your first chat', 'Open the Inbox, pick an open conversation, and reply in the composer. Use canned responses (type /) for common answers, add internal notes, and resolve the chat when done.', 'Getting started', 4],
+    ['pre-chat-form', 'Set up the pre-chat form', 'Property settings → Pre-chat lets you ask for name and email before the chat starts. Keep it to three fields or fewer — every extra field lowers the number of chats started.', 'How-to', 5],
+    ['triggers', 'Build a trigger', 'Triggers → New rule: pick an event (chat started, message received…), add condition groups with AND/OR, then attach actions like send message, assign, or tag. Use Test run to simulate before enabling.', 'How-to', 6],
+    ['campaigns', 'Schedule a campaign', 'Campaigns → New campaign: write the message, add audience rules (page URL, new vs returning, tags), pick a goal to track, and schedule it for later or send now.', 'How-to', 7],
+    ['tickets', 'Work with tickets', 'Tickets are created from the offline form, missed chats, or one click from any chat. Set priority, assign an owner, and watch the SLA timer — overdue tickets highlight in red.', 'How-to', 8],
+    ['webhooks', 'Connect webhooks', 'Developers → Webhooks: add your endpoint URL, subscribe to events, and test-fire a signed sample payload before going live.', 'How-to', 9],
+    ['api-keys', 'Create API keys', 'Developers → API keys: create a key with only the scopes it needs. The full key is shown once — store it somewhere safe.', 'How-to', 10],
+    ['canned-variables', 'Use variables in canned replies', 'In any canned response, use {{visitor}} for the visitor’s name, {{agent}} for yours, {{date}} for today, and {{property}} for the site name. They are replaced when the reply is inserted.', 'How-to', 11],
+    ['keyboard-shortcuts', 'Keyboard shortcuts', 'Press ? anywhere in the dashboard to see every shortcut. Essentials: J/K move between conversations, R focuses the reply box, / jumps to search.', 'How-to', 12],
+  ];
+  return docs.map(([slug, title, body, category, order]) => ({
+    id: uid('help'), slug, title, body, category, order, updated_at: now,
+  }));
+}
+
 function seedDB(): ApiDB {
   const now = isoNow();
   const propId = uid('prop');
@@ -293,7 +758,7 @@ function seedDB(): ApiDB {
     {
       id: uid('conv'), property_id: propId, visitor_name: 'Ayesha Khan', visitor_email: 'ayesha@example.com',
       page_url: '/pricing', referrer: 'https://google.com', status: 'open', department: 'Sales',
-      agent_id: null, agent_name: null, tags: ['pricing'], notes: [], rating: null, unread: 2,
+      agent_id: null, agent_name: null, tags: ['pricing'], priority: 'medium', notes: [], rating: null, unread: 2,
       ai_handled: false, created_at: now, updated_at: now, closed_at: null,
       messages: [
         { id: uid('msg'), conversation_id: '', sender: 'visitor', kind: 'text', text: 'Hi! Do you offer annual billing?', metadata: {}, created_at: now },
@@ -304,7 +769,7 @@ function seedDB(): ApiDB {
     {
       id: uid('conv'), property_id: propId, visitor_name: 'Omar Farouk', visitor_email: '',
       page_url: '/docs', referrer: '', status: 'open', department: 'Support',
-      agent_id: null, agent_name: null, tags: ['integration'], notes: [], rating: null, unread: 1,
+      agent_id: null, agent_name: null, tags: ['integration'], priority: 'low', notes: [], rating: null, unread: 1,
       ai_handled: true, created_at: now, updated_at: now, closed_at: null,
       messages: [
         { id: uid('msg'), conversation_id: '', sender: 'visitor', kind: 'text', text: 'How do I add the widget to WordPress?', metadata: {}, created_at: now },
@@ -314,7 +779,7 @@ function seedDB(): ApiDB {
     {
       id: uid('conv'), property_id: propId, visitor_name: 'Maria Santos', visitor_email: 'maria@example.com',
       page_url: '/', referrer: '', status: 'closed', department: 'Support',
-      agent_id: null, agent_name: 'Demo Agent', tags: [], notes: [], rating: 5, unread: 0,
+      agent_id: null, agent_name: 'Demo Agent', tags: [], priority: 'medium', notes: [], rating: 5, unread: 0,
       ai_handled: false, created_at: now, updated_at: now, closed_at: now,
       messages: [
         { id: uid('msg'), conversation_id: '', sender: 'visitor', kind: 'text', text: 'Thanks, that solved it!', metadata: {}, created_at: now },
@@ -323,6 +788,13 @@ function seedDB(): ApiDB {
     },
   ];
   convs.forEach((c) => c.messages.forEach((m) => { m.conversation_id = c.id; }));
+  const members = seedMembers();
+  const departments = seedDepartments(propId, members);
+  if (members[0]) members[0].department_ids = departments.map((d) => d.id);
+  const agents: ApiAgent[] = [
+    { id: uid('ag'), display_name: 'Demo Agent', role: 'admin', online: true, passcode: '3456', created_at: now, last_login_at: now },
+    { id: uid('ag'), display_name: 'Layla Haddad', role: 'agent', online: false, passcode: '220131', created_at: now, last_login_at: null },
+  ];
 
   return {
     properties: [
@@ -337,22 +809,23 @@ function seedDB(): ApiDB {
       { id: uid('con'), name: 'Omar Farouk', email: '', phone: '', country: 'Egypt', tags: ['support'], notes: '', source: 'chat', chats: 1, created_at: now, last_seen_at: now },
       { id: uid('con'), name: 'Maria Santos', email: 'maria@example.com', phone: '', country: 'Spain', tags: ['customer'], notes: 'Happy with support.', source: 'chat', chats: 4, created_at: now, last_seen_at: now },
     ],
-    agents: [
-      { id: uid('ag'), display_name: 'Demo Agent', role: 'admin', online: true, passcode: '3456', created_at: now, last_login_at: now },
-      { id: uid('ag'), display_name: 'Layla Haddad', role: 'agent', online: false, passcode: '220131', created_at: now, last_login_at: null },
-    ],
+    agents,
+    ratings: seedRatings(propId, convs, agents),
+    departments,
+    routing_counters: {},
+    categories: [],
     tickets: [
-      { id: uid('t'), property_id: propId, subject: 'Refund request #1042', requester_name: 'Jonas Weber', requester_email: 'jonas@example.com', message: 'I was charged twice for the monthly plan.', status: 'new', created_at: now, updated_at: now },
-      { id: uid('t'), property_id: propId, subject: 'Feature request: dark widget', requester_name: 'Priya Nair', requester_email: 'priya@example.com', message: 'Would love a dark-mode widget theme.', status: 'open', created_at: now, updated_at: now },
+      { id: uid('t'), property_id: propId, subject: 'Refund request #1042', requester_name: 'Jonas Weber', requester_email: 'jonas@example.com', message: 'I was charged twice for the monthly plan.', status: 'new', priority: 'high', assignee_id: null, sla_due: new Date(Date.now() + 20 * 3600000).toISOString(), conversation_id: null, tags: ['billing'], category_id: null, created_at: now, updated_at: now },
+      { id: uid('t'), property_id: propId, subject: 'Feature request: dark widget', requester_name: 'Priya Nair', requester_email: 'priya@example.com', message: 'Would love a dark-mode widget theme.', status: 'open', priority: 'low', assignee_id: null, sla_due: null, conversation_id: null, tags: ['feature'], category_id: null, created_at: now, updated_at: now },
     ],
     articles: [
-      { id: uid('kb'), title: 'Installing the widget', slug: 'installing-the-widget', body: 'Paste the embed snippet from Admin → Install before the closing </body> tag of every page.', category: 'Getting started', status: 'published', views: 128, updated_at: now },
-      { id: uid('kb'), title: 'Setting up webhooks', slug: 'setting-up-webhooks', body: 'Create an endpoint in Admin → Webhooks, subscribe to events, and verify the X-Brix-Signature header.', category: 'Developers', status: 'published', views: 64, updated_at: now },
+      { id: uid('kb'), title: 'Installing the widget', slug: 'installing-the-widget', body: 'Paste the embed snippet from Admin → Install before the closing </body> tag of every page.', category: 'Getting started', category_id: null, status: 'published', views: 128, updated_at: now },
+      { id: uid('kb'), title: 'Setting up webhooks', slug: 'setting-up-webhooks', body: 'Create an endpoint in Admin → Webhooks, subscribe to events, and verify the X-Brix-Signature header.', category: 'Developers', category_id: null, status: 'published', views: 64, updated_at: now },
     ],
     canned: [
-      { id: uid('can'), shortcut: '/greet', title: 'Greeting', body: 'Hi! Thanks for reaching out — how can I help you today?' },
-      { id: uid('can'), shortcut: '/pricing', title: 'Pricing info', body: 'Our plans start free forever; paid add-ons are listed on the pricing page.' },
-      { id: uid('can'), shortcut: '/offline', title: 'Offline reply', body: 'Thanks for your message! We are currently offline but will reply within one business day.' },
+      { id: uid('can'), shortcut: '/greet', title: 'Greeting', body: 'Hi! Thanks for reaching out — how can I help you today?', category_id: null },
+      { id: uid('can'), shortcut: '/pricing', title: 'Pricing info', body: 'Our plans start free forever; paid add-ons are listed on the pricing page.', category_id: null },
+      { id: uid('can'), shortcut: '/offline', title: 'Offline reply', body: 'Thanks for your message! We are currently offline but will reply within one business day.', category_id: null },
     ],
     webhooks: [
       {
@@ -367,7 +840,52 @@ function seedDB(): ApiDB {
     audit: [
       { id: uid('aud'), actor: 'system', action: 'workspace.seeded', entity: 'workspace', entity_id: 'demo', meta: {}, created_at: now },
     ],
+    notifications: [],
+    views: [],
+    plays: seedPlays(),
+    goals: seedGoals(),
+    goalEvents: [],
+    blogPosts: seedBlogPosts(),
+    helpDocs: seedHelpDocs(),
+    contactMessages: [],
+    statusEntries: seedStatusEntries(),
+    members,
+    unanswered: seedUnanswered(),
+    integrations: seedIntegrations(),
+    propertySettings: { [propId]: defaultPropertySettings() },
+    copilotSettings: { tone: 'friendly', autosuggest: true, summarize: true, translate: false, sources: ['knowledge-base'], provider: 'local' },
+    securitySettings: { session_timeout_mins: 480, passcode_min_len: 4, passcode_expiry_days: 90 },
+    dataSettings: { retention_days: 365, auto_purge: false },
   };
+}
+
+/** Backfill phase-2 collections into workspaces seeded before phase 2. Idempotent. */
+function ensureDefaults(db: ApiDB): void {
+  const seeded = seedDB();
+  (Object.keys(seeded) as Array<keyof ApiDB>).forEach((k) => {
+    if (db[k] === undefined || db[k] === null) {
+      (db as unknown as Record<string, unknown>)[k] = seeded[k];
+    }
+  });
+  if (db.members.length === 0) db.members = seedMembers();
+  if (db.integrations.length === 0) db.integrations = seedIntegrations();
+  db.conversations.forEach((c) => { if (!c.priority) c.priority = 'medium'; });
+  db.tickets.forEach((t) => {
+    if (!t.priority) t.priority = 'medium';
+    if (t.assignee_id === undefined) t.assignee_id = null;
+    if (t.sla_due === undefined) t.sla_due = null;
+    if (t.conversation_id === undefined) t.conversation_id = null;
+    if (!t.tags) t.tags = [];
+    if (t.category_id === undefined) t.category_id = null;
+  });
+  db.members.forEach((m) => {
+    if (m.job_title === undefined) m.job_title = '';
+    if (m.avatar_data_url === undefined) m.avatar_data_url = null;
+    if (m.department_ids === undefined) m.department_ids = [];
+  });
+  db.articles.forEach((a) => { if (a.category_id === undefined) a.category_id = null; });
+  db.canned.forEach((c) => { if (c.category_id === undefined) c.category_id = null; });
+  if (!db.routing_counters) db.routing_counters = {};
 }
 
 function loadAll(): DBMap {
@@ -472,8 +990,10 @@ export class BrixApi {
     const all = loadAll();
     if (!all[this.workspace]) {
       all[this.workspace] = seedDB();
-      saveAll(all);
+    } else {
+      ensureDefaults(all[this.workspace]);
     }
+    saveAll(all);
     return all[this.workspace];
   }
 
@@ -483,7 +1003,7 @@ export class BrixApi {
     saveAll(all);
   }
 
-  private audit(db: ApiDB, action: string, entity: string, entityId = '', meta: Record<string, unknown> = {}): void {
+  private logAudit(db: ApiDB, action: string, entity: string, entityId = '', meta: Record<string, unknown> = {}): void {
     db.audit.unshift({ id: uid('aud'), actor: this.actor, action, entity, entity_id: entityId, meta, created_at: isoNow() });
     db.audit = db.audit.slice(0, 500);
   }
@@ -516,7 +1036,7 @@ export class BrixApi {
         secure_mode: false, created_at: isoNow(),
       };
       db.properties.unshift(p);
-      this.audit(db, 'property.created', 'property', p.id, { name: p.name });
+      this.logAudit(db, 'property.created', 'property', p.id, { name: p.name });
       this.save(db);
       return { data: p };
     },
@@ -525,7 +1045,7 @@ export class BrixApi {
       const p = db.properties.find((x) => x.id === id);
       if (!p) throw this.notFound('Property', id);
       Object.assign(p, patch);
-      this.audit(db, 'property.updated', 'property', id, patch as Record<string, unknown>);
+      this.logAudit(db, 'property.updated', 'property', id, patch as Record<string, unknown>);
       this.save(db);
       return { data: p };
     },
@@ -534,7 +1054,7 @@ export class BrixApi {
       const p = db.properties.find((x) => x.id === id);
       if (!p) throw this.notFound('Property', id);
       p.public_key = `bx_${randomHex(9)}`;
-      this.audit(db, 'property.key_regenerated', 'property', id, {});
+      this.logAudit(db, 'property.key_regenerated', 'property', id, {});
       this.save(db);
       return { data: { public_key: p.public_key } };
     },
@@ -542,7 +1062,7 @@ export class BrixApi {
       const db = this.db();
       if (!db.properties.some((x) => x.id === id)) throw this.notFound('Property', id);
       db.properties = db.properties.filter((x) => x.id !== id);
-      this.audit(db, 'property.deleted', 'property', id, {});
+      this.logAudit(db, 'property.deleted', 'property', id, {});
       this.save(db);
       return { data: { deleted: true } };
     },
@@ -559,7 +1079,7 @@ export class BrixApi {
       const p = db.properties.find((x) => x.id === propertyId);
       if (!p) throw this.notFound('Property', propertyId);
       p.widget_config = { ...p.widget_config, ...patch };
-      this.audit(db, 'widget.updated', 'property', propertyId, patch as Record<string, unknown>);
+      this.logAudit(db, 'widget.updated', 'property', propertyId, patch as Record<string, unknown>);
       this.save(db);
       return { data: p.widget_config };
     },
@@ -567,11 +1087,17 @@ export class BrixApi {
 
   // ---- conversations -------------------------------------------------------
   conversations = {
-    list: async (opts: { propertyId?: string; status?: ConvStatus; tag?: string; q?: string } & ListOpts = {}): Promise<Envelope<Page<ApiConversation>>> => {
+    list: async (opts: { propertyId?: string; status?: ConvStatus; tag?: string; priority?: TicketPriority; assignee?: string; q?: string } & ListOpts = {}): Promise<Envelope<Page<ApiConversation>>> => {
       let items = [...this.db().conversations].sort((a, b) => b.updated_at.localeCompare(a.updated_at));
       if (opts.propertyId) items = items.filter((c) => c.property_id === opts.propertyId);
       if (opts.status) items = items.filter((c) => c.status === opts.status);
       if (opts.tag) items = items.filter((c) => c.tags.includes(opts.tag as string));
+      if (opts.priority) items = items.filter((c) => (c.priority ?? 'medium') === opts.priority);
+      if (opts.assignee) {
+        items = opts.assignee === 'unassigned'
+          ? items.filter((c) => !c.agent_id)
+          : items.filter((c) => c.agent_id === opts.assignee);
+      }
       if (opts.q) {
         const q = opts.q.toLowerCase();
         items = items.filter((c) => c.visitor_name.toLowerCase().includes(q) || c.messages.some((m) => m.text.toLowerCase().includes(q)));
@@ -592,7 +1118,7 @@ export class BrixApi {
         id: uid('conv'), property_id: propertyId,
         visitor_name: visitor.name?.trim() || 'Guest', visitor_email: visitor.email?.trim() || '',
         page_url: visitor.page_url || '', referrer: visitor.referrer || '',
-        status: 'open', department: 'Support', agent_id: null, agent_name: null,
+        status: 'open', department: 'Support', agent_id: null, agent_name: null, priority: 'medium',
         tags: [], notes: [], rating: null, unread: 0, ai_handled: false,
         created_at: now, updated_at: now, closed_at: null,
         messages: [{
@@ -602,7 +1128,7 @@ export class BrixApi {
       };
       c.messages.forEach((m) => { m.conversation_id = c.id; });
       db.conversations.unshift(c);
-      this.audit(db, 'conversation.started', 'conversation', c.id, { visitor: c.visitor_name });
+      this.logAudit(db, 'conversation.started', 'conversation', c.id, { visitor: c.visitor_name });
       this.save(db);
       return { data: c };
     },
@@ -633,7 +1159,51 @@ export class BrixApi {
       }
       if (input.department) c.department = input.department;
       c.updated_at = isoNow();
-      this.audit(db, 'conversation.assigned', 'conversation', id, { agent: c.agent_name, department: c.department });
+      this.logAudit(db, 'conversation.assigned', 'conversation', id, { agent: c.agent_name, department: c.department });
+      this.save(db);
+      return { data: c };
+    },
+    /** Transfer a chat to another agent and/or department. Records a system message
+     *  in the thread timeline, an internal note, and notifies the receiving agent. */
+    transfer: async (id: string, target: { agent_id?: string | null; department_id?: string | null }, note: string): Promise<Envelope<ApiConversation>> => {
+      const db = this.db();
+      const c = db.conversations.find((x) => x.id === id);
+      if (!c) throw this.notFound('Conversation', id);
+      const fromAgent = c.agent_name ?? 'Unassigned';
+      const fromDept = c.department;
+      if (target.agent_id !== undefined) {
+        const m = target.agent_id ? db.members.find((x) => x.id === target.agent_id) : null;
+        if (target.agent_id && !m) throw this.notFound('Member', target.agent_id);
+        c.agent_id = target.agent_id ?? null;
+        c.agent_name = m ? m.display_name : null;
+      }
+      if (target.department_id) {
+        const d = db.departments.find((x) => x.id === target.department_id);
+        if (!d) throw this.notFound('Department', target.department_id);
+        c.department = d.name;
+      }
+      const toAgent = c.agent_name ?? 'Unassigned';
+      const summary = `Transferred from ${fromAgent} (${fromDept}) to ${toAgent} (${c.department})${note.trim() ? ` — ${note.trim()}` : ''}`;
+      c.messages.push({
+        id: uid('msg'), conversation_id: c.id, sender: 'system', kind: 'text',
+        text: `🔀 ${summary}`, metadata: { transfer: true }, created_at: isoNow(),
+      });
+      c.notes.push({ author: this.actor, text: summary, created_at: isoNow() });
+      c.updated_at = isoNow();
+      // Notify the receiving agent — same db instance so the save below keeps it.
+      if (target.agent_id) {
+        const m = db.members.find((x) => x.id === target.agent_id);
+        db.notifications.unshift({
+          id: uid('notif'), type: 'chat.assigned',
+          title: `Chat transferred to ${m?.display_name ?? 'you'}`,
+          body: `${c.visitor_name} — ${summary}`,
+          link: `/app?c=${c.id}`, read: false, created_at: isoNow(),
+        });
+        db.notifications = db.notifications.slice(0, 200);
+      }
+      this.logAudit(db, 'conversation.transferred', 'conversation', id, {
+        from: `${fromAgent} / ${fromDept}`, to: `${toAgent} / ${c.department}`, note: note.trim(),
+      });
       this.save(db);
       return { data: c };
     },
@@ -646,7 +1216,7 @@ export class BrixApi {
       c.updated_at = isoNow();
       c.closed_at = status === 'closed' ? isoNow() : null;
       if (status !== 'open') c.unread = 0;
-      this.audit(db, 'conversation.status_changed', 'conversation', id, { from: old, to: status });
+      this.logAudit(db, 'conversation.status_changed', 'conversation', id, { from: old, to: status });
       this.save(db);
       return { data: c };
     },
@@ -717,7 +1287,7 @@ export class BrixApi {
         chats: 0, created_at: now, last_seen_at: now,
       };
       db.contacts.unshift(c);
-      this.audit(db, 'contact.created', 'contact', c.id, { name: c.name });
+      this.logAudit(db, 'contact.created', 'contact', c.id, { name: c.name });
       this.save(db);
       return { data: c };
     },
@@ -726,7 +1296,7 @@ export class BrixApi {
       const c = db.contacts.find((x) => x.id === id);
       if (!c) throw this.notFound('Contact', id);
       Object.assign(c, patch, { last_seen_at: isoNow() });
-      this.audit(db, 'contact.updated', 'contact', id, patch as Record<string, unknown>);
+      this.logAudit(db, 'contact.updated', 'contact', id, patch as Record<string, unknown>);
       this.save(db);
       return { data: c };
     },
@@ -734,7 +1304,7 @@ export class BrixApi {
       const db = this.db();
       if (!db.contacts.some((x) => x.id === id)) throw this.notFound('Contact', id);
       db.contacts = db.contacts.filter((x) => x.id !== id);
-      this.audit(db, 'contact.deleted', 'contact', id, {});
+      this.logAudit(db, 'contact.deleted', 'contact', id, {});
       this.save(db);
       return { data: { deleted: true } };
     },
@@ -758,7 +1328,7 @@ export class BrixApi {
         passcode, created_at: isoNow(), last_login_at: null,
       };
       db.agents.push(a);
-      this.audit(db, 'agent.invited', 'agent', a.id, { name, role: a.role });
+      this.logAudit(db, 'agent.invited', 'agent', a.id, { name, role: a.role });
       this.save(db);
       // Local-only: email invites activate with the backend phase; the
       // passcode below is the member's login credential — share it directly.
@@ -769,7 +1339,7 @@ export class BrixApi {
       const a = db.agents.find((x) => x.id === id);
       if (!a) throw this.notFound('Agent', id);
       Object.assign(a, patch);
-      this.audit(db, 'agent.updated', 'agent', id, patch as Record<string, unknown>);
+      this.logAudit(db, 'agent.updated', 'agent', id, patch as Record<string, unknown>);
       this.save(db);
       return { data: a };
     },
@@ -777,7 +1347,7 @@ export class BrixApi {
       const db = this.db();
       if (!db.agents.some((x) => x.id === id)) throw this.notFound('Agent', id);
       db.agents = db.agents.filter((x) => x.id !== id);
-      this.audit(db, 'agent.removed', 'agent', id, {});
+      this.logAudit(db, 'agent.removed', 'agent', id, {});
       this.save(db);
       return { data: { deleted: true } };
     },
@@ -785,9 +1355,23 @@ export class BrixApi {
 
   // ---- tickets --------------------------------------------------------------
   tickets = {
-    list: async (opts: { status?: TicketStatus } & ListOpts = {}): Promise<Envelope<Page<ApiTicket>>> => {
+    list: async (opts: { status?: TicketStatus; priority?: TicketPriority; assignee?: string; q?: string; category?: string } & ListOpts = {}): Promise<Envelope<Page<ApiTicket>>> => {
       let items = [...this.db().tickets].sort((a, b) => b.created_at.localeCompare(a.created_at));
       if (opts.status) items = items.filter((t) => t.status === opts.status);
+      if (opts.priority) items = items.filter((t) => t.priority === opts.priority);
+      if (opts.category) items = items.filter((t) => t.category_id === opts.category);
+      if (opts.assignee) {
+        items = opts.assignee === 'unassigned'
+          ? items.filter((t) => !t.assignee_id)
+          : items.filter((t) => t.assignee_id === opts.assignee);
+      }
+      if (opts.q) {
+        const q = opts.q.toLowerCase();
+        items = items.filter((t) =>
+          t.subject.toLowerCase().includes(q) || t.requester_name.toLowerCase().includes(q) ||
+          t.requester_email.toLowerCase().includes(q) || t.message.toLowerCase().includes(q),
+        );
+      }
       return { data: paginate(items, opts) };
     },
     get: async (id: string): Promise<Envelope<ApiTicket>> => {
@@ -795,17 +1379,35 @@ export class BrixApi {
       if (!t) throw this.notFound('Ticket', id);
       return { data: t };
     },
-    create: async (input: { subject: string; requester_name: string; requester_email?: string; message: string; property_id?: string | null }): Promise<Envelope<ApiTicket>> => {
+    create: async (input: {
+      subject: string; requester_name: string; requester_email?: string; message: string;
+      property_id?: string | null; priority?: TicketPriority; assignee_id?: string | null;
+      sla_due?: string | null; conversation_id?: string | null; tags?: string[]; category_id?: string | null;
+    }): Promise<Envelope<ApiTicket>> => {
       if (!input.subject.trim() || !input.message.trim()) throw new ApiError('validation', 'Subject and message are required.', 422);
       const db = this.db();
       const now = isoNow();
       const t: ApiTicket = {
         id: uid('t'), property_id: input.property_id ?? null, subject: input.subject.trim(),
         requester_name: input.requester_name.trim() || 'Guest', requester_email: (input.requester_email ?? '').trim(),
-        message: input.message.trim(), status: 'new', created_at: now, updated_at: now,
+        message: input.message.trim(), status: 'new', priority: input.priority ?? 'medium',
+        assignee_id: input.assignee_id ?? null, sla_due: input.sla_due ?? null,
+        conversation_id: input.conversation_id ?? null, tags: input.tags ?? [],
+        category_id: input.category_id ?? null,
+        created_at: now, updated_at: now,
       };
       db.tickets.unshift(t);
-      this.audit(db, 'ticket.created', 'ticket', t.id, { subject: t.subject });
+      this.logAudit(db, 'ticket.created', 'ticket', t.id, { subject: t.subject, priority: t.priority });
+      await this.notifications.push('ticket.created', `New ticket: ${t.subject}`, `From ${t.requester_name} · priority ${t.priority}`, '/app/tickets');
+      this.save(db);
+      return { data: t };
+    },
+    update: async (id: string, patch: Partial<Pick<ApiTicket, 'subject' | 'message' | 'requester_name' | 'requester_email' | 'tags' | 'sla_due' | 'property_id' | 'status' | 'priority' | 'assignee_id' | 'category_id'>>): Promise<Envelope<ApiTicket>> => {
+      const db = this.db();
+      const t = db.tickets.find((x) => x.id === id);
+      if (!t) throw this.notFound('Ticket', id);
+      Object.assign(t, patch, { updated_at: isoNow() });
+      this.logAudit(db, 'ticket.updated', 'ticket', id, patch as Record<string, unknown>);
       this.save(db);
       return { data: t };
     },
@@ -816,17 +1418,910 @@ export class BrixApi {
       const from = t.status;
       t.status = status;
       t.updated_at = isoNow();
-      this.audit(db, 'ticket.status_changed', 'ticket', id, { from, to: status });
+      this.logAudit(db, 'ticket.status_changed', 'ticket', id, { from, to: status });
       this.save(db);
       return { data: t };
     },
+    assign: async (id: string, agentId: string | null): Promise<Envelope<ApiTicket>> => {
+      const db = this.db();
+      const t = db.tickets.find((x) => x.id === id);
+      if (!t) throw this.notFound('Ticket', id);
+      t.assignee_id = agentId;
+      t.updated_at = isoNow();
+      const m = agentId ? db.members.find((x) => x.id === agentId) : null;
+      this.logAudit(db, 'ticket.assigned', 'ticket', id, { assignee: m?.display_name ?? null });
+      if (m) await this.notifications.push('chat.assigned', `Ticket assigned to ${m.display_name}`, t.subject, '/app/tickets');
+      this.save(db);
+      return { data: t };
+    },
+    setPriority: async (id: string, p: TicketPriority): Promise<Envelope<ApiTicket>> => {
+      const db = this.db();
+      const t = db.tickets.find((x) => x.id === id);
+      if (!t) throw this.notFound('Ticket', id);
+      const from = t.priority;
+      t.priority = p;
+      t.updated_at = isoNow();
+      this.logAudit(db, 'ticket.priority_changed', 'ticket', id, { from, to: p });
+      this.save(db);
+      return { data: t };
+    },
+    /** Bulk ops. 'spam' has no dedicated ticket status — it tags + resolves the ticket. */
+    bulk: async (ids: string[], action: 'resolve' | 'assign' | 'spam', agentId?: string): Promise<Envelope<{ updated: number }>> => {
+      if (!ids.length) throw new ApiError('validation', 'Select at least one ticket.', 422);
+      if (action === 'assign' && !agentId) throw new ApiError('validation', 'An assignee is required for bulk assign.', 422);
+      const db = this.db();
+      let updated = 0;
+      ids.forEach((id) => {
+        const t = db.tickets.find((x) => x.id === id);
+        if (!t) return;
+        if (action === 'resolve') t.status = 'resolved';
+        if (action === 'assign') t.assignee_id = agentId ?? null;
+        if (action === 'spam') { t.status = 'resolved'; if (!t.tags.includes('spam')) t.tags.push('spam'); }
+        t.updated_at = isoNow();
+        updated += 1;
+      });
+      this.logAudit(db, `ticket.bulk_${action}`, 'ticket', ids.join(','), { count: updated });
+      this.save(db);
+      return { data: { updated } };
+    },
+    /** Create a ticket linked to a conversation (carries context; works even if
+     *  the conversation lives outside the API db — the link is kept by id). */
+    fromConversation: async (convId: string, input: { subject?: string; message?: string; priority?: TicketPriority; requester_name?: string; requester_email?: string }): Promise<Envelope<ApiTicket>> => {
+      const db = this.db();
+      const conv = db.conversations.find((x) => x.id === convId);
+      const name = input.requester_name ?? conv?.visitor_name ?? 'Guest';
+      const email = input.requester_email ?? conv?.visitor_email ?? '';
+      const transcript = conv
+        ? conv.messages.map((m) => `${m.sender}: ${m.text}`).join('\n')
+        : '';
+      const subject = input.subject?.trim() || `Chat with ${name}${conv ? ` (${conv.page_url})` : ''}`;
+      const message = input.message?.trim() || transcript || 'Created from chat.';
+      return this.tickets.create({
+        subject, requester_name: name, requester_email: email, message,
+        property_id: conv?.property_id ?? null,
+        priority: input.priority ?? conv?.priority ?? 'medium',
+        conversation_id: convId,
+        tags: conv?.tags ?? [],
+      });
+    },
+  };
+
+  // ---- notifications -----------------------------------------------------------
+  notifications = {
+    list: async (opts: { unreadOnly?: boolean } & ListOpts = {}): Promise<Envelope<Page<ApiNotification>>> => {
+      let items = [...this.db().notifications].sort((a, b) => b.created_at.localeCompare(a.created_at));
+      if (opts.unreadOnly) items = items.filter((n) => !n.read);
+      return { data: paginate(items, opts) };
+    },
+    markRead: async (id: string): Promise<Envelope<ApiNotification>> => {
+      const db = this.db();
+      const n = db.notifications.find((x) => x.id === id);
+      if (!n) throw this.notFound('Notification', id);
+      n.read = true;
+      this.save(db);
+      return { data: n };
+    },
+    markAllRead: async (): Promise<Envelope<{ read: number }>> => {
+      const db = this.db();
+      let read = 0;
+      db.notifications.forEach((n) => { if (!n.read) { n.read = true; read += 1; } });
+      this.save(db);
+      return { data: { read } };
+    },
+    /** Internal helper — also used by ticket/campaign/goal methods. */
+    push: async (type: ApiNotification['type'], title: string, body: string, link: string | null = null): Promise<Envelope<ApiNotification>> => {
+      const db = this.db();
+      const n: ApiNotification = { id: uid('notif'), type, title, body, link, read: false, created_at: isoNow() };
+      db.notifications.unshift(n);
+      db.notifications = db.notifications.slice(0, 200);
+      this.save(db);
+      return { data: n };
+    },
+  };
+
+  // ---- ratings (CSAT + NPS) -----------------------------------------------------
+  ratings = {
+    create: async (input: {
+      property_id: string; conversation_id?: string | null; agent_id?: string | null;
+      kind: 'csat' | 'nps'; score: number; comment?: string;
+    }): Promise<Envelope<ApiRating>> => {
+      if (!input.property_id?.trim()) throw new ApiError('validation', 'property_id is required.', 422);
+      if (!Number.isFinite(input.score)) throw new ApiError('validation', 'Score must be a number.', 422);
+      if (input.kind === 'csat' && (input.score < 1 || input.score > 5)) {
+        throw new ApiError('validation', 'CSAT score must be between 1 and 5.', 422);
+      }
+      if (input.kind === 'nps' && (input.score < 0 || input.score > 10)) {
+        throw new ApiError('validation', 'NPS score must be between 0 and 10.', 422);
+      }
+      const db = this.db();
+      const r: ApiRating = {
+        id: uid('rt'), property_id: input.property_id, conversation_id: input.conversation_id ?? null,
+        agent_id: input.agent_id ?? null, kind: input.kind, score: input.score,
+        comment: (input.comment ?? '').trim(), created_at: Date.now(),
+      };
+      db.ratings.unshift(r);
+      this.logAudit(db, 'rating.created', 'rating', r.id, { kind: r.kind, score: r.score });
+      // Low-rating alert. Written into this same db instance (not via notifications.push,
+      // which reloads+saves a separate instance) so it survives the save below.
+      const isLow = input.kind === 'csat' ? input.score <= 2 : input.score <= 6;
+      if (isLow) {
+        const scale = input.kind === 'csat' ? '5' : '10';
+        db.notifications.unshift({
+          id: uid('notif'), type: 'system', title: 'New low rating',
+          body: `${input.kind.toUpperCase()} ${input.score}/${scale}${r.comment ? ` — "${r.comment}"` : ''}`,
+          link: r.conversation_id ? `/app?c=${r.conversation_id}` : '/app/analytics',
+          read: false, created_at: isoNow(),
+        });
+        db.notifications = db.notifications.slice(0, 200);
+      }
+      this.save(db);
+      return { data: r };
+    },
+    list: async (opts: {
+      property_id?: string; agent_id?: string; kind?: 'csat' | 'nps'; from?: number; to?: number;
+    } & ListOpts = {}): Promise<Envelope<Page<ApiRating>>> => {
+      const { property_id, agent_id, kind, from, to } = opts;
+      let items = [...this.db().ratings].sort((a, b) => b.created_at - a.created_at);
+      if (property_id) items = items.filter((r) => r.property_id === property_id);
+      if (agent_id) items = items.filter((r) => r.agent_id === agent_id);
+      if (kind) items = items.filter((r) => r.kind === kind);
+      if (from !== undefined) items = items.filter((r) => r.created_at >= from);
+      if (to !== undefined) items = items.filter((r) => r.created_at <= to);
+      return { data: paginate(items, opts) };
+    },
+    summary: async (propertyId: string, days = 30): Promise<Envelope<{
+      csat_avg: number | null; csat_count: number; nps_score: number | null; nps_count: number;
+      promoters: number; passives: number; detractors: number;
+      trend: Array<{ day: string; csat_avg: number | null; nps_avg: number | null; count: number }>;
+    }>> => {
+      const cutoff = Date.now() - days * 86400000;
+      const items = this.db().ratings.filter((r) => r.property_id === propertyId && r.created_at >= cutoff);
+      const csat = items.filter((r) => r.kind === 'csat');
+      const nps = items.filter((r) => r.kind === 'nps');
+      const round1 = (n: number) => Math.round(n * 10) / 10;
+      const avg = (xs: ApiRating[]) => xs.length ? round1(xs.reduce((a, r) => a + r.score, 0) / xs.length) : null;
+      const promoters = nps.filter((r) => r.score >= 9).length;
+      const passives = nps.filter((r) => r.score === 7 || r.score === 8).length;
+      const detractors = nps.filter((r) => r.score <= 6).length;
+      const nps_score = nps.length
+        ? Math.round((promoters / nps.length) * 100 - (detractors / nps.length) * 100)
+        : null;
+      const dayKey = (ts: number) => new Date(ts).toISOString().slice(0, 10);
+      const trend: Array<{ day: string; csat_avg: number | null; nps_avg: number | null; count: number }> = [];
+      for (let i = days - 1; i >= 0; i--) {
+        const key = dayKey(Date.now() - i * 86400000);
+        const dayItems = items.filter((r) => dayKey(r.created_at) === key);
+        trend.push({
+          day: key,
+          csat_avg: avg(dayItems.filter((r) => r.kind === 'csat')),
+          nps_avg: avg(dayItems.filter((r) => r.kind === 'nps')),
+          count: dayItems.length,
+        });
+      }
+      return {
+        data: {
+          csat_avg: avg(csat), csat_count: csat.length,
+          nps_score, nps_count: nps.length,
+          promoters, passives, detractors, trend,
+        },
+      };
+    },
+  };
+
+  // ---- departments (per property) -------------------------------------------------
+  departments = {
+    list: async (propertyId: string): Promise<Envelope<ApiDepartment[]>> => {
+      return { data: this.db().departments.filter((d) => d.property_id === propertyId) };
+    },
+    create: async (propertyId: string, input: {
+      name: string; description?: string; agent_ids?: string[];
+      routing_mode?: ApiDepartment['routing_mode'];
+      hours_override?: ApiDepartment['hours_override'];
+      offline_behavior?: ApiDepartment['offline_behavior'];
+    }): Promise<Envelope<ApiDepartment>> => {
+      if (!input.name.trim()) throw new ApiError('validation', 'Department name is required.', 422);
+      const db = this.db();
+      const d: ApiDepartment = {
+        id: uid('dep'), property_id: propertyId, name: input.name.trim(),
+        description: (input.description ?? '').trim(), agent_ids: input.agent_ids ?? [],
+        routing_mode: input.routing_mode ?? 'round-robin',
+        hours_override: input.hours_override ?? null,
+        offline_behavior: input.offline_behavior ?? 'message',
+        created_at: Date.now(),
+      };
+      db.departments.push(d);
+      this.logAudit(db, 'department.created', 'department', d.id, { name: d.name, property: propertyId });
+      this.save(db);
+      return { data: d };
+    },
+    update: async (id: string, patch: Partial<Pick<ApiDepartment, 'name' | 'description' | 'agent_ids' | 'routing_mode' | 'hours_override' | 'offline_behavior'>>): Promise<Envelope<ApiDepartment>> => {
+      const db = this.db();
+      const d = db.departments.find((x) => x.id === id);
+      if (!d) throw this.notFound('Department', id);
+      if (patch.name !== undefined) {
+        if (!patch.name.trim()) throw new ApiError('validation', 'Department name is required.', 422);
+        d.name = patch.name.trim();
+      }
+      if (patch.description !== undefined) d.description = patch.description;
+      if (patch.agent_ids !== undefined) d.agent_ids = [...patch.agent_ids];
+      if (patch.routing_mode !== undefined) d.routing_mode = patch.routing_mode;
+      if (patch.hours_override !== undefined) d.hours_override = patch.hours_override;
+      if (patch.offline_behavior !== undefined) d.offline_behavior = patch.offline_behavior;
+      this.logAudit(db, 'department.updated', 'department', id, patch as Record<string, unknown>);
+      this.save(db);
+      return { data: d };
+    },
+    delete: async (id: string): Promise<Envelope<{ deleted: true }>> => {
+      const db = this.db();
+      if (!db.departments.some((x) => x.id === id)) throw this.notFound('Department', id);
+      db.departments = db.departments.filter((x) => x.id !== id);
+      delete db.routing_counters[id];
+      this.logAudit(db, 'department.deleted', 'department', id, {});
+      this.save(db);
+      return { data: { deleted: true } };
+    },
+  };
+
+  // ---- smart routing (local simulation) -------------------------------------------
+  routing = {
+    routeChat: async (propertyId: string, departmentId?: string | null): Promise<Envelope<{ agent_id: string | null; department_id: string | null }>> => {
+      const db = this.db();
+      const dept = departmentId
+        ? db.departments.find((d) => d.id === departmentId && d.property_id === propertyId)
+        : db.departments.find((d) => d.property_id === propertyId);
+      if (!dept) return { data: { agent_id: null, department_id: null } };
+      const byId = new Map(db.members.map((m) => [m.id, m]));
+      let candidates = dept.agent_ids
+        .map((id) => byId.get(id))
+        .filter((m): m is ApiMember => !!m && m.status === 'online');
+      if (!candidates.length) candidates = [...db.members]; // fallback: anyone when nobody is online
+      if (!candidates.length) return { data: { agent_id: null, department_id: dept.id } };
+      let agent: ApiMember;
+      if (dept.routing_mode === 'least-busy') {
+        const open = new Map<string, number>();
+        db.conversations.forEach((c) => {
+          if (c.status === 'open' && c.agent_id) open.set(c.agent_id, (open.get(c.agent_id) ?? 0) + 1);
+        });
+        agent = candidates.slice().sort((a, b) => (open.get(a.id) ?? 0) - (open.get(b.id) ?? 0))[0];
+      } else if (dept.routing_mode === 'first-available') {
+        agent = candidates[0];
+      } else {
+        const n = db.routing_counters[dept.id] ?? 0;
+        agent = candidates[n % candidates.length];
+        db.routing_counters[dept.id] = n + 1;
+        this.save(db);
+      }
+      return { data: { agent_id: agent.id, department_id: dept.id } };
+    },
+  };
+
+  // ---- categories -------------------------------------------------------------------
+  categories = {
+    list: async (scope: ApiCategory['scope'], propertyId?: string): Promise<Envelope<ApiCategory[]>> => {
+      let items = this.db().categories.filter((c) => c.scope === scope);
+      if (propertyId) items = items.filter((c) => c.property_id === propertyId);
+      return { data: items };
+    },
+    create: async (scope: ApiCategory['scope'], propertyId: string, name: string, color?: string): Promise<Envelope<ApiCategory>> => {
+      if (!name.trim()) throw new ApiError('validation', 'Category name is required.', 422);
+      const db = this.db();
+      const c: ApiCategory = {
+        id: uid('cat'), scope, property_id: propertyId, name: name.trim(),
+        color: color?.trim() || '#4f46e5', created_at: Date.now(),
+      };
+      db.categories.push(c);
+      this.logAudit(db, 'category.created', 'category', c.id, { scope, name: c.name });
+      this.save(db);
+      return { data: c };
+    },
+    update: async (id: string, patch: Partial<Pick<ApiCategory, 'name' | 'color'>>): Promise<Envelope<ApiCategory>> => {
+      const db = this.db();
+      const c = db.categories.find((x) => x.id === id);
+      if (!c) throw this.notFound('Category', id);
+      if (patch.name !== undefined) {
+        if (!patch.name.trim()) throw new ApiError('validation', 'Category name is required.', 422);
+        c.name = patch.name.trim();
+      }
+      if (patch.color !== undefined) c.color = patch.color;
+      this.logAudit(db, 'category.updated', 'category', id, patch as Record<string, unknown>);
+      this.save(db);
+      return { data: c };
+    },
+    delete: async (id: string): Promise<Envelope<{ deleted: true }>> => {
+      const db = this.db();
+      if (!db.categories.some((x) => x.id === id)) throw this.notFound('Category', id);
+      db.categories = db.categories.filter((x) => x.id !== id);
+      // Clear references so nothing points at a deleted category.
+      db.tickets.forEach((t) => { if (t.category_id === id) t.category_id = null; });
+      db.articles.forEach((a) => { if (a.category_id === id) a.category_id = null; });
+      db.canned.forEach((x) => { if (x.category_id === id) x.category_id = null; });
+      this.logAudit(db, 'category.deleted', 'category', id, {});
+      this.save(db);
+      return { data: { deleted: true } };
+    },
+  };
+
+  // ---- saved views ------------------------------------------------------------
+  views = {
+    list: async (): Promise<Envelope<ApiSavedView[]>> => {
+      return { data: this.db().views };
+    },
+    create: async (name: string, filters: ApiSavedView['filters']): Promise<Envelope<ApiSavedView>> => {
+      if (!name.trim()) throw new ApiError('validation', 'View name is required.', 422);
+      const db = this.db();
+      const v: ApiSavedView = { id: uid('view'), name: name.trim(), filters, created_at: isoNow() };
+      db.views.push(v);
+      this.logAudit(db, 'view.created', 'view', v.id, { name: v.name });
+      this.save(db);
+      return { data: v };
+    },
+    delete: async (id: string): Promise<Envelope<{ deleted: true }>> => {
+      const db = this.db();
+      if (!db.views.some((x) => x.id === id)) throw this.notFound('View', id);
+      db.views = db.views.filter((x) => x.id !== id);
+      this.logAudit(db, 'view.deleted', 'view', id, {});
+      this.save(db);
+      return { data: { deleted: true } };
+    },
+  };
+
+  // ---- plays (multi-step macros) ------------------------------------------------
+  plays = {
+    list: async (): Promise<Envelope<ApiPlay[]>> => {
+      return { data: this.db().plays };
+    },
+    create: async (name: string, steps: ApiPlayStep[]): Promise<Envelope<ApiPlay>> => {
+      if (!name.trim()) throw new ApiError('validation', 'Play name is required.', 422);
+      if (!steps.length) throw new ApiError('validation', 'A play needs at least one step.', 422);
+      const db = this.db();
+      const p: ApiPlay = { id: uid('play'), name: name.trim(), steps, created_at: isoNow() };
+      db.plays.push(p);
+      this.logAudit(db, 'play.created', 'play', p.id, { name: p.name, steps: steps.length });
+      this.save(db);
+      return { data: p };
+    },
+    delete: async (id: string): Promise<Envelope<{ deleted: true }>> => {
+      const db = this.db();
+      if (!db.plays.some((x) => x.id === id)) throw this.notFound('Play', id);
+      db.plays = db.plays.filter((x) => x.id !== id);
+      this.logAudit(db, 'play.deleted', 'play', id, {});
+      this.save(db);
+      return { data: { deleted: true } };
+    },
+    /** Run a play against a conversation: applies each step in order. */
+    run: async (conversationId: string, playId: string): Promise<Envelope<{ applied: string[] }>> => {
+      const db = this.db();
+      const play = db.plays.find((x) => x.id === playId);
+      if (!play) throw this.notFound('Play', playId);
+      const conv = db.conversations.find((x) => x.id === conversationId);
+      if (!conv) throw this.notFound('Conversation', conversationId);
+      const applied: string[] = [];
+      for (const step of play.steps) {
+        if (step.kind === 'reply' && step.value.trim()) {
+          conv.messages.push({ id: uid('msg'), conversation_id: conv.id, sender: 'agent', kind: 'text', text: step.value.trim(), metadata: { play: play.name }, created_at: isoNow() });
+          applied.push(`reply sent (${step.value.trim().slice(0, 40)}…)`);
+        } else if (step.kind === 'tag' && step.value.trim()) {
+          const tag = step.value.trim().toLowerCase();
+          if (!conv.tags.includes(tag)) conv.tags.push(tag);
+          applied.push(`tag added: ${tag}`);
+        } else if (step.kind === 'assign') {
+          const agent = db.agents.find((a) => a.display_name.toLowerCase() === step.value.trim().toLowerCase());
+          const member = db.members.find((m) => m.display_name.toLowerCase() === step.value.trim().toLowerCase());
+          const name = agent?.display_name ?? member?.display_name ?? step.value.trim();
+          const dept = db.properties.length && ['sales', 'support', 'billing'].includes(step.value.trim().toLowerCase())
+            ? step.value.trim() : null;
+          if (dept) { conv.department = dept.charAt(0).toUpperCase() + dept.slice(1); applied.push(`routed to ${conv.department}`); }
+          else { conv.agent_name = name; applied.push(`assigned to ${name}`); }
+        } else if (step.kind === 'priority' && ['low', 'medium', 'high', 'urgent'].includes(step.value)) {
+          conv.priority = step.value as TicketPriority;
+          applied.push(`priority set to ${step.value}`);
+        } else if (step.kind === 'note' && step.value.trim()) {
+          conv.notes.push({ author: this.actor, text: step.value.trim(), created_at: isoNow() });
+          applied.push('note added');
+        }
+      }
+      conv.updated_at = isoNow();
+      this.logAudit(db, 'play.run', 'play', playId, { conversation: conversationId, applied: applied.length });
+      this.save(db);
+      return { data: { applied } };
+    },
+  };
+
+  // ---- goals & attribution -------------------------------------------------------
+  goals = {
+    list: async (): Promise<Envelope<ApiGoal[]>> => {
+      return { data: this.db().goals };
+    },
+    create: async (name: string, event: string, revenue = 0): Promise<Envelope<ApiGoal>> => {
+      if (!name.trim() || !event.trim()) throw new ApiError('validation', 'Name and event key are required.', 422);
+      const db = this.db();
+      const g: ApiGoal = { id: uid('goal'), name: name.trim(), event: event.trim(), revenue: Number(revenue) || 0, created_at: isoNow() };
+      db.goals.push(g);
+      this.logAudit(db, 'goal.created', 'goal', g.id, { name: g.name, event: g.event });
+      this.save(db);
+      return { data: g };
+    },
+    delete: async (id: string): Promise<Envelope<{ deleted: true }>> => {
+      const db = this.db();
+      if (!db.goals.some((x) => x.id === id)) throw this.notFound('Goal', id);
+      db.goals = db.goals.filter((x) => x.id !== id);
+      db.goalEvents = db.goalEvents.filter((x) => x.goal_id !== id);
+      this.logAudit(db, 'goal.deleted', 'goal', id, {});
+      this.save(db);
+      return { data: { deleted: true } };
+    },
+    track: async (goalId: string, conversationId: string | null = null, value?: number): Promise<Envelope<ApiGoalEvent>> => {
+      const db = this.db();
+      const goal = db.goals.find((x) => x.id === goalId);
+      if (!goal) throw this.notFound('Goal', goalId);
+      const e: ApiGoalEvent = { id: uid('gev'), goal_id: goalId, conversation_id: conversationId, value: value ?? goal.revenue, created_at: isoNow() };
+      db.goalEvents.unshift(e);
+      this.logAudit(db, 'goal.completed', 'goal', goalId, { conversation: conversationId, value: e.value });
+      await this.notifications.push('system', `Goal completed: ${goal.name}`, `Event "${goal.event}"${conversationId ? ' from a chat' : ''} · value ${e.value}`, '/app/analytics');
+      this.save(db);
+      return { data: e };
+    },
+    /** Conversion funnel: visitors → chats → goal completions over the last N days. */
+    funnel: async (days = 30): Promise<Envelope<GoalFunnel>> => {
+      const db = this.db();
+      const since = Date.now() - Math.min(Math.max(days, 1), 365) * 86400000;
+      const convs = db.conversations.filter((c) => Date.parse(c.created_at) >= since);
+      const visitors = new Set(convs.map((c) => `${c.visitor_name}|${c.visitor_email}`)).size;
+      const events = db.goalEvents.filter((e) => Date.parse(e.created_at) >= since);
+      const goals = db.goals.map((goal) => {
+        const evts = events.filter((e) => e.goal_id === goal.id);
+        return { goal, count: evts.length, revenue: evts.reduce((s, e) => s + (e.value || 0), 0) };
+      });
+      return { data: { visitors, chats: convs.length, goals } };
+    },
+  };
+
+  // ---- blog -----------------------------------------------------------------------
+  blog = {
+    list: async (publishedOnly = true): Promise<Envelope<ApiBlogPost[]>> => {
+      let items = [...this.db().blogPosts].sort((a, b) => b.created_at.localeCompare(a.created_at));
+      if (publishedOnly) items = items.filter((p) => p.published);
+      return { data: items };
+    },
+    getBySlug: async (slug: string): Promise<Envelope<ApiBlogPost>> => {
+      const p = this.db().blogPosts.find((x) => x.slug === slug);
+      if (!p) throw this.notFound('Blog post', slug);
+      return { data: p };
+    },
+    create: async (input: { slug: string; title: string; excerpt?: string; body?: string; tags?: string[]; author?: string; published?: boolean; reading_mins?: number }): Promise<Envelope<ApiBlogPost>> => {
+      if (!input.title.trim() || !input.slug.trim()) throw new ApiError('validation', 'Title and slug are required.', 422);
+      const db = this.db();
+      if (db.blogPosts.some((p) => p.slug === input.slug.trim())) throw new ApiError('conflict', 'A post with that slug already exists.', 409);
+      const now = isoNow();
+      const p: ApiBlogPost = {
+        id: uid('post'), slug: input.slug.trim(), title: input.title.trim(),
+        excerpt: input.excerpt ?? '', body: input.body ?? '', tags: input.tags ?? [],
+        author: input.author ?? 'Brix Team', published: input.published ?? false,
+        reading_mins: input.reading_mins ?? 3, created_at: now, updated_at: now,
+      };
+      db.blogPosts.unshift(p);
+      this.logAudit(db, 'blog.created', 'blog', p.id, { title: p.title });
+      this.save(db);
+      return { data: p };
+    },
+    update: async (id: string, patch: Partial<Pick<ApiBlogPost, 'slug' | 'title' | 'excerpt' | 'body' | 'tags' | 'author' | 'published' | 'reading_mins'>>): Promise<Envelope<ApiBlogPost>> => {
+      const db = this.db();
+      const p = db.blogPosts.find((x) => x.id === id);
+      if (!p) throw this.notFound('Blog post', id);
+      Object.assign(p, patch, { updated_at: isoNow() });
+      this.logAudit(db, 'blog.updated', 'blog', id, patch as Record<string, unknown>);
+      this.save(db);
+      return { data: p };
+    },
+    delete: async (id: string): Promise<Envelope<{ deleted: true }>> => {
+      const db = this.db();
+      if (!db.blogPosts.some((x) => x.id === id)) throw this.notFound('Blog post', id);
+      db.blogPosts = db.blogPosts.filter((x) => x.id !== id);
+      this.logAudit(db, 'blog.deleted', 'blog', id, {});
+      this.save(db);
+      return { data: { deleted: true } };
+    },
+    /** Seed helper for Worker B: fills the blog with the given posts when empty. */
+    seedIfEmpty: async (posts: Array<Omit<ApiBlogPost, 'id' | 'created_at' | 'updated_at'>>): Promise<Envelope<{ seeded: number }>> => {
+      const db = this.db();
+      if (db.blogPosts.length > 0) return { data: { seeded: 0 } };
+      const now = isoNow();
+      db.blogPosts = posts.map((p) => ({ ...p, id: uid('post'), created_at: now, updated_at: now }));
+      this.logAudit(db, 'blog.seeded', 'blog', '', { count: posts.length });
+      this.save(db);
+      return { data: { seeded: posts.length } };
+    },
+  };
+
+  // ---- help docs -------------------------------------------------------------------
+  helpDocs = {
+    list: async (): Promise<Envelope<ApiHelpArticle[]>> => {
+      const items = [...this.db().helpDocs].sort((a, b) => a.order - b.order || a.title.localeCompare(b.title));
+      return { data: items };
+    },
+    getBySlug: async (slug: string): Promise<Envelope<ApiHelpArticle>> => {
+      const a = this.db().helpDocs.find((x) => x.slug === slug);
+      if (!a) throw this.notFound('Help article', slug);
+      return { data: a };
+    },
+    create: async (input: { slug: string; title: string; body?: string; category?: string; order?: number }): Promise<Envelope<ApiHelpArticle>> => {
+      if (!input.title.trim() || !input.slug.trim()) throw new ApiError('validation', 'Title and slug are required.', 422);
+      const db = this.db();
+      if (db.helpDocs.some((a) => a.slug === input.slug.trim())) throw new ApiError('conflict', 'An article with that slug already exists.', 409);
+      const a: ApiHelpArticle = {
+        id: uid('help'), slug: input.slug.trim(), title: input.title.trim(), body: input.body ?? '',
+        category: input.category ?? 'General', order: input.order ?? db.helpDocs.length + 1, updated_at: isoNow(),
+      };
+      db.helpDocs.push(a);
+      this.logAudit(db, 'helpdoc.created', 'helpdoc', a.id, { title: a.title });
+      this.save(db);
+      return { data: a };
+    },
+    update: async (id: string, patch: Partial<Pick<ApiHelpArticle, 'slug' | 'title' | 'body' | 'category' | 'order'>>): Promise<Envelope<ApiHelpArticle>> => {
+      const db = this.db();
+      const a = db.helpDocs.find((x) => x.id === id);
+      if (!a) throw this.notFound('Help article', id);
+      Object.assign(a, patch, { updated_at: isoNow() });
+      this.logAudit(db, 'helpdoc.updated', 'helpdoc', id, patch as Record<string, unknown>);
+      this.save(db);
+      return { data: a };
+    },
+    delete: async (id: string): Promise<Envelope<{ deleted: true }>> => {
+      const db = this.db();
+      if (!db.helpDocs.some((x) => x.id === id)) throw this.notFound('Help article', id);
+      db.helpDocs = db.helpDocs.filter((x) => x.id !== id);
+      this.logAudit(db, 'helpdoc.deleted', 'helpdoc', id, {});
+      this.save(db);
+      return { data: { deleted: true } };
+    },
+    /** Seed helper for Worker B: fills help docs with the given articles when empty. */
+    seedIfEmpty: async (articles: Array<Omit<ApiHelpArticle, 'id' | 'updated_at'>>): Promise<Envelope<{ seeded: number }>> => {
+      const db = this.db();
+      if (db.helpDocs.length > 0) return { data: { seeded: 0 } };
+      db.helpDocs = articles.map((a) => ({ ...a, id: uid('help'), updated_at: isoNow() }));
+      this.logAudit(db, 'helpdoc.seeded', 'helpdoc', '', { count: articles.length });
+      this.save(db);
+      return { data: { seeded: articles.length } };
+    },
+  };
+
+  // ---- contact form messages ----------------------------------------------------------
+  contactMessages = {
+    create: async (input: { name: string; email: string; subject: string; message: string }): Promise<Envelope<ApiContactMessage>> => {
+      if (!input.name.trim() || !input.message.trim()) throw new ApiError('validation', 'Name and message are required.', 422);
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(input.email.trim())) throw new ApiError('validation', 'A valid email is required.', 422);
+      const db = this.db();
+      const m: ApiContactMessage = {
+        id: uid('cm'), name: input.name.trim(), email: input.email.trim(),
+        subject: input.subject.trim() || 'Website contact', message: input.message.trim(),
+        read: false, created_at: isoNow(),
+      };
+      db.contactMessages.unshift(m);
+      this.logAudit(db, 'contact.created', 'contactMessage', m.id, { from: m.email });
+      await this.notifications.push('mention', `New contact message: ${m.subject}`, `From ${m.name} (${m.email})`, '/admin');
+      this.save(db);
+      return { data: m };
+    },
+    list: async (opts: ListOpts = {}): Promise<Envelope<Page<ApiContactMessage>>> => {
+      const items = [...this.db().contactMessages].sort((a, b) => b.created_at.localeCompare(a.created_at));
+      return { data: paginate(items, opts) };
+    },
+    markRead: async (id: string): Promise<Envelope<ApiContactMessage>> => {
+      const db = this.db();
+      const m = db.contactMessages.find((x) => x.id === id);
+      if (!m) throw this.notFound('Contact message', id);
+      m.read = true;
+      this.save(db);
+      return { data: m };
+    },
+  };
+
+  // ---- status page entries ---------------------------------------------------------------
+  statusEntries = {
+    list: async (): Promise<Envelope<ApiStatusEntry[]>> => {
+      const items = [...this.db().statusEntries].sort((a, b) => b.created_at.localeCompare(a.created_at));
+      return { data: items };
+    },
+    create: async (input: { title: string; detail?: string; state?: ApiStatusEntry['state'] }): Promise<Envelope<ApiStatusEntry>> => {
+      if (!input.title.trim()) throw new ApiError('validation', 'Title is required.', 422);
+      const db = this.db();
+      const e: ApiStatusEntry = {
+        id: uid('st'), title: input.title.trim(), detail: input.detail ?? '',
+        state: input.state ?? 'operational', created_at: isoNow(),
+      };
+      db.statusEntries.unshift(e);
+      this.logAudit(db, 'status.created', 'status', e.id, { state: e.state });
+      this.save(db);
+      return { data: e };
+    },
+    delete: async (id: string): Promise<Envelope<{ deleted: true }>> => {
+      const db = this.db();
+      if (!db.statusEntries.some((x) => x.id === id)) throw this.notFound('Status entry', id);
+      db.statusEntries = db.statusEntries.filter((x) => x.id !== id);
+      this.logAudit(db, 'status.deleted', 'status', id, {});
+      this.save(db);
+      return { data: { deleted: true } };
+    },
+  };
+
+  // ---- members (agent auth) ------------------------------------------------------------------
+  members = {
+    list: async (): Promise<Envelope<ApiMember[]>> => {
+      return { data: this.db().members };
+    },
+    get: async (id: string): Promise<Envelope<ApiMember>> => {
+      const m = this.db().members.find((x) => x.id === id);
+      if (!m) throw this.notFound('Member', id);
+      return { data: m };
+    },
+    create: async (displayName: string, role: TeamRole, passcode: string, extras?: {
+      job_title?: string; avatar_data_url?: string | null; department_ids?: string[];
+    }): Promise<Envelope<ApiMember>> => {
+      const name = displayName.trim();
+      if (!name) throw new ApiError('validation', 'Display name is required.', 422);
+      if (passcode.length < 4) throw new ApiError('validation', 'Passcode must be at least 4 characters.', 422);
+      const db = this.db();
+      if (db.members.some((m) => m.display_name.toLowerCase() === name.toLowerCase())) {
+        throw new ApiError('conflict', 'A member with that name already exists.', 409);
+      }
+      const m: ApiMember = {
+        id: uid('mem'), display_name: name, initials: memberInitials(name),
+        color: ['#4f46e5', '#0891b2', '#059669', '#f59e0b', '#8b5cf6'][db.members.length % 5],
+        role, passcode, last_login: null, status: 'offline',
+        job_title: (extras?.job_title ?? '').trim(),
+        avatar_data_url: extras?.avatar_data_url ?? null,
+        department_ids: extras?.department_ids ?? [],
+        created_at: isoNow(),
+      };
+      db.members.push(m);
+      this.logAudit(db, 'member.created', 'member', m.id, { name, role });
+      this.save(db);
+      return { data: m };
+    },
+    update: async (id: string, patch: Partial<Pick<ApiMember, 'display_name' | 'color' | 'role' | 'status' | 'job_title' | 'avatar_data_url' | 'department_ids'>>): Promise<Envelope<ApiMember>> => {
+      const db = this.db();
+      const m = db.members.find((x) => x.id === id);
+      if (!m) throw this.notFound('Member', id);
+      if (patch.display_name !== undefined) {
+        if (!patch.display_name.trim()) throw new ApiError('validation', 'Display name is required.', 422);
+        m.display_name = patch.display_name.trim();
+        m.initials = memberInitials(m.display_name);
+      }
+      if (patch.color !== undefined) m.color = patch.color;
+      if (patch.role !== undefined) m.role = patch.role;
+      if (patch.status !== undefined) m.status = patch.status;
+      if (patch.job_title !== undefined) m.job_title = patch.job_title.trim();
+      if (patch.avatar_data_url !== undefined) m.avatar_data_url = patch.avatar_data_url;
+      if (patch.department_ids !== undefined) m.department_ids = [...patch.department_ids];
+      this.logAudit(db, 'member.updated', 'member', id, patch as Record<string, unknown>);
+      this.save(db);
+      return { data: m };
+    },
+    remove: async (id: string): Promise<Envelope<{ deleted: true }>> => {
+      const db = this.db();
+      const m = db.members.find((x) => x.id === id);
+      if (!m) throw this.notFound('Member', id);
+      if (db.members.length <= 1) throw new ApiError('validation', 'A workspace needs at least one member.', 422);
+      db.members = db.members.filter((x) => x.id !== id);
+      this.logAudit(db, 'member.removed', 'member', id, { name: m.display_name });
+      this.save(db);
+      return { data: { deleted: true } };
+    },
+    /** Returns the member when the passcode matches, throws ApiError otherwise.
+     *  An empty displayName matches any member with that passcode (kiosk login). */
+    login: async (displayName: string, passcode: string): Promise<Envelope<ApiMember>> => {
+      const db = this.db();
+      const name = displayName.trim().toLowerCase();
+      const m = name
+        ? db.members.find((x) => x.display_name.toLowerCase() === name && x.passcode === passcode)
+        : db.members.find((x) => x.passcode === passcode);
+      if (!m) throw new ApiError('unauthorized', 'Wrong name or passcode.', 401);
+      return { data: m };
+    },
+    setPasscode: async (id: string, passcode: string): Promise<Envelope<{ updated: true }>> => {
+      if (passcode.length < 4) throw new ApiError('validation', 'Passcode must be at least 4 characters.', 422);
+      const db = this.db();
+      const m = db.members.find((x) => x.id === id);
+      if (!m) throw this.notFound('Member', id);
+      m.passcode = passcode;
+      this.logAudit(db, 'member.passcode_changed', 'member', id, {});
+      this.save(db);
+      return { data: { updated: true } };
+    },
+    touchLogin: async (id: string): Promise<Envelope<ApiMember>> => {
+      const db = this.db();
+      const m = db.members.find((x) => x.id === id);
+      if (!m) throw this.notFound('Member', id);
+      m.last_login = isoNow();
+      m.status = 'online';
+      this.save(db);
+      return { data: m };
+    },
+    setStatus: async (id: string, status: ApiMember['status']): Promise<Envelope<ApiMember>> => {
+      const db = this.db();
+      const m = db.members.find((x) => x.id === id);
+      if (!m) throw this.notFound('Member', id);
+      m.status = status;
+      this.logAudit(db, 'member.status_changed', 'member', id, { status });
+      this.save(db);
+      return { data: m };
+    },
+  };
+
+  // ---- property settings ----------------------------------------------------------------------
+  propertySettings = {
+    get: async (propertyId: string): Promise<Envelope<PropertySettings>> => {
+      const db = this.db();
+      // Merge branding defaults so workspaces seeded before the branding fields exist get them.
+      db.propertySettings[propertyId] = { ...defaultPropertySettings(), ...(db.propertySettings[propertyId] ?? {}) };
+      this.save(db);
+      return { data: db.propertySettings[propertyId] };
+    },
+    patch: async (propertyId: string, patch: Partial<PropertySettings>): Promise<Envelope<PropertySettings>> => {
+      const db = this.db();
+      const current = { ...defaultPropertySettings(), ...(db.propertySettings[propertyId] ?? {}) };
+      db.propertySettings[propertyId] = { ...current, ...patch };
+      this.logAudit(db, 'property_settings.updated', 'property', propertyId, patch as Record<string, unknown>);
+      this.save(db);
+      return { data: db.propertySettings[propertyId] };
+    },
+  };
+
+  // ---- workspace-level settings ------------------------------------------------------------------
+  copilotSettings = {
+    get: async (): Promise<Envelope<CopilotSettings>> => {
+      return { data: this.db().copilotSettings };
+    },
+    patch: async (patch: Partial<CopilotSettings>): Promise<Envelope<CopilotSettings>> => {
+      const db = this.db();
+      db.copilotSettings = { ...db.copilotSettings, ...patch };
+      this.logAudit(db, 'copilot_settings.updated', 'settings', 'copilot', patch as Record<string, unknown>);
+      this.save(db);
+      return { data: db.copilotSettings };
+    },
+  };
+  securitySettings = {
+    get: async (): Promise<Envelope<SecuritySettings>> => {
+      return { data: this.db().securitySettings };
+    },
+    patch: async (patch: Partial<SecuritySettings>): Promise<Envelope<SecuritySettings>> => {
+      const db = this.db();
+      db.securitySettings = { ...db.securitySettings, ...patch };
+      this.logAudit(db, 'security_settings.updated', 'settings', 'security', patch as Record<string, unknown>);
+      this.save(db);
+      return { data: db.securitySettings };
+    },
+  };
+  dataSettings = {
+    get: async (): Promise<Envelope<DataSettings>> => {
+      return { data: this.db().dataSettings };
+    },
+    patch: async (patch: Partial<DataSettings>): Promise<Envelope<DataSettings>> => {
+      const db = this.db();
+      db.dataSettings = { ...db.dataSettings, ...patch };
+      this.logAudit(db, 'data_settings.updated', 'settings', 'data', patch as Record<string, unknown>);
+      this.save(db);
+      return { data: db.dataSettings };
+    },
+  };
+
+  // ---- integrations ----------------------------------------------------------------------------------
+  integrations = {
+    list: async (): Promise<Envelope<ApiIntegration[]>> => {
+      return { data: this.db().integrations };
+    },
+    patch: async (id: string, patch: Partial<Pick<ApiIntegration, 'values' | 'enabled'>>): Promise<Envelope<ApiIntegration>> => {
+      const db = this.db();
+      const i = db.integrations.find((x) => x.id === id);
+      if (!i) throw this.notFound('Integration', id);
+      if (patch.values !== undefined) i.values = { ...patch.values };
+      if (patch.enabled !== undefined) i.enabled = patch.enabled;
+      this.logAudit(db, 'integration.updated', 'integration', id, { enabled: i.enabled, fields: Object.keys(i.values) });
+      this.save(db);
+      return { data: i };
+    },
+  };
+
+  // ---- unanswered questions -------------------------------------------------------------------------------
+  unanswered = {
+    list: async (opts: { includeDismissed?: boolean } & ListOpts = {}): Promise<Envelope<Page<ApiUnanswered>>> => {
+      let items = [...this.db().unanswered].sort((a, b) => b.count - a.count || b.created_at.localeCompare(a.created_at));
+      if (!opts.includeDismissed) items = items.filter((u) => !u.dismissed);
+      return { data: paginate(items, opts) };
+    },
+    add: async (question: string, conversationId: string | null = null): Promise<Envelope<ApiUnanswered>> => {
+      const q = question.trim();
+      if (!q) throw new ApiError('validation', 'Question is required.', 422);
+      const db = this.db();
+      const existing = db.unanswered.find((u) => u.question.toLowerCase() === q.toLowerCase() && !u.dismissed);
+      if (existing) {
+        existing.count += 1;
+        this.save(db);
+        return { data: existing };
+      }
+      const u: ApiUnanswered = { id: uid('unq'), question: q, conversation_id: conversationId, count: 1, dismissed: false, created_at: isoNow() };
+      db.unanswered.unshift(u);
+      this.logAudit(db, 'unanswered.added', 'unanswered', u.id, { question: q.slice(0, 80) });
+      this.save(db);
+      return { data: u };
+    },
+    dismiss: async (id: string): Promise<Envelope<ApiUnanswered>> => {
+      const db = this.db();
+      const u = db.unanswered.find((x) => x.id === id);
+      if (!u) throw this.notFound('Unanswered question', id);
+      u.dismissed = true;
+      this.logAudit(db, 'unanswered.dismissed', 'unanswered', id, {});
+      this.save(db);
+      return { data: u };
+    },
+    /** Promote to a KB article draft (knowledge-gap loop). */
+    promote: async (id: string): Promise<Envelope<ApiArticle>> => {
+      const db = this.db();
+      const u = db.unanswered.find((x) => x.id === id);
+      if (!u) throw this.notFound('Unanswered question', id);
+      const { data: article } = await this.kb.create({
+        title: u.question,
+        body: `Draft from the unanswered-questions log (asked ${u.count}×). Write the answer here.`,
+        category: 'Unanswered',
+        status: 'draft',
+      });
+      u.dismissed = true;
+      this.logAudit(db, 'unanswered.promoted', 'unanswered', id, { article: article.id });
+      this.save(db);
+      return { data: article };
+    },
+  };
+
+  // ---- audit search -------------------------------------------------------------------------------------------
+  audit = {
+    search: async (opts: { actor?: string; action?: string; from?: string; to?: string } & ListOpts = {}): Promise<Envelope<Page<AuditEntry>>> => {
+      let items = [...this.db().audit].sort((a, b) => b.created_at.localeCompare(a.created_at));
+      if (opts.actor) items = items.filter((e) => e.actor.toLowerCase().includes(opts.actor!.toLowerCase()));
+      if (opts.action) items = items.filter((e) => e.action.toLowerCase().includes(opts.action!.toLowerCase()));
+      if (opts.from) items = items.filter((e) => e.created_at >= opts.from!);
+      if (opts.to) items = items.filter((e) => e.created_at <= opts.to!);
+      return { data: paginate(items, opts) };
+    },
+  };
+
+  // ---- data management -------------------------------------------------------------------------------------------
+  /** Export the whole workspace db as JSON (one-click backup). */
+  dataExport = async (): Promise<Envelope<{ workspace: string; exported_at: string; db: ApiDB }>> => {
+    return { data: { workspace: this.workspace, exported_at: isoNow(), db: this.db() } };
+  };
+  /** Replace the workspace db from a previous export. */
+  dataImport = async (json: unknown): Promise<Envelope<{ imported: true }>> => {
+    const payload = json as { db?: Partial<ApiDB>; workspace?: string } | null;
+    if (!payload || typeof payload !== 'object' || !payload.db || typeof payload.db !== 'object') {
+      throw new ApiError('validation', 'Not a valid Brix Chat export file.', 422);
+    }
+    if (!Array.isArray(payload.db.conversations) || !Array.isArray(payload.db.properties)) {
+      throw new ApiError('validation', 'Export is missing required collections.', 422);
+    }
+    const db = payload.db as ApiDB;
+    ensureDefaults(db);
+    this.logAudit(db, 'data.imported', 'workspace', this.workspace, {});
+    const all = loadAll();
+    all[this.workspace] = db;
+    saveAll(all);
+    return { data: { imported: true } };
+  };
+  /** Reseed the workspace with demo data. */
+  dataReset = async (): Promise<Envelope<{ reset: true }>> => {
+    const db = seedDB();
+    db.audit = [{ id: uid('aud'), actor: this.actor, action: 'data.reset', entity: 'workspace', entity_id: this.workspace, meta: {}, created_at: isoNow() }];
+    const all = loadAll();
+    all[this.workspace] = db;
+    saveAll(all);
+    return { data: { reset: true } };
   };
 
   // ---- knowledge base --------------------------------------------------------
   kb = {
-    list: async (opts: { status?: 'draft' | 'published' } & ListOpts = {}): Promise<Envelope<Page<ApiArticle>>> => {
+    list: async (opts: { status?: 'draft' | 'published'; category?: string } & ListOpts = {}): Promise<Envelope<Page<ApiArticle>>> => {
       let items = [...this.db().articles].sort((a, b) => b.updated_at.localeCompare(a.updated_at));
       if (opts.status) items = items.filter((a) => a.status === opts.status);
+      if (opts.category) items = items.filter((a) => a.category_id === opts.category);
       return { data: paginate(items, opts) };
     },
     search: async (q: string): Promise<Envelope<ApiArticle[]>> => {
@@ -842,26 +2337,27 @@ export class BrixApi {
       if (!a) throw this.notFound('Article', id);
       return { data: a };
     },
-    create: async (input: { title: string; body?: string; category?: string; status?: 'draft' | 'published' }): Promise<Envelope<ApiArticle>> => {
+    create: async (input: { title: string; body?: string; category?: string; category_id?: string | null; status?: 'draft' | 'published' }): Promise<Envelope<ApiArticle>> => {
       if (!input.title.trim()) throw new ApiError('validation', 'Title is required.', 422);
       const db = this.db();
       const slug = input.title.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || uid('kb');
       const a: ApiArticle = {
         id: uid('kb'), title: input.title.trim(), slug, body: input.body ?? '',
-        category: input.category ?? 'General', status: input.status ?? 'draft',
+        category: input.category ?? 'General', category_id: input.category_id ?? null,
+        status: input.status ?? 'draft',
         views: 0, updated_at: isoNow(),
       };
       db.articles.unshift(a);
-      this.audit(db, 'article.created', 'article', a.id, { title: a.title });
+      this.logAudit(db, 'article.created', 'article', a.id, { title: a.title });
       this.save(db);
       return { data: a };
     },
-    update: async (id: string, patch: Partial<Pick<ApiArticle, 'title' | 'body' | 'category' | 'status'>>): Promise<Envelope<ApiArticle>> => {
+    update: async (id: string, patch: Partial<Pick<ApiArticle, 'title' | 'body' | 'category' | 'category_id' | 'status'>>): Promise<Envelope<ApiArticle>> => {
       const db = this.db();
       const a = db.articles.find((x) => x.id === id);
       if (!a) throw this.notFound('Article', id);
       Object.assign(a, patch, { updated_at: isoNow() });
-      this.audit(db, 'article.updated', 'article', id, patch as Record<string, unknown>);
+      this.logAudit(db, 'article.updated', 'article', id, patch as Record<string, unknown>);
       this.save(db);
       return { data: a };
     },
@@ -869,7 +2365,7 @@ export class BrixApi {
       const db = this.db();
       if (!db.articles.some((x) => x.id === id)) throw this.notFound('Article', id);
       db.articles = db.articles.filter((x) => x.id !== id);
-      this.audit(db, 'article.deleted', 'article', id, {});
+      this.logAudit(db, 'article.deleted', 'article', id, {});
       this.save(db);
       return { data: { deleted: true } };
     },
@@ -877,24 +2373,26 @@ export class BrixApi {
 
   // ---- canned responses -------------------------------------------------------
   canned = {
-    list: async (): Promise<Envelope<ApiCanned[]>> => {
-      return { data: this.db().canned };
+    list: async (opts: { category?: string } = {}): Promise<Envelope<ApiCanned[]>> => {
+      let items = this.db().canned;
+      if (opts.category) items = items.filter((c) => c.category_id === opts.category);
+      return { data: items };
     },
-    create: async (input: { shortcut: string; title: string; body: string }): Promise<Envelope<ApiCanned>> => {
+    create: async (input: { shortcut: string; title: string; body: string; category_id?: string | null }): Promise<Envelope<ApiCanned>> => {
       if (!input.title.trim() || !input.body.trim()) throw new ApiError('validation', 'Title and body are required.', 422);
       const db = this.db();
-      const c: ApiCanned = { id: uid('can'), shortcut: input.shortcut.trim(), title: input.title.trim(), body: input.body.trim() };
+      const c: ApiCanned = { id: uid('can'), shortcut: input.shortcut.trim(), title: input.title.trim(), body: input.body.trim(), category_id: input.category_id ?? null };
       db.canned.unshift(c);
-      this.audit(db, 'canned.created', 'canned', c.id, { title: c.title });
+      this.logAudit(db, 'canned.created', 'canned', c.id, { title: c.title });
       this.save(db);
       return { data: c };
     },
-    update: async (id: string, patch: Partial<Pick<ApiCanned, 'shortcut' | 'title' | 'body'>>): Promise<Envelope<ApiCanned>> => {
+    update: async (id: string, patch: Partial<Pick<ApiCanned, 'shortcut' | 'title' | 'body' | 'category_id'>>): Promise<Envelope<ApiCanned>> => {
       const db = this.db();
       const c = db.canned.find((x) => x.id === id);
       if (!c) throw this.notFound('Canned response', id);
       Object.assign(c, patch);
-      this.audit(db, 'canned.updated', 'canned', id, patch as Record<string, unknown>);
+      this.logAudit(db, 'canned.updated', 'canned', id, patch as Record<string, unknown>);
       this.save(db);
       return { data: c };
     },
@@ -902,7 +2400,7 @@ export class BrixApi {
       const db = this.db();
       if (!db.canned.some((x) => x.id === id)) throw this.notFound('Canned response', id);
       db.canned = db.canned.filter((x) => x.id !== id);
-      this.audit(db, 'canned.deleted', 'canned', id, {});
+      this.logAudit(db, 'canned.deleted', 'canned', id, {});
       this.save(db);
       return { data: { deleted: true } };
     },
@@ -932,7 +2430,7 @@ export class BrixApi {
         auto_disable: true, consecutive_failures: 0, created_at: isoNow(),
       };
       db.webhooks.unshift(w);
-      this.audit(db, 'webhook.created', 'webhook', w.id, { url, events: w.events });
+      this.logAudit(db, 'webhook.created', 'webhook', w.id, { url, events: w.events });
       this.save(db);
       // Local-only: the secret is stored in this browser; show it once, then masked.
       return { data: { webhook: w, secret } };
@@ -951,7 +2449,7 @@ export class BrixApi {
       }
       if (patch.enabled !== undefined) w.enabled = patch.enabled;
       if (patch.auto_disable !== undefined) w.auto_disable = patch.auto_disable;
-      this.audit(db, 'webhook.updated', 'webhook', id, patch as Record<string, unknown>);
+      this.logAudit(db, 'webhook.updated', 'webhook', id, patch as Record<string, unknown>);
       this.save(db);
       return { data: w };
     },
@@ -961,7 +2459,7 @@ export class BrixApi {
       if (!w) throw this.notFound('Webhook', id);
       const secret = randomHex(24);
       w.secret = secret;
-      this.audit(db, 'webhook.secret_rotated', 'webhook', id, {});
+      this.logAudit(db, 'webhook.secret_rotated', 'webhook', id, {});
       this.save(db);
       return { data: { secret } };
     },
@@ -970,7 +2468,7 @@ export class BrixApi {
       if (!db.webhooks.some((x) => x.id === id)) throw this.notFound('Webhook', id);
       db.webhooks = db.webhooks.filter((x) => x.id !== id);
       db.deliveries = db.deliveries.filter((x) => x.webhook_id !== id);
-      this.audit(db, 'webhook.deleted', 'webhook', id, {});
+      this.logAudit(db, 'webhook.deleted', 'webhook', id, {});
       this.save(db);
       return { data: { deleted: true } };
     },
@@ -1001,7 +2499,7 @@ export class BrixApi {
       };
       db.deliveries.unshift(delivery);
       db.deliveries = db.deliveries.slice(0, 500);
-      this.audit(db, 'webhook.test_fired', 'webhook', webhookId, { event });
+      this.logAudit(db, 'webhook.test_fired', 'webhook', webhookId, { event });
       this.save(db);
       return { data: { signed, delivery } };
     },
@@ -1025,7 +2523,7 @@ export class BrixApi {
       };
       db.apiKeys.unshift(record);
       db.fullKeys[record.id] = raw; // local-only: retrievable in this browser; UI shows it once
-      this.audit(db, 'api_key.created', 'api_key', record.id, { name: record.name, scopes: record.scopes });
+      this.logAudit(db, 'api_key.created', 'api_key', record.id, { name: record.name, scopes: record.scopes });
       this.save(db);
       return { data: { record, key: raw } };
     },
@@ -1049,7 +2547,7 @@ export class BrixApi {
       r.key_hash = await sha256Hex(raw);
       r.revoked = false;
       db.fullKeys[r.id] = raw;
-      this.audit(db, 'api_key.rotated', 'api_key', id, { name: r.name });
+      this.logAudit(db, 'api_key.rotated', 'api_key', id, { name: r.name });
       this.save(db);
       return { data: { record: r, key: raw } };
     },
@@ -1058,7 +2556,7 @@ export class BrixApi {
       const r = db.apiKeys.find((x) => x.id === id);
       if (!r) throw this.notFound('API key', id);
       r.revoked = true;
-      this.audit(db, 'api_key.revoked', 'api_key', id, { name: r.name });
+      this.logAudit(db, 'api_key.revoked', 'api_key', id, { name: r.name });
       this.save(db);
       return { data: r };
     },
@@ -1067,7 +2565,7 @@ export class BrixApi {
       if (!db.apiKeys.some((x) => x.id === id)) throw this.notFound('API key', id);
       db.apiKeys = db.apiKeys.filter((x) => x.id !== id);
       delete db.fullKeys[id];
-      this.audit(db, 'api_key.deleted', 'api_key', id, {});
+      this.logAudit(db, 'api_key.deleted', 'api_key', id, {});
       this.save(db);
       return { data: { deleted: true } };
     },
@@ -1156,6 +2654,16 @@ export function samplePayload(event: string): Record<string, unknown> {
       return { conversation_id: conv.id, rating: 5 };
     case 'widget.opened':
       return { page_url: 'https://demo.brixchat.com/pricing', visitor: { name: 'Guest' } };
+    case 'ticket.sla_breached':
+      return { ticket: { id: 't_7h2k', subject: 'Refund request #1042', priority: 'high' }, sla_due: '2026-09-23T10:00:00Z', overdue_by_min: 42 };
+    case 'campaign.sent':
+      return { campaign: { id: 'cp_1a2b', name: 'Spring AI add-on launch' }, recipients: 312, goal: 'signup' };
+    case 'goal.completed':
+      return { goal: { id: 'goal_9z8y', name: 'Checkout completed', event: 'purchase' }, conversation_id: conv.id, value: 99 };
+    case 'widget.rating':
+      return { conversation_id: conv.id, rating: 5, comment: 'Super helpful!' };
+    case 'rating.created':
+      return { rating: { id: 'rt_8k2m', kind: 'csat', score: 5, comment: 'Super helpful!' }, conversation_id: conv.id };
     default:
       return { conversation_id: conv.id };
   }
