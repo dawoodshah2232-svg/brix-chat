@@ -70,14 +70,35 @@ original.*
 
 Roles: `admin` (everything) · `developer` (keys + webhooks, no chat content) · `agent` (chats only) · `viewer` (read-only).
 
+Phase-2 member directory (exact §9 surface, same roles):
+
+| Method | Purpose |
+|---|---|
+| `api.members.list()` | Members, newest first |
+| `api.members.create(displayName, role, passcode)` | Add a member with an explicit passcode |
+| `api.members.update(id, patch)` | Change role, name, color, … |
+| `api.members.remove(id)` | Remove a member |
+| `api.members.login(displayName, passcode)` | Verify credentials; returns the member or throws |
+| `api.members.setPasscode(id, passcode)` | Rotate a member's passcode |
+| `api.members.touchLogin(id)` | Record a login timestamp |
+| `api.members.setStatus(id, status)` | `online` / `away` / `offline` |
+
 ## Tickets
 
 | Method | Purpose |
 |---|---|
-| `api.tickets.list({ status })` | Tickets by status |
+| `api.tickets.list(opts?)` | Filter by `{ status, priority, assignee, q }` + cursor pagination |
 | `api.tickets.get(id)` | Ticket detail |
-| `api.tickets.create({ subject, requester_name, requester_email, message, property_id })` | Open a ticket (offline forms and missed chats land here) |
-| `api.tickets.setStatus(id, status)` | `new` / `open` / `resolved` |
+| `api.tickets.create(input)` | Open a ticket: `{ property_id, subject, message, requester_name, requester_email, priority?, tags? }` |
+| `api.tickets.update(id, patch)` | Edit subject, status, priority, tags, … |
+| `api.tickets.assign(id, agentId)` | Assign to an agent |
+| `api.tickets.setPriority(id, p)` | `low` / `medium` / `high` / `urgent` |
+| `api.tickets.bulk(ids, action, agentId?)` | `resolve` / `assign` / `spam` across many tickets |
+| `api.tickets.fromConversation(convId, input)` | Create a ticket linked to a chat (escalation path) |
+
+Ticket shape: `{ id, property_id, subject, message, requester_name, requester_email,
+status, priority, assignee_id, sla_due, conversation_id, tags, created_at, updated_at }`.
+SLA breaches emit the `ticket.sla_breached` webhook.
 
 ## Knowledge base
 
@@ -151,6 +172,131 @@ audit log automatically with the current actor name.
 
 ---
 
+## Phase-2 content & admin APIs
+
+These ship with the phase-2 data API (local now, HTTP later). The Admin console
+consumes them through a structural adapter; where an endpoint has not landed
+yet, the console falls back to a clearly-labelled browser-local store.
+
+### Blog
+
+| Method | Purpose |
+|---|---|
+| `api.blog.list(publishedOnly?)` | Paginated posts, newest first |
+| `api.blog.getBySlug(slug)` | Single post by slug |
+| `api.blog.create(input)` | `{ slug, title, excerpt, body, tags, author, published, reading_mins, category_id? }` |
+| `api.blog.update(id, patch)` | Partial update |
+| `api.blog.delete(id)` | Delete a post |
+
+### Help docs
+
+| Method | Purpose |
+|---|---|
+| `api.helpDocs.list()` | All guides, ordered |
+| `api.helpDocs.getBySlug(slug)` | Single guide by slug |
+| `api.helpDocs.create(input)` | `{ slug, title, body, category, order, category_id?, published? }` |
+| `api.helpDocs.update(id, patch)` | Partial update |
+| `api.helpDocs.delete(id)` | Delete a guide |
+
+### Contact messages
+
+| Method | Purpose |
+|---|---|
+| `api.contactMessages.create({ name, email, subject, message })` | From the public contact form |
+| `api.contactMessages.list()` | Inbox, newest first |
+| `api.contactMessages.markRead(id)` | Mark as read |
+
+### Status page entries
+
+| Method | Purpose |
+|---|---|
+| `api.statusEntries.list()` | Public status entries |
+| `api.statusEntries.create({ title, detail, state })` | `state`: `operational` / `degraded` / `incident` |
+| `api.statusEntries.delete(id)` | Remove an entry |
+
+### Property settings (incl. branding)
+
+| Method | Purpose |
+|---|---|
+| `api.propertySettings.get(propertyId)` | Full settings incl. branding keys |
+| `api.propertySettings.patch(propertyId, patch)` | Schemaless merge — extra keys persist |
+
+Branding keys (white-label): `logo_data_url`, `brand_name`, `tagline`,
+`accent_color`, `custom_domain` (disabled until the backend phase),
+`custom_subdomain` (e.g. `acme` → `acme.brixchat.com`; path routing
+`/kb/:propertyKey` works now, subdomain mapping activates with the backend
+phase). Routing key: `default_department_id` (“when chat starts → route to
+department X”).
+
+### Departments
+
+| Method | Purpose |
+|---|---|
+| `api.departments.list(propertyId)` | Departments of one property |
+| `api.departments.create(propertyId, input)` | `{ name, description?, agent_ids?, routing_mode?, hours_override?, offline_behavior? }` |
+| `api.departments.update(id, patch)` | Partial update |
+| `api.departments.delete(id)` | Delete a department |
+| `api.routing.routeChat(propertyId, departmentId?)` | Simulated routing — returns `{ agent_id, department_id }` per the department's routing mode |
+
+`routing_mode`: `round-robin` (dealt out in rotation) · `least-busy` (fewest
+open chats) · `first-available` (whoever picks up first).
+`offline_behavior`: `ticket` (create a ticket) · `message` (take a message) ·
+`hide` (hide the widget). `hours_override`: per-day `{ day, open, close }`
+(empty times = closed), or `null` to inherit property hours.
+
+### Categories
+
+| Method | Purpose |
+|---|---|
+| `api.categories.list(scope, propertyId?)` | `scope`: `kb` / `canned` / `tickets` |
+| `api.categories.create(scope, propertyId, name, color?)` | New category |
+| `api.categories.update(id, patch)` | Rename / recolor (`{ name?, color? }`) |
+| `api.categories.delete(id)` | Delete; clears `category_id` references on tickets, articles, canned replies |
+
+### Ratings
+
+| Method | Purpose |
+|---|---|
+| `api.ratings.create(input)` | `{ property_id, conversation_id?, agent_id?, kind: 'csat' \| 'nps', score, comment? }` — CSAT 1–5, NPS 0–10; fires `rating.created` and raises a low-rating notification (CSAT ≤ 2, NPS ≤ 6) |
+| `api.ratings.list({ property_id?, agent_id?, kind?, from?, to?, limit? })` | Filtered ratings, newest first |
+| `api.ratings.summary(propertyId, days?)` | `{ csat_avg, csat_count, nps_score, nps_count, promoters, passives, detractors, trend: [{ day, csat_avg, nps_avg, count }] }` |
+
+### Copilot / security / data
+
+| Method | Purpose |
+|---|---|
+| `api.copilotSettings.get()` / `.patch(patch)` | Tone, autosuggest, summarize, translate, sources, provider |
+| `api.securitySettings.get()` / `.patch(patch)` | `session_timeout_mins`, `passcode_min_len`, `passcode_expiry_days` |
+| `api.dataSettings.get()` / `.patch(patch)` | `retention_days`, `auto_purge` |
+| `api.dataExport()` | Full workspace JSON download |
+| `api.dataImport(json)` | Restore from an export file |
+| `api.dataReset()` | Wipe local workspace data (confirmed) |
+
+### Integrations & unanswered questions
+
+| Method | Purpose |
+|---|---|
+| `api.integrations.list()` / `.patch(id, patch)` | Third-party connectors; secrets stay obfuscated, backend-phase ones are disabled locally |
+| `api.unanswered.list()` | Questions the bot could not answer |
+| `api.unanswered.dismiss(id)` | Dismiss a question |
+| `api.unanswered.promote(id)` | Promote a question into a help article draft |
+
+### Plays & goals
+
+| Method | Purpose |
+|---|---|
+| `api.plays.list()` / `.create(name, steps)` / `.delete(id)` | One-click automation macros (reply/tag/assign/priority/note) |
+| `api.goals.list()` / `.create(name, event, revenue)` / `.delete(id)` | Tracked conversion goals |
+| `api.goals.funnel(days)` | Visitors → chats → goal completions + revenue |
+
+### Audit search (§9)
+
+| Method | Purpose |
+|---|---|
+| `api.audit.search({ actor?, action?, from?, to?, cursor?, limit? })` | Filtered admin action trail |
+
+---
+
 ## Future HTTP mapping
 
 When the backend phase ships, these local methods map 1:1 onto REST endpoints
@@ -197,6 +343,35 @@ under `https://api.brixchat.com/v1`, authenticated with
 | `GET /v1/properties/{id}/metrics/response-times` | `api.metrics.responseTimes()` |
 | `GET /v1/properties/{id}/metrics/satisfaction` | `api.metrics.satisfaction()` |
 | `GET /v1/properties/{id}/metrics/tickets` | `api.metrics.tickets()` |
+| `GET/POST /v1/blog` | `api.blog.list/create` |
+| `GET/PATCH/DELETE /v1/blog/{id}` | `api.blog.getBySlug/update/delete` |
+| `GET/POST /v1/help` | `api.helpDocs.list/create` |
+| `GET/PATCH/DELETE /v1/help/{id}` | `api.helpDocs.getBySlug/update/remove` |
+| `GET/POST /v1/contact-messages` | `api.contactMessages.list/create` |
+| `POST /v1/contact-messages/{id}/read` | `api.contactMessages.markRead()` |
+| `GET/POST /v1/status` | `api.statusEntries.list/create` |
+| `DELETE /v1/status/{id}` | `api.statusEntries.delete()` |
+| `GET/PATCH /v1/properties/{id}/settings` | `api.propertySettings.get/patch` |
+| `GET/POST /v1/departments?property_id=` | `api.departments.list/create` |
+| `PATCH/DELETE /v1/departments/{id}` | `api.departments.update/delete` |
+| `POST /v1/routing/route` | `api.routing.routeChat()` |
+| `GET/POST /v1/categories?scope=` | `api.categories.list/create` |
+| `PATCH/DELETE /v1/categories/{id}` | `api.categories.update/delete` |
+| `GET/POST /v1/ratings` | `api.ratings.list/create` |
+| `GET /v1/ratings/summary?property_id=` | `api.ratings.summary()` |
+| `GET/PATCH /v1/copilot-settings` | `api.copilotSettings.get/patch` |
+| `GET/PATCH /v1/security-settings` | `api.securitySettings.get/patch` |
+| `GET/PATCH /v1/data-settings` | `api.dataSettings.get/patch` |
+| `GET /v1/data-export` · `POST /v1/data-import` · `POST /v1/data-reset` | `api.dataExport` / `api.dataImport` / `api.dataReset` |
+| `GET/PATCH /v1/integrations` | `api.integrations.list/patch` |
+| `GET /v1/unanswered` | `api.unanswered.list()` |
+| `POST /v1/unanswered/{id}/dismiss` · `/promote` | `api.unanswered.dismiss` / `api.unanswered.promote` |
+| `GET/POST /v1/plays` | `api.plays.list/create` |
+| `DELETE /v1/plays/{id}` | `api.plays.delete()` |
+| `GET/POST /v1/goals` | `api.goals.list/create` |
+| `DELETE /v1/goals/{id}` | `api.goals.delete()` |
+| `GET /v1/goals/funnel` | `api.goals.funnel()` |
+| `GET /v1/audit?actor=&action=&from=&to=` | `api.audit.search()` |
 
 Conventions for the HTTP API: JSON everywhere; success wraps in `{ data }`;
 errors return `{ error: { code, message } }` with 400/401/403/404/409/422/429;

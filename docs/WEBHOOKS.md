@@ -23,8 +23,13 @@ signature header.
 | `conversation.status_changed` | Status flips open / closed / spam / missed | conversation id, old/new status |
 | `ticket.created` | New ticket (offline form, missed chat) | ticket id, subject, requester |
 | `ticket.status_changed` | Ticket resolved or reopened | ticket id, old/new status |
+| `ticket.sla_breached` | Ticket passes its SLA deadline unresolved | ticket id, SLA policy, overdue minutes |
+| `campaign.sent` | A proactive campaign finishes sending | campaign id, audience size, sent/failed counts |
+| `goal.completed` | Visitor completes a tracked goal | goal id, visitor, revenue (if set) |
 | `contact.created` / `contact.updated` | Contact record changes | contact id, name, email |
 | `satisfaction.received` | Visitor submits a post-chat rating | conversation id, rating 1–5 |
+| `widget.rating` | Widget survey submitted (CSAT and/or NPS) | rating id, conversation id, agent, csat, nps, comment |
+| `rating.created` | Any new rating stored via the ratings API | rating id, agent, csat, nps, comment, source |
 | `widget.opened` | Visitor opens the chat widget | page URL, visitor |
 
 Subscribe per endpoint in Admin → Webhooks (checkbox list). An endpoint only
