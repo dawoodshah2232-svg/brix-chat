@@ -107,3 +107,35 @@ body {
 .animate-ping-soft {
   animation: ping-soft 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
 }
+
+/* ---------- phase 2 (Worker C): a11y + polish ---------- */
+
+/* visible keyboard focus for buttons/links/switches (text inputs already carry focus rings) */
+:where(button, a, [role="button"], [role="switch"], [role="radio"], summary):focus-visible {
+  outline: 2px solid #6366f1;
+  outline-offset: 2px;
+}
+
+/* respect reduced-motion preferences */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  html { scroll-behavior: auto; }
+}
+
+/* embedded widget: notch safe-area + breathing room on very narrow screens */
+.brix-widget-panel {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+@media (max-width: 380px) {
+  .brix-widget-panel .max-w-\[82\%\] { max-width: 88%; }
+}
+
+/* media never overflows its container (mobile safety) */
+img, video {
+  max-width: 100%;
+  height: auto;
+}

@@ -160,3 +160,42 @@ export function useConfirm() {
   ) : null;
   return { confirm: setReq, dialog };
 }
+
+// ---------- phase 2 additions (Worker C) ----------
+
+/** Titled section card — consistent heading hierarchy for settings/admin lists.
+ *  Props: title (required), subtitle?, action? (right-aligned header control),
+ *  children, className? (outer), bodyClassName? (inner padding override). */
+export function SectionCard({ title, subtitle, action, children, className, bodyClassName }: {
+  title: string; subtitle?: string; action?: ReactNode; children: ReactNode;
+  className?: string; bodyClassName?: string;
+}) {
+  return (
+    <Card className={className}>
+      <div className="flex items-start justify-between gap-3 px-5 pt-4 pb-3 border-b border-slate-100">
+        <div className="min-w-0">
+          <h2 className="text-sm font-bold text-slate-900">{title}</h2>
+          {subtitle && <p className="text-xs text-slate-500 mt-0.5">{subtitle}</p>}
+        </div>
+        {action && <div className="shrink-0">{action}</div>}
+      </div>
+      <div className={cx('p-5', bodyClassName)}>{children}</div>
+    </Card>
+  );
+}
+
+/** Page header — one consistent H1 pattern across the app.
+ *  Props: title (required), subtitle?, actions? (right-aligned buttons), className?. */
+export function PageHeader({ title, subtitle, actions, className }: {
+  title: string; subtitle?: string; actions?: ReactNode; className?: string;
+}) {
+  return (
+    <div className={cx('flex flex-wrap items-start justify-between gap-3 mb-5', className)}>
+      <div className="min-w-0">
+        <h1 className="text-xl font-display font-extrabold text-slate-900 tracking-tight">{title}</h1>
+        {subtitle && <p className="text-sm text-slate-500 mt-1">{subtitle}</p>}
+      </div>
+      {actions && <div className="flex items-center gap-2 shrink-0">{actions}</div>}
+    </div>
+  );
+}
