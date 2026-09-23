@@ -13,6 +13,10 @@
  *
  * JS API (all calls are safe before the widget finishes loading — they queue):
  *   BrixChat('boot', { property, visitor })   // start (auto-boots from data-* if omitted)
+ *   BrixChat('config', { prechat, offline, language }) // host overrides forwarded to widget (phase 2)
+ *   BrixChat('prompt', { text, delay, dismissAfter })  // proactive teaser bubble, queued (phase 2)
+ *   BrixChat('emailTranscript', email)       // ask the widget to send/save a transcript (phase 2)
+ *   BrixChat('setLanguage', code)            // en|es|fr|de|ar|ur (phase 2)
  *   BrixChat.show() / .hide() / .toggle()     // launcher visibility
  *   BrixChat.open() / .close()                // chat panel (maximize/minimize aliases)
  *   BrixChat.endChat()                        // end the current chat
@@ -28,7 +32,10 @@
  *   BrixChat.onChatStarted(fn) .onChatEnded(fn)
  *   BrixChat.onMessageReceived(fn) .onMessageSent(fn)
  *   BrixChat.onUnreadCountChanged(fn) .onStatusChange(fn)
- *   window event: 'brixchat:ready'
+ *   BrixChat.onSatisfaction(fn)               // CSAT rating after chat end (phase 2)
+ *   BrixChat.onRating(fn)                     // CSAT/NPS submitted, { kind, score } (phase 2, Worker D)
+ *   BrixChat.onTyping(fn)                     // visitor typing activity (phase 2)
+ *   window events: 'brixchat:ready', 'brixchat:satisfaction', ...
  *
  * Secure mode: pass visitor.hash = HMAC-SHA256(email, property_secret), generated
  * on your server. The loader forwards it to the widget; server-side verification
@@ -39,6 +46,18 @@
 
   var WIN = window, DOC = document;
   var NS = 'brixchat';
+
+  /* ---------- language packs (original short UI strings, phase 2) ---------- */
+  var LANGS = {
+    en: { openChat: 'Open chat', closeChat: 'Close chat', chatPanel: 'Brix chat panel', dismiss: 'Dismiss', startChat: 'Chat now', typing: 'typing' },
+    es: { openChat: 'Abrir chat', closeChat: 'Cerrar chat', chatPanel: 'Panel de chat de Brix', dismiss: 'Descartar', startChat: 'Chatear ahora', typing: 'escribiendo' },
+    fr: { openChat: 'Ouvrir le chat', closeChat: 'Fermer le chat', chatPanel: 'Panneau de chat Brix', dismiss: 'Ignorer', startChat: 'Discuter', typing: 'écrit' },
+    de: { openChat: 'Chat öffnen', closeChat: 'Chat schließen', chatPanel: 'Brix-Chat-Fenster', dismiss: 'Verwerfen', startChat: 'Jetzt chatten', typing: 'tippt' },
+    ar: { openChat: 'فتح المحادثة', closeChat: 'إغلاق المحادثة', chatPanel: 'لوحة محادثة بريكس', dismiss: 'تجاهل', startChat: 'تحدث الآن', typing: 'يكتب' },
+    ur: { openChat: 'چیٹ کھولیں', closeChat: 'چیٹ بند کریں', chatPanel: 'برکس چیٹ پینل', dismiss: 'نظر انداز کریں', startChat: 'ابھی چیٹ کریں', typing: 'لکھ رہا ہے' }
+  };
+  var RTL = { ar: 1, ur: 1 };
+  function langPack(code) { return LANGS[code] || LANGS.en; }
 
   /* ---------- pre-boot queue ---------- */
   var queued = [];
@@ -76,12 +95,19 @@
 
   var prebootVisitor = (WIN.Brix_API && WIN.Brix_API.visitor) || {};
 
+  var validLocale = (function (l) { return LANGS[l] ? l : 'en'; })(dataAttr('locale', 'en'));
+  function t(key) { var p = langPack(cfg.locale); return p[key] !== undefined ? p[key] : LANGS.en[key]; }
+
   var cfg = {
     property: dataAttr('property', dataAttr('key', '')),
     color: dataAttr('color', '#4f46e5'),
     position: dataAttr('position', 'bottom-right'),
     greeting: dataAttr('greeting', ''),
-    locale: dataAttr('locale', 'en'),
+    locale: validLocale,
+    // phase 2: host overrides for the widget's pre-chat / offline forms,
+    // forwarded to the iframe; WidgetPage merges them over property settings
+    prechat: null,   // { enabled?: boolean, fields?: string[] }
+    offline: null,   // { enabled?: boolean, fields?: string[] }
     visitor: {
       name: prebootVisitor.name || '',
       email: prebootVisitor.email || '',
@@ -119,7 +145,7 @@
   }
 
   /* ---------- DOM ---------- */
-  var bubble = null, badge = null, frame = null;
+  var bubble = null, badge = null, frame = null, teaserWrap = null;
 
   function el(name, styles, attrs) {
     var e = DOC.createElement(name);
@@ -139,7 +165,7 @@
       width: '60px', height: '60px', borderRadius: '50%', border: 'none',
       background: 'linear-gradient(135deg,#6366f1,#06b6d4)', cursor: 'pointer',
       boxShadow: '0 10px 30px rgba(79,70,229,.45)', padding: '0'
-    }, { 'aria-label': 'Open chat', id: NS + '-bubble' });
+    }, { 'aria-label': t('openChat'), 'aria-expanded': 'false', id: NS + '-bubble' });
     bubble.style[side] = '20px';
     bubble.innerHTML = ICON_CHAT;
 
@@ -158,7 +184,7 @@
       width: '380px', height: '560px', maxHeight: 'calc(100vh - 120px)',
       maxWidth: 'calc(100vw - 32px)', border: 'none', borderRadius: '18px',
       boxShadow: '0 24px 70px rgba(2,6,23,.35)', display: 'none', background: '#fff'
-    }, { id: NS + '-frame', title: 'Brix Chat' });
+    }, { id: NS + '-frame', title: t('chatPanel'), role: 'dialog', 'aria-modal': 'false', 'aria-label': t('chatPanel'), tabindex: '-1' });
     frame.style[side] = '20px';
     frame.src = widgetUrl();
     frame.addEventListener('load', function () {
@@ -167,15 +193,116 @@
         emit('ready', { property: cfg.property });
         sendCmd('config', {
           greeting: cfg.greeting, locale: cfg.locale,
-          visitor: cfg.visitor, attributes: cfg.attributes, tags: cfg.tags
+          visitor: cfg.visitor, attributes: cfg.attributes, tags: cfg.tags,
+          prechat: cfg.prechat, offline: cfg.offline // phase 2 host overrides
         });
       }
     });
 
     bubble.addEventListener('click', function () { api.toggle(); });
 
+    // phase 2: proactive-prompt teaser container (sits above the launcher)
+    teaserWrap = el('div', {
+      position: 'fixed', bottom: '94px', zIndex: '2147482999',
+      maxWidth: '260px', display: 'none'
+    }, { id: NS + '-teaser', role: 'status', 'aria-live': 'polite' });
+    teaserWrap.style[side] = '20px';
+    if (RTL[cfg.locale]) teaserWrap.style.direction = 'rtl';
+
     DOC.body.appendChild(frame);
+    DOC.body.appendChild(teaserWrap);
     DOC.body.appendChild(bubble);
+    applyLang();
+    // keyframes for the prompt teaser entrance
+    try {
+      var st = DOC.createElement('style');
+      st.setAttribute('data-' + NS, '1');
+      st.textContent = '@keyframes ' + NS + '-pop{from{opacity:0;transform:translateY(8px) scale(.97)}to{opacity:1;transform:none}}';
+      DOC.head.appendChild(st);
+    } catch (e) { /* ignore */ }
+  }
+
+  /* phase 2: re-label loader UI after a language change */
+  function applyLang() {
+    if (bubble) {
+      bubble.setAttribute('aria-label', state.open ? t('closeChat') : t('openChat'));
+      bubble.setAttribute('aria-expanded', state.open ? 'true' : 'false');
+    }
+    if (frame) {
+      frame.setAttribute('title', t('chatPanel'));
+      frame.setAttribute('aria-label', t('chatPanel'));
+    }
+    if (teaserWrap && RTL[cfg.locale]) teaserWrap.style.direction = 'rtl';
+    else if (teaserWrap) teaserWrap.style.direction = '';
+  }
+
+  /* ---------- proactive prompts (phase 2, queued, dismissible) ---------- */
+  var promptQueue = [], activePrompt = null, promptSeq = 0;
+
+  function queuePrompt(opts) {
+    opts = opts || {};
+    var text = String(opts.text || '').slice(0, 300);
+    if (!text) return;
+    promptQueue.push({
+      id: opts.id || ('p' + (++promptSeq)),
+      text: text,
+      delay: Math.max(0, Math.min(opts.delay || 4000, 120000)),
+      dismissAfter: opts.dismissAfter === 0 ? 0 : Math.max(5000, Math.min(opts.dismissAfter || 15000, 300000))
+    });
+    pumpPrompts();
+  }
+
+  function pumpPrompts() {
+    if (activePrompt || !promptQueue.length || !state.booted || state.hidden || state.open) return;
+    var p = promptQueue.shift();
+    activePrompt = p;
+    p.timer = setTimeout(function () { showPrompt(p); }, p.delay);
+  }
+
+  function showPrompt(p) {
+    if (!teaserWrap || state.open) { activePrompt = null; pumpPrompts(); return; }
+    teaserWrap.innerHTML = '';
+    teaserWrap.style.display = 'block';
+
+    var card = el('div', {
+      background: '#fff', borderRadius: '14px', padding: '12px 36px 12px 14px',
+      boxShadow: '0 12px 32px rgba(2,6,23,.22)', fontSize: '13px', color: '#1e293b',
+      fontFamily: 'system-ui,sans-serif', lineHeight: '1.45', cursor: 'pointer',
+      border: '1px solid rgba(99,102,241,.18)', animation: NS + '-pop .25s ease-out'
+    });
+    if (RTL[cfg.locale]) { card.style.padding = '12px 14px 12px 36px'; }
+    card.textContent = p.text;
+    card.setAttribute('tabindex', '0');
+    card.setAttribute('role', 'button');
+    card.setAttribute('aria-label', p.text + ' — ' + t('startChat'));
+    var openIt = function () { dismissPrompt(p, 'open'); api.open(); };
+    card.addEventListener('click', openIt);
+    card.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openIt(); } });
+
+    var x = el('button', {
+      position: 'absolute', top: '6px', right: '8px', border: 'none', background: 'transparent',
+      color: '#94a3b8', fontSize: '15px', cursor: 'pointer', padding: '2px 4px', lineHeight: '1'
+    }, { 'aria-label': t('dismiss') });
+    if (RTL[cfg.locale]) { x.style.right = 'auto'; x.style.left = '8px'; }
+    x.textContent = '×';
+    x.addEventListener('click', function (e) { e.stopPropagation(); dismissPrompt(p, 'dismiss'); });
+
+    card.style.position = 'relative';
+    card.appendChild(x);
+    teaserWrap.appendChild(card);
+    emit('promptShown', { id: p.id });
+    if (p.dismissAfter > 0) {
+      p.autoTimer = setTimeout(function () { dismissPrompt(p, 'auto'); }, p.dismissAfter);
+    }
+  }
+
+  function dismissPrompt(p, reason) {
+    if (activePrompt !== p) return;
+    clearTimeout(p.timer); clearTimeout(p.autoTimer);
+    activePrompt = null;
+    if (teaserWrap) { teaserWrap.style.display = 'none'; teaserWrap.innerHTML = ''; }
+    emit('promptDismissed', { id: p.id, reason: reason });
+    pumpPrompts();
   }
 
   function widgetUrl() {
@@ -215,6 +342,17 @@
         emit('messageSent', p.message);
       }
     }
+    // phase 2 events from the widget (all backward compatible additions)
+    else if (type === 'satisfaction') { emit('satisfaction', p); }
+    else if (type === 'ratingSubmitted') { emit('ratingSubmitted', p); } // phase 2 (Worker D): two-step rating
+    else if (type === 'typing') { emit('typing', p); }
+    else if (type === 'prechatSubmitted') { emit('prechatSubmitted', p); }
+    else if (type === 'offlineSubmitted') { emit('offlineSubmitted', p); }
+    else if (type === 'transcriptRequested') { emit('transcriptRequested', p); }
+    else if (type === 'promptShown') { emit('promptShown', p); }
+    else if (type === 'promptDismissed') { emit('promptDismissed', p); }
+    else if (type === 'languageChanged') { emit('languageChanged', p); }
+    else if (type === 'status') { state.status = p.status || state.status; emit('statusChange', state.status); }
   });
 
   function setOpen(v) {
@@ -222,9 +360,27 @@
     if (frame) frame.style.display = v ? 'block' : 'none';
     if (bubble) bubble.innerHTML = v ? ICON_X : ICON_CHAT;
     if (bubble && badge) bubble.appendChild(badge); // keep badge on top after innerHTML swap
-    if (v) setUnread(0);
+    if (v) {
+      setUnread(0);
+      if (activePrompt) dismissPrompt(activePrompt, 'open'); // opening chat consumes the teaser
+      try { if (frame) frame.focus({ preventScroll: true }); } catch (e) { /* ignore */ }
+    } else {
+      try { if (bubble) bubble.focus({ preventScroll: true }); } catch (e) { /* ignore */ }
+      pumpPrompts(); // panel closed — a queued teaser may now show
+    }
+    applyLang();
     emit(v ? 'open' : 'close', {});
   }
+
+  /* phase 2: Escape closes the panel; Tab cycles lightly between launcher and frame */
+  DOC.addEventListener('keydown', function (e) {
+    if (!state.booted || state.hidden) return;
+    if (e.key === 'Escape' && state.open) { api.close(); return; }
+    if (e.key === 'Tab' && state.open && frame && DOC.activeElement === bubble && !e.shiftKey) {
+      e.preventDefault();
+      try { frame.focus(); } catch (err) { /* ignore */ }
+    }
+  });
 
   function setUnread(n) {
     state.unread = n;
@@ -246,7 +402,9 @@
     if (opts.color) cfg.color = opts.color;
     if (opts.position) cfg.position = opts.position;
     if (opts.greeting) cfg.greeting = opts.greeting;
-    if (opts.locale) cfg.locale = opts.locale;
+    if (opts.locale && LANGS[opts.locale]) { cfg.locale = opts.locale; applyLang(); }
+    if (opts.prechat) cfg.prechat = opts.prechat;   // phase 2 host overrides
+    if (opts.offline) cfg.offline = opts.offline;   // phase 2 host overrides
     if (opts.visitor) {
       cfg.visitor.name = opts.visitor.name || cfg.visitor.name;
       cfg.visitor.email = opts.visitor.email || cfg.visitor.email;
@@ -266,7 +424,28 @@
 
   var api = {
     boot: function (opts) { boot(opts || {}); },
-    show: function () { ensureBoot(); state.hidden = false; if (bubble) bubble.style.display = 'block'; },
+    /* phase 2: host config overrides (pre-chat/offline/language) — forwarded to the widget */
+    config: function (opts) {
+      ensureBoot(); opts = opts || {};
+      if (opts.prechat) cfg.prechat = opts.prechat;
+      if (opts.offline) cfg.offline = opts.offline;
+      if (opts.language && LANGS[opts.language]) { cfg.locale = opts.language; applyLang(); }
+      if (opts.locale && LANGS[opts.locale]) { cfg.locale = opts.locale; applyLang(); }
+      sendCmd('config', { locale: cfg.locale, prechat: cfg.prechat, offline: cfg.offline });
+    },
+    /* phase 2: proactive prompt bubble (queued, auto-dismisses) */
+    prompt: function (opts) { ensureBoot(); queuePrompt(opts || {}); },
+    /* phase 2: ask the widget to save/email the chat transcript */
+    emailTranscript: function (email) { ensureBoot(); sendCmd('emailTranscript', { email: String(email || '') }); },
+    /* phase 2: switch the widget UI language */
+    setLanguage: function (code) {
+      ensureBoot();
+      if (!LANGS[code]) return false;
+      cfg.locale = code; applyLang();
+      sendCmd('language', { code: code });
+      return true;
+    },
+    show: function () { ensureBoot(); state.hidden = false; if (bubble) bubble.style.display = 'block'; pumpPrompts(); },
     hide: function () { ensureBoot(); state.hidden = true; if (bubble) bubble.style.display = 'none'; if (frame) frame.style.display = 'none'; state.open = false; },
     toggle: function () { ensureBoot(); setOpen(!state.open); },
     open: function () { ensureBoot(); setOpen(true); },
@@ -331,6 +510,11 @@
     onMessageSent: function (fn) { on('messageSent', fn); },
     onUnreadCountChanged: function (fn) { on('unreadCountChanged', fn); },
     onStatusChange: function (fn) { on('statusChange', fn); },
+    onSatisfaction: function (fn) { on('satisfaction', fn); }, // phase 2: CSAT after chat end
+    onRating: function (fn) { on('ratingSubmitted', fn); },     // phase 2 (Worker D): { kind: 'csat'|'nps', score }
+    onTyping: function (fn) { on('typing', fn); },             // phase 2: visitor typing activity
+    onPromptShown: function (fn) { on('promptShown', fn); },
+    onPromptDismissed: function (fn) { on('promptDismissed', fn); },
     _config: function () { return cfg; }
   };
 

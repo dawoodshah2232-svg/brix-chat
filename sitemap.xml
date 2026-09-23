@@ -1,9 +1,44 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url><loc>https://dawoodshah2232-svg.github.io/brix-chat/</loc><changefreq>weekly</changefreq><priority>1.0</priority></url>
-  <url><loc>https://dawoodshah2232-svg.github.io/brix-chat/features</loc><changefreq>weekly</changefreq><priority>0.9</priority></url>
-  <url><loc>https://dawoodshah2232-svg.github.io/brix-chat/pricing</loc><changefreq>weekly</changefreq><priority>0.9</priority></url>
-  <url><loc>https://dawoodshah2232-svg.github.io/brix-chat/signup</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://dawoodshah2232-svg.github.io/brix-chat/login</loc><changefreq>monthly</changefreq><priority>0.5</priority></url>
-  <url><loc>https://dawoodshah2232-svg.github.io/brix-chat/widget</loc><changefreq>monthly</changefreq><priority>0.4</priority></url>
+  <url><loc>https://brixchat.com/</loc><lastmod>2026-09-23</lastmod><changefreq>weekly</changefreq><priority>1.0</priority></url>
+  <url><loc>https://brixchat.com/features</loc><lastmod>2026-09-23</lastmod><changefreq>weekly</changefreq><priority>0.9</priority></url>
+  <url><loc>https://brixchat.com/pricing</loc><lastmod>2026-09-23</lastmod><changefreq>weekly</changefreq><priority>0.9</priority></url>
+  <url><loc>https://brixchat.com/blog</loc><lastmod>2026-09-23</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://brixchat.com/help</loc><lastmod>2026-09-23</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://brixchat.com/blog/thirty-second-support-gap</loc><lastmod>2026-09-23</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://brixchat.com/blog/pre-chat-forms-that-convert</loc><lastmod>2026-09-23</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://brixchat.com/blog/canned-responses-that-dont-sound-canned</loc><lastmod>2026-09-23</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://brixchat.com/blog/chat-to-ticket-handoff</loc><lastmod>2026-09-23</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://brixchat.com/blog/first-response-time-matters</loc><lastmod>2026-09-23</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://brixchat.com/blog/proactive-chat-timing</loc><lastmod>2026-09-23</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://brixchat.com/blog/unanswered-questions-log</loc><lastmod>2026-09-23</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://brixchat.com/blog/local-first-support-software</loc><lastmod>2026-09-23</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://brixchat.com/help/create-workspace</loc><lastmod>2026-09-23</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://brixchat.com/help/install-widget</loc><lastmod>2026-09-23</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://brixchat.com/help/invite-team</loc><lastmod>2026-09-23</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://brixchat.com/help/first-chat</loc><lastmod>2026-09-23</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://brixchat.com/help/pre-chat-form</loc><lastmod>2026-09-23</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://brixchat.com/help/triggers</loc><lastmod>2026-09-23</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://brixchat.com/help/campaigns</loc><lastmod>2026-09-23</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://brixchat.com/help/tickets</loc><lastmod>2026-09-23</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://brixchat.com/help/webhooks</loc><lastmod>2026-09-23</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://brixchat.com/help/api-keys</loc><lastmod>2026-09-23</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://brixchat.com/help/canned-variables</loc><lastmod>2026-09-23</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://brixchat.com/help/keyboard-shortcuts</loc><lastmod>2026-09-23</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://brixchat.com/about</loc><lastmod>2026-09-23</lastmod><changefreq>monthly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://brixchat.com/contact</loc><lastmod>2026-09-23</lastmod><changefreq>monthly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://brixchat.com/security</loc><lastmod>2026-09-23</lastmod><changefreq>monthly</changefreq><priority>0.5</priority></url>
+  <url><loc>https://brixchat.com/status</loc><lastmod>2026-09-23</lastmod><changefreq>daily</changefreq><priority>0.5</priority></url>
+  <url><loc>https://brixchat.com/privacy</loc><lastmod>2026-09-23</lastmod><changefreq>yearly</changefreq><priority>0.4</priority></url>
+  <url><loc>https://brixchat.com/terms</loc><lastmod>2026-09-23</lastmod><changefreq>yearly</changefreq><priority>0.4</priority></url>
+  <url><loc>https://brixchat.com/sitemap</loc><lastmod>2026-09-23</lastmod><changefreq>monthly</changefreq><priority>0.4</priority></url>
+  <!--
+    White-labelled property help centers: /kb/<public_key> is dynamic, so it
+    cannot be listed with a literal parameter. When a property publishes its
+    help center, append its real URL here, e.g.:
+      <url><loc>https://brixchat.com/kb/pk_live_abc123</loc><lastmod>2026-09-23</lastmod><changefreq>weekly</changefreq><priority>0.6</priority></url>
+    Regenerate this file (or append entries) on every publish, then resubmit
+    the sitemap in Search Console. Subdomain URLs (acme.brixchat.com/kb/…)
+    become valid once subdomain mapping activates with the backend phase.
+  -->
 </urlset>
