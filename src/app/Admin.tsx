@@ -1,97 +1,63 @@
-// Brix Chat — admin area (local-only).
-// Properties, API keys, webhooks, team, audit log, install page.
-// All data lives in this browser's localStorage via src/lib/api.ts.
-// Role-gated: only admin / developer roles can open /admin.
+// Brix Chat — PLATFORM ADMIN console (/admin).
+// Two products, two logins: /admin is the operator console (platform admin,
+// role 'owner', demo / 3456). It sees EVERYTHING across all client workspaces.
+// /app is the client dashboard, scoped to one workspace (dashboard worker).
+// Session model: { memberId, workspaceId, isPlatformAdmin, viewingWorkspaceId? }.
+// View-as: a platform admin sets viewingWorkspaceId and jumps to /app; the
+// /app shell renders the "Viewing as X — Exit view-as" banner. Effective
+// workspace everywhere = viewingWorkspaceId ?? workspaceId. The tabs below
+// aggregate explicitly across workspaces; nothing else may leak client data
+// across scopes. Local-only: all data lives in this browser's localStorage.
 
-import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { useStore } from '../lib/store';
-import {
-  API_SCOPES,
-  WEBHOOK_EVENTS,
-  getApi,
-  ApiError,
-} from '../lib/api';
-import type {
-  ApiKeyRecord,
-  ApiProperty,
-  ApiWebhook,
-  ApiAgent,
-  AuditEntry,
-  ApiDelivery,
-  SignedPayload,
-  TeamRole,
-  WidgetConfig,
-  ApiIntegration,
-  ApiConversation,
-  ApiTicket,
-  ApiContact,
-  ApiCanned,
-} from '../lib/api';
+import { Fragment, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useStore, effectiveWorkspaceId } from '../lib/store';
+import { getApi, ApiError } from '../lib/api';
 import { Badge, Button, Card, EmptyState, Input, Label, Modal, Select, StatCard, Textarea, Toggle, useConfirm } from '../components/ui';
 import { cx } from '../lib/utils';
-import { INTEGRATION_REGISTRY, getIntegration, providerConfigured } from '../lib/integrations';
-import { testIntegration, supabaseEnabled, type IntegrationTestResult } from '../lib/integrationClient';
-import {
-  asP2,
-  fmtTs,
-} from '../lib/contentSeed';
-import type {
-  ApiBlogPost2,
-  ApiHelpArticle2,
-  ApiContactMessage2,
-  ApiStatusEntry2,
-  ApiMember2,
-  ApiRating2,
-  RatingsSummary2,
-  ApiDepartment2,
-  DepartmentInput2,
-  RoutingMode,
-  OfflineBehavior,
-  DayHours,
-  ApiCategory2,
-  CategoryKind,
-  CategoryInput2,
-  PropertySettings2,
-  BlogSeed,
-  HelpSeed,
-} from '../lib/contentSeed';
 // Phase-4 admin elevation kit (all local, no new deps).
 import { ToastProvider, useToast } from '../components/admin/toast';
-import { Sparkline, LineChart, BarChart, Donut, ProgressRing } from '../components/admin/charts';
+import { Sparkline, BarChart, Donut, ProgressRing } from '../components/admin/charts';
 import { SavedFilterBar } from '../components/admin/savedFilters';
 import { useAdminShortcuts, ShortcutsHelpModal } from '../components/admin/shortcuts';
 import { ImportModal, exportCSV, exportJSON } from '../components/admin/importExport';
-import { AdminCommandPalette, collectAdminSearchItems } from '../components/admin/search';
+import { AdminCommandPalette } from '../components/admin/search';
 import type { SearchItem, AdminTabId } from '../components/admin/search';
 import { ScheduledReportsPanel } from '../components/admin/reports';
-import { BrandPreviewPanel } from '../components/admin/brandPreview';
+import { BlogManager, HelpManager, ContactInbox, StatusManager } from '../components/admin/contentManagers';
+import {
+  ensurePlatformSeed,
+  listClients, saveClients, listPlans, savePlans,
+  getPlatformSettings, savePlatformSettings, planById,
+  allProperties, aggregateAudit, storageUsage,
+  logPlatformError, getPlatformErrors, clearPlatformErrors,
+  exportAllData, resetAllData, collectPlatformSearchItems,
+} from '../components/admin/platform';
+import type {
+  ClientRecord, PlanRecord, ClientStatus, PropertyRow, ScopedAuditEntry,
+} from '../components/admin/platform';
+import { INTEGRATION_REGISTRY } from '../lib/integrations';
 
-type Tab = 'overview' | 'content' | 'properties' | 'branding' | 'ratings' | 'departments' | 'keys' | 'integrations' | 'webhooks' | 'team' | 'audit' | 'reports' | 'install';
+type Tab = AdminTabId;
 
 const TABS: Array<{ id: Tab; label: string; icon: string }> = [
-  { id: 'overview', label: 'Overview', icon: '📊' },
-  { id: 'content', label: 'Content', icon: '📝' },
-  { id: 'properties', label: 'Properties', icon: '🌐' },
-  { id: 'branding', label: 'Branding', icon: '🎨' },
-  { id: 'ratings', label: 'Ratings', icon: '⭐' },
-  { id: 'departments', label: 'Departments', icon: '🏢' },
-  { id: 'keys', label: 'API keys', icon: '🔑' },
-  { id: 'integrations', label: 'Integrations', icon: '🔌' },
-  { id: 'webhooks', label: 'Webhooks', icon: '🪝' },
-  { id: 'team', label: 'Team', icon: '👥' },
-  { id: 'audit', label: 'Audit log', icon: '📜' },
-  { id: 'reports', label: 'Reports', icon: '📈' },
-  { id: 'install', label: 'Install', icon: '🧩' },
+  { id: 'overview', label: 'Overview', icon: '\u{1F4CA}' },
+  { id: 'clients', label: 'Clients', icon: '\u{1F3E2}' },
+  { id: 'properties', label: 'Properties', icon: '\u{1F310}' },
+  { id: 'plans', label: 'Plans & billing', icon: '\u{1F4B3}' },
+  { id: 'content', label: 'Content', icon: '\u{1F4DD}' },
+  { id: 'system', label: 'System', icon: '\u2699\uFE0F' },
+  { id: 'audit', label: 'Audit log', icon: '\u{1F4DC}' },
+  { id: 'settings', label: 'Settings', icon: '\u{1F6E0}\uFE0F' },
 ];
 
-const WIDGET_HOST = 'https://dawoodshah2232-svg.github.io/brix-chat';
+// --- shared bits -----------------------------------------------------------------
 
 function useApi() {
   const { session } = useStore();
   return useMemo(
-    () => getApi(session?.workspace ?? 'demo', session?.displayName ?? 'system'),
-    [session?.workspace, session?.displayName],
+    () => getApi(session?.workspaceId ?? 'demo', session?.displayName ?? 'platform'),
+    [session?.workspaceId, session?.displayName],
   );
 }
 
@@ -176,14 +142,7 @@ function itemsOf<T>(data: { items: T[] } | T[] | null | undefined): T[] {
 }
 
 /** True when the phase-2 endpoint isn't implemented by the runtime yet. */
-function missingP2(e: unknown): boolean {
-  return e instanceof ApiError && (e.code === 'not_implemented' || e.status === 501);
-}
 
-function useP2() {
-  const api = useApi();
-  return useMemo(() => asP2(api), [api]);
-}
 
 /** Flash-highlight a row when the command palette jumps to it. Returns the
  *  currently-flashing row id (or null). Rows opt in via id={`row-${id}`}. */
@@ -246,1207 +205,6 @@ interface CatSource {
   remove(id: string): Promise<void>;
 }
 
-function useCatSource(propId: string): CatSource {
-  const p2 = useP2();
-  return useMemo<CatSource>(() => {
-    if (typeof (p2 as unknown as { categories?: unknown }).categories === 'undefined') {
-      const dead = async (): Promise<never> => { throw new ApiError('not_implemented', 'Categories API is not available yet.', 501); };
-      return { live: false, list: dead, create: dead, update: dead, remove: dead };
-    }
-    return {
-      live: true,
-      list: async (scope) => itemsOf((await p2.categories.list(scope, propId || undefined)).data),
-      create: async (scope, name, color) => (await p2.categories.create(scope, propId, name, color)).data,
-      update: async (id, patch) => (await p2.categories.update(id, patch)).data,
-      remove: async (id) => { await p2.categories.delete(id); },
-    };
-  }, [p2, propId]);
-}
-
-// ---- Department source (api.departments.*) ----------------------------------
-
-interface DeptSource {
-  live: boolean;
-  list(): Promise<ApiDepartment2[]>;
-  create(input: DepartmentInput2): Promise<ApiDepartment2>;
-  update(id: string, patch: Partial<DepartmentInput2>): Promise<ApiDepartment2>;
-  remove(id: string): Promise<void>;
-}
-
-function useDeptSource(propId: string): DeptSource {
-  const p2 = useP2();
-  return useMemo<DeptSource>(() => {
-    if (typeof (p2 as unknown as { departments?: unknown }).departments === 'undefined') {
-      const dead = async (): Promise<never> => { throw new ApiError('not_implemented', 'Departments API is not available yet.', 501); };
-      return { live: false, list: dead, create: dead, update: dead, remove: dead };
-    }
-    return {
-      live: true,
-      list: async () => (await p2.departments.list(propId)).data,
-      create: async (input) => (await p2.departments.create(propId, input)).data,
-      update: async (id, patch) => (await p2.departments.update(id, patch)).data,
-      remove: async (id) => { await p2.departments.delete(id); },
-    };
-  }, [p2, propId]);
-}
-
-// ---------------------------------------------------------------------------
-// Properties
-// ---------------------------------------------------------------------------
-
-function snippetFor(p: ApiProperty): string {
-  return `<script>
-  window.Brix_API = window.Brix_API || {};
-</script>
-<script async src="${WIDGET_HOST}/widget.js" data-property="${p.public_key}"></script>`;
-}
-
-function PropertiesTab({ refresh }: { refresh: () => void }) {
-  const api = useApi();
-  const { confirm, dialog } = useConfirm();
-  const [props, setProps] = useState<ApiProperty[]>([]);
-  const [name, setName] = useState('');
-  const [domain, setDomain] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const [showSnippet, setShowSnippet] = useState<string | null>(null);
-
-  const load = async () => {
-    try {
-      const { data } = await api.properties.list();
-      setProps(data);
-    } catch (e) {
-      setError(errMsg(e));
-    }
-  };
-  useEffect(() => { void load(); }, []);
-
-  const create = async () => {
-    setBusy(true);
-    setError('');
-    try {
-      await api.properties.create({ name, domain });
-      setName('');
-      setDomain('');
-      await load();
-      refresh();
-    } catch (e) {
-      setError(errMsg(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const regen = (p: ApiProperty) => {
-    confirm({
-      title: 'Regenerate public key?',
-      body: `The old embed snippet for "${p.name}" will stop working. Continue?`,
-      action: async () => {
-        await api.properties.regenerateKey(p.id);
-        await load();
-        refresh();
-      },
-    });
-  };
-
-  const remove = (p: ApiProperty) => {
-    confirm({
-      title: 'Delete property?',
-      body: `"${p.name}" and its widget config will be removed from this browser.`,
-      action: async () => {
-        await api.properties.remove(p.id);
-        await load();
-        refresh();
-      },
-    });
-  };
-
-  return (
-    <div>
-      {dialog}
-      <h2 className="font-display font-bold text-xl mb-1">Properties</h2>
-      <p className="text-sm text-slate-500 mb-6">Websites where the widget is installed. Each gets a public key for the embed snippet.</p>
-
-      <Card className="p-5 mb-6">
-        <div className="grid sm:grid-cols-[1fr_1fr_auto] gap-3 items-end">
-          <div>
-            <Label>Site name</Label>
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="My store" />
-          </div>
-          <div>
-            <Label>Domain</Label>
-            <Input value={domain} onChange={(e) => setDomain(e.target.value)} placeholder="example.com" />
-          </div>
-          <Button onClick={create} disabled={busy || !name.trim()}>Add property</Button>
-        </div>
-        {error && <p className="text-sm text-rose-600 mt-3">{error}</p>}
-      </Card>
-
-      {props.length === 0 ? (
-        <EmptyState icon="🌐" title="No properties yet" hint="Add your first website above." />
-      ) : (
-        <div className="space-y-4">
-          {props.map((p) => (
-            <Card key={p.id} className="p-5">
-              <div className="flex flex-wrap items-start gap-3">
-                <div className="min-w-0 flex-1">
-                  <div className="font-bold text-slate-900">{p.name}</div>
-                  <div className="text-sm text-slate-500">{p.domain || 'No domain set'} · added {fmtDate(p.created_at)}</div>
-                  <div className="mt-2 flex items-center gap-2 flex-wrap">
-                    <code className="text-xs font-mono bg-slate-100 rounded-lg px-2.5 py-1.5 text-slate-700">{p.public_key}</code>
-                    <CopyBtn text={p.public_key} label="Copy key" />
-                    {p.secure_mode && <Badge tone="indigo">secure mode</Badge>}
-                  </div>
-                </div>
-                <div className="flex gap-2 flex-wrap">
-                  <Button variant="ghost" onClick={() => setShowSnippet(p.id)}>Snippet</Button>
-                  <Button variant="ghost" onClick={() => regen(p)}>Regenerate key</Button>
-                  <Button variant="ghost" onClick={() => remove(p)} className="text-rose-600">Delete</Button>
-                </div>
-              </div>
-              <Modal open={showSnippet === p.id} onClose={() => setShowSnippet(null)} title={`Embed snippet — ${p.name}`} wide>
-                <p className="text-sm text-slate-500 mb-3">Paste this before the closing <code>&lt;/body&gt;</code> tag on every page.</p>
-                <Code text={snippetFor(p)} />
-                <div className="mt-4 flex justify-end">
-                  <CopyBtn text={snippetFor(p)} label="Copy snippet" />
-                </div>
-              </Modal>
-            </Card>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// API keys
-// ---------------------------------------------------------------------------
-
-function ApiKeysTab({ refresh }: { refresh: () => void }) {
-  const api = useApi();
-  const { confirm, dialog } = useConfirm();
-  const [keys, setKeys] = useState<ApiKeyRecord[]>([]);
-  const [name, setName] = useState('');
-  const [scopes, setScopes] = useState<string[]>(['conversations:read']);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const [revealed, setRevealed] = useState<{ name: string; key: string } | null>(null);
-
-  const load = async () => {
-    const { data } = await api.apiKeys.list();
-    setKeys(data);
-  };
-  useEffect(() => { void load(); }, []);
-
-  const toggleScope = (s: string) => setScopes((prev) => (prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]));
-
-  const create = async () => {
-    setBusy(true);
-    setError('');
-    try {
-      const { data } = await api.apiKeys.create({ name, scopes });
-      setRevealed({ name: data.record.name, key: data.key });
-      setName('');
-      setScopes(['conversations:read']);
-      await load();
-      refresh();
-    } catch (e) {
-      setError(errMsg(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const rotate = (k: ApiKeyRecord) => {
-    confirm({
-      title: 'Rotate key?',
-      body: `The old key "${k.name}" stops working immediately.`,
-      action: async () => {
-        const { data } = await api.apiKeys.rotate(k.id);
-        setRevealed({ name: data.record.name, key: data.key });
-        await load();
-        refresh();
-      },
-    });
-  };
-
-  const revoke = (k: ApiKeyRecord) => {
-    confirm({
-      title: 'Revoke key?',
-      body: `"${k.name}" will stop working immediately.`,
-      action: async () => {
-        await api.apiKeys.revoke(k.id);
-        await load();
-        refresh();
-      },
-    });
-  };
-
-  const remove = (k: ApiKeyRecord) => {
-    confirm({
-      title: 'Delete key?',
-      body: `Delete "${k.name}" permanently?`,
-      action: async () => {
-        await api.apiKeys.remove(k.id);
-        await load();
-        refresh();
-      },
-    });
-  };
-
-  return (
-    <div>
-      {dialog}
-      <h2 className="font-display font-bold text-xl mb-1">API keys</h2>
-      <p className="text-sm text-slate-500 mb-6">Server-to-server keys with granular scopes. The full key is shown once — lists show only the prefix.</p>
-      <Notice>
-        <span><strong>Local mode.</strong> Keys are generated and validated inside this browser only. They will authenticate real HTTP requests once the backend phase ships — the same key format and scopes carry over.</span>
-      </Notice>
-
-      <Card className="p-5 mb-6">
-        <div className="grid sm:grid-cols-[1fr_auto] gap-3 items-end mb-4">
-          <div>
-            <Label>Key name</Label>
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. bridgxapp.com backend" />
-          </div>
-          <Button onClick={create} disabled={busy || !name.trim() || scopes.length === 0}>Create key</Button>
-        </div>
-        <Label>Scopes</Label>
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2 mt-2">
-          {API_SCOPES.map((s) => (
-            <label key={s.name} className={cx('flex items-start gap-2.5 rounded-xl border px-3 py-2.5 cursor-pointer text-sm transition', scopes.includes(s.name) ? 'border-brix-500 bg-brix-50' : 'border-slate-200 hover:border-slate-300')}>
-              <input type="checkbox" checked={scopes.includes(s.name)} onChange={() => toggleScope(s.name)} className="mt-1 accent-indigo-600" />
-              <span>
-                <span className="font-mono font-semibold text-[13px] text-slate-800">{s.name}</span>
-                <span className="block text-xs text-slate-500">{s.description}</span>
-              </span>
-            </label>
-          ))}
-        </div>
-        {error && <p className="text-sm text-rose-600 mt-3">{error}</p>}
-      </Card>
-
-      <Modal open={revealed !== null} onClose={() => setRevealed(null)} title="API key — copy it now" wide>
-        <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 mb-4">
-          <p className="text-[13px] text-rose-900 font-medium">This is the only time the full key is shown. Store it somewhere safe.</p>
-        </div>
-        <Code text={revealed?.key ?? ''} />
-        <div className="mt-4 flex justify-end gap-2">
-          <CopyBtn text={revealed?.key ?? ''} label="Copy key" />
-          <Button onClick={() => setRevealed(null)}>Done</Button>
-        </div>
-      </Modal>
-
-      {keys.length === 0 ? (
-        <EmptyState icon="🔑" title="No API keys yet" hint="Create your first key above." />
-      ) : (
-        <div className="space-y-3">
-          {keys.map((k) => (
-            <Card key={k.id} className={cx('p-4', k.revoked && 'opacity-60')}>
-              <div className="flex flex-wrap items-center gap-3">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-bold text-slate-900">{k.name}</span>
-                    {k.revoked ? <Badge tone="rose">revoked</Badge> : <Badge tone="green">active</Badge>}
-                  </div>
-                  <code className="text-xs font-mono text-slate-500">{k.prefix}…</code>
-                  <div className="flex flex-wrap gap-1.5 mt-2">
-                    {k.scopes.map((s) => (
-                      <span key={s} className="text-[11px] font-mono bg-slate-100 text-slate-600 rounded-md px-2 py-0.5">{s}</span>
-                    ))}
-                  </div>
-                  <div className="text-xs text-slate-400 mt-1.5">
-                    {k.usage_count} calls · {k.last_used_at ? `last used ${fmtDate(k.last_used_at)}` : 'never used'} · created {fmtDate(k.created_at)}
-                  </div>
-                </div>
-                <div className="flex gap-2">
-                  {!k.revoked && <Button variant="ghost" onClick={() => rotate(k)}>Rotate</Button>}
-                  {!k.revoked && <Button variant="ghost" onClick={() => revoke(k)} className="text-amber-700">Revoke</Button>}
-                  <Button variant="ghost" onClick={() => remove(k)} className="text-rose-600">Delete</Button>
-                </div>
-              </div>
-            </Card>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Integrations (phase 3, Worker D)
-//
-// Per-provider connect cards: what it does, key fields, honest Test button
-// (local format validation + a clearly-labeled local stub until Supabase is
-// connected, then a real Edge Function call), enable toggle, connected
-// status, and the "wires into" mapping. Keys stay in this browser.
-// ---------------------------------------------------------------------------
-
-function IntegrationsTab({ readOnly }: { readOnly: boolean }) {
-  const api = useApi();
-  const [items, setItems] = useState<ApiIntegration[]>([]);
-  const [drafts, setDrafts] = useState<Record<string, Record<string, string>>>({});
-  const [revealed, setRevealed] = useState<Record<string, boolean>>({});
-  const [testing, setTesting] = useState<string | null>(null);
-  const [results, setResults] = useState<Record<string, IntegrationTestResult>>({});
-  const [savedAt, setSavedAt] = useState<Record<string, number>>({});
-
-  const load = async () => {
-    const { data } = await api.integrations.list();
-    setItems(data);
-    setDrafts((prev) => {
-      const next: Record<string, Record<string, string>> = {};
-      for (const i of data) next[i.id] = prev[i.id] ?? { ...(i.values || {}) };
-      return next;
-    });
-  };
-  useEffect(() => { void load(); }, []);
-
-  const setVal = (id: string, name: string, v: string) =>
-    setDrafts((d) => ({ ...d, [id]: { ...(d[id] || {}), [name]: v } }));
-
-  const save = async (id: string) => {
-    await api.integrations.patch(id, { values: drafts[id] || {} });
-    setSavedAt((s) => ({ ...s, [id]: Date.now() }));
-    await load();
-  };
-
-  const clearKeys = (id: string) => {
-    if (readOnly) return;
-    setDrafts((d) => ({ ...d, [id]: {} }));
-    void api.integrations.patch(id, { values: {} }).then(() => load());
-  };
-
-  const toggleEnabled = (id: string, v: boolean) => {
-    if (readOnly) return;
-    void api.integrations.patch(id, { enabled: v }).then(() => load());
-  };
-
-  const runTest = async (id: string) => {
-    const def = getIntegration(id);
-    if (!def) return;
-    setTesting(id);
-    try {
-      const r = await testIntegration(def, drafts[id] || {});
-      setResults((p) => ({ ...p, [id]: r }));
-    } finally {
-      setTesting(null);
-    }
-  };
-
-  const edgeLive = supabaseEnabled();
-
-  return (
-    <div>
-      <h2 className="font-display font-bold text-xl mb-1">Integrations</h2>
-      <p className="text-sm text-slate-500 mb-6">Connect third-party services. Each card shows where the provider plugs into Brix Chat and what the backend will do with its credentials.</p>
-      <Notice>
-        <span><strong>Local mode.</strong> Keys are stored locally in this demo. Live calls activate with the backend phase — the Test button says exactly what it checked.</span>
-      </Notice>
-
-      <div className="grid lg:grid-cols-2 gap-5">
-        {items.map((item) => {
-          const def = getIntegration(item.id) ?? INTEGRATION_REGISTRY.find((r) => r.id === item.id);
-          if (!def) return null;
-          const savedVals = item.values || {};
-          const configured = providerConfigured(def, savedVals);
-          const draft = drafts[item.id] || {};
-          const dirty = JSON.stringify(draft) !== JSON.stringify(savedVals);
-          const result = results[item.id];
-          return (
-            <Card key={item.id} className="p-5 flex flex-col">
-              <div className="flex items-start gap-3 mb-2">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-bold text-slate-900">{def.name}</span>
-                    {item.enabled ? <Badge tone="green">Enabled</Badge> : <Badge tone="slate">Disabled</Badge>}
-                    {configured ? <Badge tone="green">● Connected</Badge> : <Badge tone="amber">Not configured</Badge>}
-                    {def.status === 'local'
-                      ? <Badge tone="indigo">Local keys</Badge>
-                      : <Badge tone="amber">Backend phase</Badge>}
-                  </div>
-                  <p className="text-[13px] text-slate-600 mt-1.5">{def.description}</p>
-                </div>
-                <Toggle checked={item.enabled} onChange={(v) => toggleEnabled(item.id, v)} label={`Enable ${def.name}`} />
-              </div>
-
-              <div className="rounded-xl bg-slate-50 border border-slate-200/70 px-3.5 py-2.5 text-[13px] text-slate-700 space-y-1 mb-4">
-                <p><span className="font-semibold">🔌 Wires into:</span> {def.wiresInto}</p>
-                <p><span className="font-semibold">⚙️ Live call:</span>{' '}
-                  {def.edgeFunction ? (
-                    <code className="font-mono text-[12px] bg-white border border-slate-200 rounded px-1.5 py-0.5">POST /functions/v1/{def.edgeFunction}</code>
-                  ) : (
-                    <span className="text-slate-500">no Edge Function documented yet</span>
-                  )}{' '}— {def.liveCall}</p>
-              </div>
-
-              <div className="space-y-3 mb-4">
-                {def.keyFields.map((f) => (
-                  <div key={f.name}>
-                    <Label>{f.label}</Label>
-                    <div className="relative">
-                      <Input
-                        type={f.secret && !revealed[item.id] ? 'password' : 'text'}
-                        value={draft[f.name] || ''}
-                        onChange={(e) => setVal(item.id, f.name, e.target.value)}
-                        placeholder={f.placeholder}
-                        disabled={readOnly}
-                        autoComplete="off"
-                        spellCheck={false}
-                        className={f.secret ? 'pr-16 font-mono' : 'font-mono'}
-                      />
-                      {f.secret && (
-                        <button
-                          type="button"
-                          onClick={() => setRevealed((r) => ({ ...r, [item.id]: !r[item.id] }))}
-                          className="absolute right-2 top-1/2 -translate-y-1/2 text-xs font-semibold text-slate-500 hover:text-slate-700"
-                        >
-                          {revealed[item.id] ? 'Hide' : 'Show'}
-                        </button>
-                      )}
-                    </div>
-                    {f.format && <p className="text-[11px] text-slate-400 mt-1">{f.format.note}</p>}
-                  </div>
-                ))}
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2 mt-auto">
-                <Button size="sm" onClick={() => void save(item.id)} disabled={readOnly || !dirty}>
-                  {savedAt[item.id] && !dirty ? '✓ Saved' : 'Save keys'}
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => clearKeys(item.id)} disabled={readOnly || Object.keys(savedVals).length === 0} className="text-rose-600">
-                  Clear
-                </Button>
-                <Button size="sm" variant="secondary" onClick={() => void runTest(item.id)} disabled={testing === item.id}>
-                  {testing === item.id ? 'Testing…' : 'Test'}
-                </Button>
-                <span className="text-[11px] text-slate-400 ml-auto">
-                  {edgeLive && def.edgeFunction
-                    ? 'Supabase connected — Test dry-runs the Edge Function (no side effects).'
-                    : 'Local stub — Test validates key format only.'}
-                </span>
-              </div>
-
-              {result && (
-                <div className={cx('mt-4 rounded-xl border px-3.5 py-3 text-[13px]', result.ok ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50')}>
-                  <div className="flex items-center gap-2 mb-2">
-                    <Badge tone={result.mode === 'edge' ? 'indigo' : 'amber'}>
-                      {result.mode === 'edge' ? 'LIVE EDGE TEST' : 'LOCAL STUB'}
-                    </Badge>
-                    <span className={cx('font-semibold', result.ok ? 'text-emerald-800' : 'text-amber-800')}>
-                      {result.ok ? '✓ Passed' : '✗ Needs attention'}
-                    </span>
-                  </div>
-                  <ul className="space-y-1 mb-2">
-                    {result.checks.map((c) => (
-                      <li key={c.field} className={cx('flex gap-2', c.ok ? 'text-emerald-800' : 'text-amber-800')}>
-                        <span aria-hidden>{c.ok ? '✓' : '✗'}</span>
-                        <span>{c.message}</span>
-                      </li>
-                    ))}
-                  </ul>
-                  <p className={result.ok ? 'text-emerald-800' : 'text-amber-800'}>{result.summary}</p>
-                  {result.detail && <p className="font-mono text-[11px] text-slate-500 mt-1.5 break-all">{result.detail}</p>}
-                </div>
-              )}
-            </Card>
-          );
-        })}
-      </div>
-
-      <p className="text-xs text-slate-400 mt-6">
-        Endpoint names follow <span className="font-mono">supabase/README.md</span> (backend phase):
-        {' '}<span className="font-mono">ai-copilot</span> (OpenAI, Anthropic), <span className="font-mono">send-email</span> (Resend),
-        {' '}<span className="font-mono">webhook-dispatcher</span> (Zapier). Providers with no documented function yet
-        get local format validation only — stated on the card. Saved keys never leave this browser today.
-      </p>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Webhooks
-// ---------------------------------------------------------------------------
-
-function WebhooksTab({ refresh }: { refresh: () => void }) {
-  const api = useApi();
-  const { confirm, dialog } = useConfirm();
-  const [props, setProps] = useState<ApiProperty[]>([]);
-  const [propId, setPropId] = useState('');
-  const [hooks, setHooks] = useState<ApiWebhook[]>([]);
-  const [deliveries, setDeliveries] = useState<Record<string, ApiDelivery[]>>({});
-  const [expanded, setExpanded] = useState<string | null>(null);
-  const [editing, setEditing] = useState<ApiWebhook | null>(null);
-  const [creating, setCreating] = useState(false);
-  const [form, setForm] = useState({ url: '', events: [] as string[], enabled: true });
-  const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [revealedSecret, setRevealedSecret] = useState<string | null>(null);
-  const [firing, setFiring] = useState<ApiWebhook | null>(null);
-  const [fireEvent, setFireEvent] = useState('message.created');
-  const [fireResult, setFireResult] = useState<SignedPayload | null>(null);
-  const [fireBusy, setFireBusy] = useState(false);
-
-  const load = async (pid: string) => {
-    const { data } = await api.webhooks.list(pid || undefined);
-    setHooks(data);
-    const d: Record<string, ApiDelivery[]> = {};
-    for (const w of data) {
-      const r = await api.deliveries.list(w.id, { limit: 20 });
-      d[w.id] = r.data.items;
-    }
-    setDeliveries(d);
-  };
-
-  useEffect(() => {
-    (async () => {
-      const { data } = await api.properties.list();
-      setProps(data);
-      const pid = data[0]?.id ?? '';
-      setPropId(pid);
-      if (pid) await load(pid);
-    })();
-  }, []);
-
-  const changeProp = async (pid: string) => {
-    setPropId(pid);
-    if (pid) await load(pid);
-    else setHooks([]);
-  };
-
-  const toggleEvent = (e: string) =>
-    setForm((f) => ({ ...f, events: f.events.includes(e) ? f.events.filter((x) => x !== e) : [...f.events, e] }));
-
-  const openCreate = () => {
-    setForm({ url: '', events: ['message.created'], enabled: true });
-    setCreating(true);
-    setError('');
-  };
-  const openEdit = (w: ApiWebhook) => {
-    setForm({ url: w.url, events: w.events, enabled: w.enabled });
-    setEditing(w);
-    setError('');
-  };
-
-  const saveForm = async () => {
-    setBusy(true);
-    setError('');
-    try {
-      if (editing) {
-        await api.webhooks.update(editing.id, { url: form.url, events: form.events, enabled: form.enabled });
-      } else {
-        const { data } = await api.webhooks.create({ property_id: propId, url: form.url, events: form.events, enabled: form.enabled });
-        setRevealedSecret(data.secret);
-      }
-      setEditing(null);
-      setCreating(false);
-      await load(propId);
-      refresh();
-    } catch (e) {
-      setError(errMsg(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const toggleEnabled = async (w: ApiWebhook) => {
-    await api.webhooks.update(w.id, { enabled: !w.enabled });
-    await load(propId);
-    refresh();
-  };
-
-  const toggleAutoDisable = async (w: ApiWebhook) => {
-    await api.webhooks.update(w.id, { auto_disable: !w.auto_disable });
-    await load(propId);
-  };
-
-  const rotateSecret = (w: ApiWebhook) => {
-    confirm({
-      title: 'Rotate webhook secret?',
-      body: 'The old secret stops verifying immediately — update the receiver first.',
-      action: async () => {
-        const { data } = await api.webhooks.rotateSecret(w.id);
-        setRevealedSecret(data.secret);
-        await load(propId);
-        refresh();
-      },
-    });
-  };
-
-  const remove = (w: ApiWebhook) => {
-    confirm({
-      title: 'Delete webhook?',
-      body: `Remove ${w.url} and its delivery log?`,
-      action: async () => {
-        await api.webhooks.remove(w.id);
-        await load(propId);
-        refresh();
-      },
-    });
-  };
-
-  const testFire = async () => {
-    if (!firing) return;
-    setFireBusy(true);
-    setFireResult(null);
-    try {
-      const { data } = await api.deliveries.testFire(firing.id, fireEvent);
-      setFireResult(data.signed);
-      await load(propId);
-      refresh();
-    } catch (e) {
-      setError(errMsg(e));
-    } finally {
-      setFireBusy(false);
-    }
-  };
-
-  const statusTone = (s: string) => (s === 'delivered' ? 'green' : s === 'test' ? 'cyan' : s === 'pending' ? 'amber' : 'rose') as 'green' | 'cyan' | 'amber' | 'rose' | 'slate';
-
-  return (
-    <div>
-      {dialog}
-      <h2 className="font-display font-bold text-xl mb-1">Webhooks</h2>
-      <p className="text-sm text-slate-500 mb-6">Push chat events to your own systems as they happen.</p>
-      <Notice>
-        <span><strong>Local mode.</strong> Configuration and the delivery log work fully here, but no real HTTP requests leave this browser yet — real delivery activates with the backend phase. Use <strong>Test fire</strong> to preview the exact signed payload your endpoint will receive.</span>
-      </Notice>
-
-      <div className="flex flex-wrap items-center gap-3 mb-5">
-        <div className="min-w-56">
-          <Select value={propId} onChange={(e) => void changeProp(e.target.value)}>
-            {props.map((p) => (
-              <option key={p.id} value={p.id}>{p.name}</option>
-            ))}
-          </Select>
-        </div>
-        <Button onClick={openCreate} disabled={!propId}>Add endpoint</Button>
-      </div>
-
-      {hooks.length === 0 ? (
-        <EmptyState icon="🪝" title="No webhook endpoints" hint="Add one to start receiving events." />
-      ) : (
-        <div className="space-y-4">
-          {hooks.map((w) => (
-            <Card key={w.id} className="p-5">
-              <div className="flex flex-wrap items-start gap-3">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-mono text-sm font-semibold text-slate-900 break-all">{w.url}</span>
-                    {w.enabled ? <Badge tone="green">enabled</Badge> : <Badge tone="slate">disabled</Badge>}
-                    {w.consecutive_failures > 0 && <Badge tone="rose">{w.consecutive_failures} failures</Badge>}
-                  </div>
-                  <div className="flex flex-wrap gap-1.5 mt-2">
-                    {w.events.map((e) => (
-                      <span key={e} className="text-[11px] font-mono bg-indigo-50 text-indigo-700 rounded-md px-2 py-0.5">{e}</span>
-                    ))}
-                  </div>
-                  <div className="flex flex-wrap items-center gap-4 mt-3 text-[13px] text-slate-600">
-                    <Toggle checked={w.enabled} onChange={() => void toggleEnabled(w)} label="Enabled" />
-                    <Toggle checked={w.auto_disable} onChange={() => void toggleAutoDisable(w)} label="Auto-disable on repeated failures" />
-                  </div>
-                </div>
-                <div className="flex gap-2 flex-wrap">
-                  <Button variant="ghost" onClick={() => { setFiring(w); setFireEvent(w.events[0] ?? 'message.created'); setFireResult(null); }}>Test fire</Button>
-                  <Button variant="ghost" onClick={() => openEdit(w)}>Edit</Button>
-                  <Button variant="ghost" onClick={() => rotateSecret(w)}>Rotate secret</Button>
-                  <Button variant="ghost" onClick={() => remove(w)} className="text-rose-600">Delete</Button>
-                </div>
-              </div>
-
-              {/* delivery log */}
-              <div className="mt-4 border-t border-slate-100 pt-4">
-                <div className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">Delivery log</div>
-                {(deliveries[w.id] ?? []).length === 0 ? (
-                  <p className="text-[13px] text-slate-400">No deliveries yet — fire a test to see the signed payload.</p>
-                ) : (
-                  <div className="rounded-xl border border-slate-200 overflow-hidden">
-                    <table className="w-full text-[13px]">
-                      <thead>
-                        <tr className="bg-slate-50 text-left text-xs text-slate-500">
-                          <th className="px-3 py-2 font-semibold">Time</th>
-                          <th className="px-3 py-2 font-semibold">Event</th>
-                          <th className="px-3 py-2 font-semibold">Status</th>
-                          <th className="px-3 py-2 font-semibold">Attempts</th>
-                          <th className="px-3 py-2 font-semibold">Event ID</th>
-                          <th className="px-3 py-2" />
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {(deliveries[w.id] ?? []).map((d) => (
-                          <>
-                            <tr key={d.id} className="border-t border-slate-100">
-                              <td className="px-3 py-2 text-slate-500 whitespace-nowrap">{fmtDate(d.created_at)}</td>
-                              <td className="px-3 py-2 font-mono text-xs">{d.event}</td>
-                              <td className="px-3 py-2"><Badge tone={statusTone(d.status)}>{d.status}</Badge></td>
-                              <td className="px-3 py-2">{d.attempts}</td>
-                              <td className="px-3 py-2 font-mono text-xs text-slate-400">{d.event_id.slice(0, 13)}…</td>
-                              <td className="px-3 py-2 text-right">
-                                <button onClick={() => setExpanded(expanded === d.id ? null : d.id)} className="text-xs font-semibold text-brix-600 hover:underline">
-                                  {expanded === d.id ? 'Hide payload' : 'View payload'}
-                                </button>
-                              </td>
-                            </tr>
-                            {expanded === d.id && (
-                              <tr key={`${d.id}-x`} className="border-t border-slate-100 bg-slate-50/60">
-                                <td colSpan={6} className="px-3 py-3">
-                                  {d.note && <p className="text-xs text-amber-700 mb-2">⚠️ {d.note}</p>}
-                                  <Code text={JSON.stringify(d.payload, null, 2)} maxH="260px" />
-                                </td>
-                              </tr>
-                            )}
-                          </>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            </Card>
-          ))}
-        </div>
-      )}
-
-      {/* create / edit modal */}
-      <Modal open={creating || editing !== null} onClose={() => { setCreating(false); setEditing(null); }} title={editing ? 'Edit webhook' : 'Add webhook endpoint'} wide>
-        <div className="space-y-4">
-          <div>
-            <Label>Endpoint URL</Label>
-            <Input value={form.url} onChange={(e) => setForm({ ...form, url: e.target.value })} placeholder="https://your-app.com/hooks/brix" />
-          </div>
-          <div>
-            <Label>Subscribed events</Label>
-            <div className="grid sm:grid-cols-2 gap-2 mt-2 max-h-64 overflow-y-auto slim-scroll pr-1">
-              {WEBHOOK_EVENTS.map((e) => (
-                <label key={e.name} className={cx('flex items-start gap-2.5 rounded-xl border px-3 py-2.5 cursor-pointer text-sm transition', form.events.includes(e.name) ? 'border-brix-500 bg-brix-50' : 'border-slate-200 hover:border-slate-300')}>
-                  <input type="checkbox" checked={form.events.includes(e.name)} onChange={() => toggleEvent(e.name)} className="mt-1 accent-indigo-600" />
-                  <span>
-                    <span className="font-mono font-semibold text-[13px] text-slate-800">{e.name}</span>
-                    <span className="block text-xs text-slate-500">{e.description}</span>
-                  </span>
-                </label>
-              ))}
-            </div>
-          </div>
-          <Toggle checked={form.enabled} onChange={(v) => setForm({ ...form, enabled: v })} label="Enabled" />
-          {error && <p className="text-sm text-rose-600">{error}</p>}
-          <div className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={() => { setCreating(false); setEditing(null); }}>Cancel</Button>
-            <Button onClick={saveForm} disabled={busy}>{editing ? 'Save changes' : 'Create endpoint'}</Button>
-          </div>
-        </div>
-      </Modal>
-
-      {/* revealed secret modal */}
-      <Modal open={revealedSecret !== null} onClose={() => setRevealedSecret(null)} title="Webhook secret — copy it now">
-        <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 mb-4">
-          <p className="text-[13px] text-rose-900 font-medium">Shown once. Use it to verify the X-Brix-Signature header.</p>
-        </div>
-        <Code text={revealedSecret ?? ''} />
-        <div className="mt-4 flex justify-end gap-2">
-          <CopyBtn text={revealedSecret ?? ''} label="Copy secret" />
-          <Button onClick={() => setRevealedSecret(null)}>Done</Button>
-        </div>
-      </Modal>
-
-      {/* test fire modal */}
-      <Modal open={firing !== null} onClose={() => { setFiring(null); setFireResult(null); }} title="Test fire webhook" wide>
-        <p className="text-sm text-slate-500 mb-4">
-          Builds the <strong>exact signed payload</strong> that would be POSTed to <span className="font-mono text-xs">{firing?.url}</span>. No request leaves this browser yet.
-        </p>
-        <div className="flex gap-2 mb-4">
-          <div className="flex-1">
-            <Select value={fireEvent} onChange={(e) => setFireEvent(e.target.value)}>
-              {(firing?.events ?? []).map((e) => (
-                <option key={e} value={e}>{e}</option>
-              ))}
-            </Select>
-          </div>
-          <Button onClick={testFire} disabled={fireBusy}>{fireBusy ? 'Signing…' : 'Fire test'}</Button>
-        </div>
-        {error && <p className="text-sm text-rose-600 mb-3">{error}</p>}
-        {fireResult && (
-          <div className="space-y-3">
-            <div>
-              <div className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-1.5">Request headers</div>
-              <Code text={Object.entries(fireResult.headers).map(([k, v]) => `${k}: ${v}`).join('\n')} />
-            </div>
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <div className="text-xs font-bold uppercase tracking-wide text-slate-400">Request body</div>
-                <CopyBtn text={fireResult.body} label="Copy body" />
-              </div>
-              <Code text={JSON.stringify(JSON.parse(fireResult.body), null, 2)} maxH="300px" />
-            </div>
-            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5">
-              ⚠️ Preview only — logged as a “test” delivery. Real HTTP delivery activates with the backend phase.
-            </p>
-          </div>
-        )}
-      </Modal>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Team
-// ---------------------------------------------------------------------------
-
-const ROLE_LABELS: Record<TeamRole, string> = { admin: 'Admin', agent: 'Agent', developer: 'Developer', viewer: 'Viewer' };
-const ROLE_HINTS: Record<TeamRole, string> = {
-  admin: 'Full access: chats, settings, keys, webhooks, team.',
-  agent: 'Answers chats. No admin screens.',
-  developer: 'Manages keys and webhooks. No chat content.',
-  viewer: 'Read-only access.',
-};
-
-function TeamTab({ refresh, readOnly }: { refresh: () => void; readOnly: boolean }) {
-  const api = useApi();
-  const { session } = useStore();
-  const { confirm, dialog } = useConfirm();
-  const [agents, setAgents] = useState<ApiAgent[]>([]);
-  const [name, setName] = useState('');
-  const [role, setRole] = useState<TeamRole>('agent');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const [revealed, setRevealed] = useState<{ name: string; passcode: string } | null>(null);
-
-  const load = async () => {
-    const { data } = await api.agents.list();
-    setAgents(data);
-  };
-  useEffect(() => { void load(); }, []);
-
-  const invite = async () => {
-    setBusy(true);
-    setError('');
-    try {
-      const { data } = await api.agents.invite({ display_name: name, role });
-      setRevealed({ name: data.agent.display_name, passcode: data.passcode });
-      setName('');
-      await load();
-      refresh();
-    } catch (e) {
-      setError(errMsg(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const setRoleOf = async (a: ApiAgent, r: TeamRole) => {
-    await api.agents.update(a.id, { role: r });
-    await load();
-    refresh();
-  };
-
-  const remove = (a: ApiAgent) => {
-    confirm({
-      title: 'Remove team member?',
-      body: `Remove "${a.display_name}" from the team?`,
-      action: async () => {
-        await api.agents.remove(a.id);
-        await load();
-        refresh();
-      },
-    });
-  };
-
-  const roleTone = (r: TeamRole) => (r === 'admin' ? 'rose' : r === 'developer' ? 'indigo' : r === 'viewer' ? 'slate' : 'green') as 'rose' | 'indigo' | 'slate' | 'green';
-
-  return (
-    <div>
-      {dialog}
-      <h2 className="font-display font-bold text-xl mb-1">Team</h2>
-      <p className="text-sm text-slate-500 mb-6">Who can access this workspace, and what they can do.</p>
-      <Notice>
-        <span><strong>Local mode.</strong> Members are stored in this browser. Email invites activate with the backend phase — for now, share the one-time passcode directly.</span>
-      </Notice>
-
-      <Card className="p-5 mb-6">
-        <div className="grid sm:grid-cols-[1fr_180px_auto] gap-3 items-end">
-          <div>
-            <Label>Display name</Label>
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Sara Ahmed" />
-          </div>
-          <div>
-            <Label>Role</Label>
-            <Select value={role} onChange={(e) => setRole(e.target.value as TeamRole)}>
-              {(Object.keys(ROLE_LABELS) as TeamRole[]).map((r) => (
-                <option key={r} value={r}>{ROLE_LABELS[r]}</option>
-              ))}
-            </Select>
-          </div>
-          <Button onClick={invite} disabled={busy || !name.trim()}>Invite member</Button>
-        </div>
-        <p className="text-xs text-slate-500 mt-2">{ROLE_HINTS[role]}</p>
-        {error && <p className="text-sm text-rose-600 mt-3">{error}</p>}
-      </Card>
-
-      <Modal open={revealed !== null} onClose={() => setRevealed(null)} title="Member passcode — share it once">
-        <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 mb-4">
-          <p className="text-[13px] text-rose-900 font-medium">
-            <strong>{revealed?.name}</strong> logs in with workspace <strong>{session?.workspace}</strong> + this passcode. Shown once.
-          </p>
-        </div>
-        <Code text={revealed?.passcode ?? ''} />
-        <div className="mt-4 flex justify-end gap-2">
-          <CopyBtn text={revealed?.passcode ?? ''} label="Copy passcode" />
-          <Button onClick={() => setRevealed(null)}>Done</Button>
-        </div>
-      </Modal>
-
-      <div className="space-y-3">
-        {agents.map((a) => (
-          <Card key={a.id} className="p-4">
-            <div className="flex flex-wrap items-center gap-3">
-              <span className={cx('w-2.5 h-2.5 rounded-full', a.online ? 'bg-emerald-500' : 'bg-slate-300')} title={a.online ? 'Online' : 'Offline'} />
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-bold text-slate-900">{a.display_name}</span>
-                  <Badge tone={roleTone(a.role)}>{ROLE_LABELS[a.role]}</Badge>
-                  {a.display_name === session?.displayName && <Badge tone="cyan">you</Badge>}
-                </div>
-                <div className="text-xs text-slate-400 mt-1">
-                  {a.last_login_at ? `Last login ${fmtDate(a.last_login_at)}` : 'Never logged in'} · passcode ••••••
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <Select value={a.role} onChange={(e) => void setRoleOf(a, e.target.value as TeamRole)} aria-label="Change role">
-                  {(Object.keys(ROLE_LABELS) as TeamRole[]).map((r) => (
-                    <option key={r} value={r}>{ROLE_LABELS[r]}</option>
-                  ))}
-                </Select>
-                {a.display_name !== session?.displayName && (
-                  <Button variant="ghost" onClick={() => remove(a)} className="text-rose-600">Remove</Button>
-                )}
-              </div>
-            </div>
-          </Card>
-        ))}
-      </div>
-      <MemberProfiles readOnly={readOnly} />
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Audit log
-// ---------------------------------------------------------------------------
-
-function AuditTab() {
-  const api = useApi();
-  const [entries, setEntries] = useState<AuditEntry[]>([]);
-  const [expanded, setExpanded] = useState<string | null>(null);
-
-  useEffect(() => {
-    (async () => {
-      const { data } = await api.auditLog.list({ limit: 100 });
-      setEntries(data.items);
-    })();
-  }, []);
-
-  return (
-    <div>
-      <h2 className="font-display font-bold text-xl mb-1">Audit log</h2>
-      <p className="text-sm text-slate-500 mb-6">Every admin action in this workspace — who did what, and when.</p>
-      {entries.length === 0 ? (
-        <EmptyState icon="📜" title="No audit entries yet" hint="Admin actions will appear here." />
-      ) : (
-        <Card className="overflow-hidden">
-          <table className="w-full text-[13px]">
-            <thead>
-              <tr className="bg-slate-50 text-left text-xs text-slate-500">
-                <th className="px-4 py-2.5 font-semibold">Time</th>
-                <th className="px-4 py-2.5 font-semibold">Actor</th>
-                <th className="px-4 py-2.5 font-semibold">Action</th>
-                <th className="px-4 py-2.5 font-semibold">Entity</th>
-                <th className="px-4 py-2.5" />
-              </tr>
-            </thead>
-            <tbody>
-              {entries.map((e) => (
-                <>
-                  <tr key={e.id} className="border-t border-slate-100">
-                    <td className="px-4 py-2.5 text-slate-500 whitespace-nowrap">{fmtDate(e.created_at)}</td>
-                    <td className="px-4 py-2.5 font-semibold">{e.actor}</td>
-                    <td className="px-4 py-2.5 font-mono text-xs">{e.action}</td>
-                    <td className="px-4 py-2.5 text-slate-500">{e.entity}{e.entity_id ? ` · ${e.entity_id.slice(0, 12)}…` : ''}</td>
-                    <td className="px-4 py-2.5 text-right">
-                      <button onClick={() => setExpanded(expanded === e.id ? null : e.id)} className="text-xs font-semibold text-brix-600 hover:underline">
-                        {expanded === e.id ? 'Hide' : 'Details'}
-                      </button>
-                    </td>
-                  </tr>
-                  {expanded === e.id && (
-                    <tr key={`${e.id}-x`} className="border-t border-slate-100 bg-slate-50/60">
-                      <td colSpan={5} className="px-4 py-3">
-                        <Code text={JSON.stringify(e.meta, null, 2)} maxH="200px" />
-                      </td>
-                    </tr>
-                  )}
-                </>
-              ))}
-            </tbody>
-          </table>
-        </Card>
-      )}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Install
-// ---------------------------------------------------------------------------
-
-const JS_API_REF: Array<{ title: string; code: string }> = [
-  {
-    title: 'Boot with a visitor identity',
-    code: `BrixChat('boot', {
-  property: 'bx_demo_7f3a9c1e',
-  visitor: { name: 'Ayesha', email: 'ayesha@example.com' }
-  // secure mode: visitor: { ..., hash: '<HMAC-SHA256(email, property_secret)>' }
-});`,
-  },
-  {
-    title: 'Show / hide / toggle the widget',
-    code: `BrixChat.show();\nBrixChat.hide();\nBrixChat.toggle();`,
-  },
-  {
-    title: 'Open / close the chat panel',
-    code: `BrixChat.open();   // maximize the panel\nBrixChat.close();  // minimize to the bubble`,
-  },
-  {
-    title: 'Visitor attributes, tags, events',
-    code: `BrixChat.setAttributes({ plan: 'pro', cart_value: 149 });
-BrixChat.addTags(['vip', 'checkout']);
-BrixChat.removeTags(['vip']);
-BrixChat.trackEvent('requested-quote', { value: 499 });`,
-  },
-  {
-    title: 'Unread count + lifecycle events',
-    code: `BrixChat.getUnreadCount(); // number
-
-BrixChat.onReady(() => console.log('widget ready'));
-BrixChat.onOpen(() => {});
-BrixChat.onClose(() => {});
-BrixChat.onChatStarted((c) => {});
-BrixChat.onChatEnded((c) => {});
-BrixChat.onMessageReceived((m) => {});
-BrixChat.onUnreadCountChanged((n) => {});`,
-  },
-  {
-    title: 'Reset on logout',
-    code: `BrixChat.reset(); // clears the visitor session`,
-  },
-];
-
-const DATA_ATTRS: Array<{ attr: string; desc: string }> = [
-  { attr: 'data-property', desc: 'Public property key (required) — e.g. bx_demo_7f3a9c1e' },
-  { attr: 'data-color', desc: 'Accent color override — e.g. #4f46e5' },
-  { attr: 'data-position', desc: 'bottom-right (default) or bottom-left' },
-  { attr: 'data-greeting', desc: 'Override the welcome message' },
-  { attr: 'data-locale', desc: 'Widget language code — e.g. en, ar' },
-];
-
-function InstallTab() {
-  const api = useApi();
-  const [props, setProps] = useState<ApiProperty[]>([]);
-  const [propId, setPropId] = useState('');
-
-  useEffect(() => {
-    (async () => {
-      const { data } = await api.properties.list();
-      setProps(data);
-      if (data[0]) setPropId(data[0].id);
-    })();
-  }, []);
-
-  const prop = props.find((p) => p.id === propId);
-  const [widgetDefaults, setWidgetDefaults] = useState<WidgetConfig | null>(null);
-  useEffect(() => {
-    if (!propId) return;
-    (async () => {
-      const { data } = await api.widget.getConfig(propId);
-      setWidgetDefaults(data);
-    })();
-  }, [propId]);
-
-  return (
-    <div>
-      <h2 className="font-display font-bold text-xl mb-1">Install</h2>
-      <p className="text-sm text-slate-500 mb-6">Put the widget on any website — yours, a client's, or a partner's like bridgxapp.com.</p>
-
-      <Card className="p-5 mb-6">
-        <Label>Website</Label>
-        <div className="max-w-md mt-1.5">
-          <Select value={propId} onChange={(e) => setPropId(e.target.value)}>
-            {props.map((p) => (
-              <option key={p.id} value={p.id}>{p.name} — {p.public_key}</option>
-            ))}
-          </Select>
-        </div>
-        {prop && (
-          <>
-            <div className="text-xs font-bold uppercase tracking-wide text-slate-400 mt-5 mb-1.5">1 · Paste this snippet</div>
-            <Code text={snippetFor(prop)} />
-            <div className="mt-3 flex justify-end">
-              <CopyBtn text={snippetFor(prop)} label="Copy snippet" />
-            </div>
-            <div className="text-xs font-bold uppercase tracking-wide text-slate-400 mt-5 mb-1.5">2 · Optional data-* overrides</div>
-            <div className="rounded-xl border border-slate-200 overflow-hidden">
-              <table className="w-full text-[13px]">
-                <tbody>
-                  {DATA_ATTRS.map((a) => (
-                    <tr key={a.attr} className="border-t border-slate-100 first:border-t-0">
-                      <td className="px-4 py-2.5 font-mono text-xs font-semibold text-slate-800 whitespace-nowrap">{a.attr}</td>
-                      <td className="px-4 py-2.5 text-slate-500">{a.desc}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            {widgetDefaults && (
-              <p className="text-xs text-slate-400 mt-3">
-                Dashboard defaults for this property: color <span className="font-mono">{widgetDefaults.color}</span> · position {widgetDefaults.position} · greeting “{widgetDefaults.greeting}”
-              </p>
-            )}
-          </>
-        )}
-      </Card>
-
-      <h3 className="font-display font-bold text-lg mb-3">JavaScript API quick reference</h3>
-      <div className="grid lg:grid-cols-2 gap-4">
-        {JS_API_REF.map((r) => (
-          <Card key={r.title} className="p-5">
-            <div className="font-semibold text-sm text-slate-900 mb-2.5">{r.title}</div>
-            <Code text={r.code} />
-          </Card>
-        ))}
-      </div>
-
-      <Card className="p-5 mt-4">
-        <div className="font-semibold text-sm text-slate-900 mb-2">Secure mode (identity verification)</div>
-        <p className="text-[13px] text-slate-500 leading-relaxed">
-          Enable <em>secure mode</em> per property, then sign the visitor's email on your server with
-          <span className="font-mono text-xs"> HMAC-SHA256(email, property_secret) </span>
-          and pass it as <span className="font-mono text-xs">visitor.hash</span> in <span className="font-mono text-xs">BrixChat('boot', …)</span>.
-          The widget forwards the hash and marks the identity trusted once your server confirms it — so visitor names and emails can't be forged from the browser console.
-          Server-side verification activates with the backend phase; the field is accepted and stored today.
-        </p>
-      </Card>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Overview — metric cards + setup checklist (spec T1.11)
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Overview — setup health center + live operations monitor (P4-14).
-// ---------------------------------------------------------------------------
-
 function dayKey(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
@@ -1471,1889 +229,1304 @@ function fmtWait(ms: number): string {
 
 /** P4-14 — Live operations monitor. Auto-refreshes every 5s and on window
  *  focus; honest label: local mode, no server push. */
-function LiveOpsPanel() {
-  const api = useApi();
-  const p2 = useP2();
-  const [members, setMembers] = useState<ApiMember2[]>([]);
-  const [convs, setConvs] = useState<ApiConversation[]>([]);
-  const [events, setEvents] = useState<AuditEntry[]>([]);
+
+
+// --- platform overview -----------------------------------------------------------------
+
+interface ConvLite {
+  id: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  agent_id: string | null;
+  messageCount: number;
+}
+
+interface ClientOverview {
+  client: ClientRecord;
+  convs: ConvLite[];
+  chatsToday: number;
+  chatsMonth: number;
+  messagesTotal: number;
+  openChats: number;
+  unassigned: number;
+  csat: number | null;
+}
+
+const sameDay = (a: Date, b: Date) =>
+  a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+
+async function loadClientOverview(client: ClientRecord): Promise<ClientOverview> {
+  const api = getApi(client.slug, 'platform');
+  let convs: ConvLite[] = [];
+  let csat: number | null = null;
+  try {
+    const { items } = await api.conversations.list({ limit: 200 });
+    convs = ((items ?? []) as Array<Record<string, unknown>>).map((c) => ({
+      id: String(c.id ?? ''),
+      status: String(c.status ?? ''),
+      created_at: String(c.created_at ?? ''),
+      updated_at: String(c.updated_at ?? c.created_at ?? ''),
+      agent_id: (c.agent_id as string | null) ?? null,
+      messageCount: Array.isArray(c.messages) ? (c.messages as unknown[]).length : 0,
+    }));
+  } catch { /* treat as empty */ }
+  try {
+    const s = await api.ratings.summary();
+    csat = typeof s?.avg === 'number' ? s.avg : null;
+  } catch { /* no ratings */ }
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const today = convs.filter((c) => sameDay(new Date(c.created_at), now)).length;
+  return {
+    client,
+    convs,
+    chatsToday: today,
+    chatsMonth: convs.filter((c) => new Date(c.created_at) >= monthStart).length,
+    messagesTotal: convs.reduce((n, c) => n + c.messageCount, 0),
+    openChats: convs.filter((c) => c.status === 'open').length,
+    unassigned: convs.filter((c) => c.status === 'open' && !c.agent_id).length,
+    csat,
+  };
+}
+
+const PLAN_COLORS = ['#e11d48', '#4f46e5', '#0ea5e9', '#10b981', '#f59e0b', '#8b5cf6'];
+
+function OverviewTab({ jumpTo }: { jumpTo: (t: Tab) => void }) {
+  const [rows, setRows] = useState<ClientOverview[]>([]);
+  const [plans, setPlans] = useState<PlanRecord[]>([]);
+  const [publishedPosts, setPublishedPosts] = useState<number | null>(null);
+  const [errorCount, setErrorCount] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [lastRefresh, setLastRefresh] = useState(Date.now());
 
   const load = async () => {
+    const clients = listClients();
+    setPlans(listPlans());
+    setErrorCount(getPlatformErrors().length);
+    const data = await Promise.all(clients.map(loadClientOverview));
+    setRows(data);
     try {
-      const [mRes, cRes, aRes] = await Promise.all([
-        p2.members.list().catch(() => ({ data: { items: [] as ApiMember2[] } })),
-        api.conversations.list({ limit: 200 }).catch(() => ({ data: { items: [] as ApiConversation[] } })),
-        api.auditLog.list({ limit: 8 }).catch(() => ({ data: { items: [] as AuditEntry[] } })),
-      ]);
-      setMembers(itemsOf(mRes.data));
-      setConvs(itemsOf(cRes.data));
-      setEvents(itemsOf(aRes.data));
-    } catch { /* best-effort */ }
-    finally { setLoading(false); }
+      const api = getApi('demo', 'platform');
+      const { data: posts } = await (api as unknown as { blog: { list: (p: boolean) => Promise<{ data: unknown }> } }).blog.list(true);
+      const list = Array.isArray(posts) ? posts : [];
+      setPublishedPosts(list.length);
+    } catch { setPublishedPosts(null); }
+    setLoading(false);
+    setLastRefresh(Date.now());
   };
 
   useEffect(() => {
     void load();
-    const t = setInterval(load, 5000);
-    const onFocus = () => void load();
+    const t = setInterval(() => { void load(); }, 5000);
+    const onFocus = () => { void load(); };
     window.addEventListener('focus', onFocus);
     return () => { clearInterval(t); window.removeEventListener('focus', onFocus); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const open = convs.filter((c) => c.status === 'open');
-  const unassigned = open.filter((c) => !c.agent_id);
-  const longest = unassigned.reduce((mx, c) => Math.max(mx, Date.now() - new Date(c.created_at).getTime()), 0);
-  const groups = {
-    online: members.filter((m) => m.status === 'online'),
-    away: members.filter((m) => m.status === 'away'),
-    offline: members.filter((m) => m.status !== 'online' && m.status !== 'away'),
-  };
-  const chatsFor = (name: string) => open.filter((c) => c.agent_name === name).length;
-  const dot = (s: string) => (s === 'online' ? 'bg-emerald-500' : s === 'away' ? 'bg-amber-400' : 'bg-slate-300');
+  const totals = useMemo(() => {
+    const chatsToday = rows.reduce((n, r) => n + r.chatsToday, 0);
+    const messagesTotal = rows.reduce((n, r) => n + r.messagesTotal, 0);
+    const openChats = rows.reduce((n, r) => n + r.openChats, 0);
+    const unassigned = rows.reduce((n, r) => n + r.unassigned, 0);
+    const csats = rows.map((r) => r.csat).filter((v): v is number => v !== null);
+    const now = Date.now();
+    const oldestUnassigned = rows.flatMap((r) => r.convs)
+      .filter((c) => c.status === 'open' && !c.agent_id)
+      .reduce((m, c) => Math.max(m, now - new Date(c.updated_at).getTime()), 0);
+    return {
+      clients: rows.length,
+      active: rows.filter((r) => r.client.status === 'active').length,
+      chatsToday, messagesTotal, openChats, unassigned,
+      csat: csats.length ? csats.reduce((a, b) => a + b, 0) / csats.length : null,
+      oldestWait: oldestUnassigned,
+    };
+  }, [rows]);
 
-  const pulse = (
-    <span className="relative flex h-2.5 w-2.5">
-      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
-    </span>
-  );
+  const chatsByDay = useMemo(() => {
+    const keys = lastNDayKeys(7);
+    const labels = ['6d ago', '5d ago', '4d ago', '3d ago', '2d ago', 'Yesterday', 'Today'];
+    return keys.map((k, i) => ({
+      label: labels[i],
+      value: rows.reduce((n, r) => n + r.convs.filter((c) => dayKey(new Date(c.created_at)) === k).length, 0),
+    }));
+  }, [rows]);
+
+  const planDonut = useMemo(() => plans.map((p, i) => ({
+    label: p.name,
+    value: rows.filter((r) => r.client.planId === p.id).length,
+    color: PLAN_COLORS[i % PLAN_COLORS.length],
+  })).filter((s) => s.value > 0), [plans, rows]);
+
+  const storage = useMemo(() => storageUsage(), [lastRefresh]);
+
+  const checklist = useMemo(() => {
+    const items: Array<{ label: string; detail: string; cta: string; action: () => void; done?: boolean }> = [];
+    items.push({
+      label: 'Connect Stripe for real billing',
+      detail: 'Plan catalog and assignment are live locally. Card processing needs the backend phase.',
+      cta: 'Open billing', action: () => jumpTo('plans'),
+    });
+    const trials = rows.filter((r) => r.client.status === 'trial');
+    if (trials.length > 0) {
+      items.push({
+        label: `${trials.length} trial client${trials.length > 1 ? 's' : ''} need${trials.length > 1 ? '' : 's'} attention`,
+        detail: trials.map((r) => r.client.name).join(', '),
+        cta: 'Review clients', action: () => jumpTo('clients'),
+      });
+    }
+    const suspended = rows.filter((r) => r.client.status === 'suspended');
+    if (suspended.length > 0) {
+      items.push({
+        label: `${suspended.length} suspended client${suspended.length > 1 ? 's' : ''}`,
+        detail: suspended.map((r) => r.client.name).join(', '),
+        cta: 'Review', action: () => jumpTo('clients'),
+      });
+    }
+    if (errorCount > 0) {
+      items.push({
+        label: `${errorCount} client-side error${errorCount > 1 ? 's' : ''} logged`,
+        detail: 'This browser only — see System for details.',
+        cta: 'Open system', action: () => jumpTo('system'),
+      });
+    }
+    if (publishedPosts === 0) {
+      items.push({
+        label: 'No published blog posts',
+        detail: 'The marketing blog is empty.',
+        cta: 'Write one', action: () => jumpTo('content'),
+      });
+    }
+    return items;
+  }, [rows, errorCount, publishedPosts, jumpTo]);
 
   return (
-    <Card className="p-5 mb-6">
-      <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
-        <h3 className="font-bold text-slate-900 flex items-center gap-2">{pulse} Live operations</h3>
-        <span className="text-[11px] font-semibold text-slate-400">updates as you work — local mode, no server push</span>
-      </div>
-      <p className="text-xs text-slate-400 mb-4">Refreshing every 5 seconds from this browser's data.</p>
-
-      {loading ? (
-        <p className="text-sm text-slate-400 py-4">Loading live state…</p>
-      ) : (
-        <div className="grid lg:grid-cols-3 gap-5">
-          <div>
-            <div className="text-[11px] font-black uppercase tracking-widest text-slate-400 mb-2">Queue</div>
-            <div className="flex gap-4 mb-4">
-              <div>
-                <div className="text-3xl font-black text-slate-900">{unassigned.length}</div>
-                <div className="text-[11px] text-slate-400 font-semibold">unassigned chats</div>
-              </div>
-              <div>
-                <div className="text-3xl font-black text-slate-900">{open.length}</div>
-                <div className="text-[11px] text-slate-400 font-semibold">open total</div>
-              </div>
-              <div>
-                <div className={cx('text-3xl font-black', unassigned.length > 0 && longest > 5 * 60000 ? 'text-rose-600' : 'text-slate-900')}>
-                  {unassigned.length > 0 ? fmtWait(longest) : '—'}
-                </div>
-                <div className="text-[11px] text-slate-400 font-semibold">longest wait</div>
-              </div>
-            </div>
-            {unassigned.length > 0 && (
-              <div className="space-y-1.5 max-h-32 overflow-auto slim-scroll">
-                {unassigned.slice(0, 5).map((c) => (
-                  <div key={c.id} className="text-xs text-slate-600 flex justify-between gap-2 rounded-lg bg-slate-50 px-2.5 py-1.5">
-                    <span className="font-semibold truncate">{c.visitor_name || 'Visitor'}</span>
-                    <span className="font-mono text-slate-400 shrink-0">waiting {fmtWait(Date.now() - new Date(c.created_at).getTime())}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div>
-            <div className="text-[11px] font-black uppercase tracking-widest text-slate-400 mb-2">Team presence</div>
-            {(['online', 'away', 'offline'] as const).map((g) => (
-              <div key={g} className="mb-2.5">
-                <div className="text-[11px] font-bold text-slate-400 capitalize mb-1">{g} ({groups[g].length})</div>
-                {groups[g].length === 0 ? (
-                  <p className="text-[11px] text-slate-300">—</p>
-                ) : (
-                  <div className="flex flex-wrap gap-1.5">
-                    {groups[g].map((m) => (
-                      <span key={m.id} className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 pl-2 pr-2.5 py-1 text-xs font-semibold text-slate-700" title={`${chatsFor(m.display_name)} open chats`}>
-                        <span className={cx('w-2 h-2 rounded-full', dot(m.status))} />
-                        {m.display_name}
-                        <span className="font-mono text-slate-400">{chatsFor(m.display_name)}</span>
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-
-          <div>
-            <div className="text-[11px] font-black uppercase tracking-widest text-slate-400 mb-2">Recent events</div>
-            {events.length === 0 ? (
-              <p className="text-xs text-slate-400">No admin activity yet.</p>
-            ) : (
-              <ul className="space-y-1.5 max-h-44 overflow-auto slim-scroll">
-                {events.map((e) => (
-                  <li key={e.id} className="text-xs text-slate-600 rounded-lg bg-slate-50 px-2.5 py-1.5">
-                    <span className="font-bold text-slate-800">{e.actor}</span>{' '}
-                    <span className="font-mono text-[11px]">{e.action}</span>
-                    <span className="block text-[10px] text-slate-400">{fmtDate(e.created_at)}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-xl font-extrabold text-slate-900">Platform overview</h2>
+          <p className="text-sm text-slate-500">Every client workspace, at a glance. Local mode — data refreshes as you work, no server push.</p>
         </div>
-      )}
-    </Card>
-  );
-}
-
-function OverviewTab({ jumpTo }: { jumpTo: (t: Tab, id?: string) => void }) {
-  const api = useApi();
-  const p2 = useP2();
-  const [stats, setStats] = useState({ props: 0, members: 0, openTickets: 0, posts: 0, articles: 0, unreadContact: 0, depts: 0 });
-  const [csat, setCsat] = useState<number | null>(null);
-  const [nps, setNps] = useState<number | null>(null);
-  const [branded, setBranded] = useState(false);
-  const [convSpark, setConvSpark] = useState<number[]>([]);
-  const [convLabels, setConvLabels] = useState<string[]>([]);
-  const [ticketSpark, setTicketSpark] = useState<number[]>([]);
-  const [csatSpark, setCsatSpark] = useState<number[]>([]);
-  const [failingHooks, setFailingHooks] = useState<ApiWebhook[]>([]);
-  const [idleKeys, setIdleKeys] = useState(0);
-  const [ticketSplit, setTicketSplit] = useState<Array<{ label: string; value: number }>>([]);
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const [{ data: props }, { data: members }, ticketsRes, { data: posts }, { data: articles }, { data: cm }, convRes, hookRes, keyRes] = await Promise.all([
-          api.properties.list(),
-          p2.members.list(),
-          api.tickets.list({ limit: 200 }).catch(() => ({ data: { items: [] as ApiTicket[] } })),
-          p2.blog.list(false).catch(() => ({ data: [] as unknown[] })),
-          p2.helpDocs.list().catch(() => ({ data: [] as unknown[] })),
-          p2.contactMessages.list().catch(() => ({ data: [] as ApiContactMessage2[] })),
-          api.conversations.list({ limit: 200 }).catch(() => ({ data: { items: [] as ApiConversation[] } })),
-          api.webhooks.list().catch(() => ({ data: [] as ApiWebhook[] })),
-          api.apiKeys.list().catch(() => ({ data: [] as Array<{ usage_count: number; revoked: boolean }> })),
-        ]);
-        const propList = itemsOf(props);
-        const tickets = itemsOf(ticketsRes.data);
-        const convs = itemsOf(convRes.data);
-        setStats({
-          props: propList.length,
-          members: itemsOf(members).length,
-          openTickets: tickets.filter((t) => t.status !== 'resolved').length,
-          posts: itemsOf(posts).length,
-          articles: itemsOf(articles).length,
-          unreadContact: itemsOf(cm).filter((m: ApiContactMessage2) => !m.read).length,
-          depts: 0,
-        });
-        setTicketSplit(['new', 'open', 'resolved'].map((s) => ({ label: s, value: tickets.filter((t) => t.status === s).length })));
-
-        // 14-day buckets.
-        const days = lastNDayKeys(14);
-        setConvLabels(days.map((d) => d.slice(5)));
-        setConvSpark(days.map((d) => convs.filter((c) => dayKey(new Date(c.created_at)) === d).length));
-        setTicketSpark(days.map((d) => tickets.filter((t) => dayKey(new Date(t.created_at)) === d).length));
-
-        // Ratings (first property, 30d).
-        const first = propList[0];
-        if (first) {
-          try {
-            const { data: s } = await p2.ratings.summary(first.id, 30);
-            setCsat(s.csat_avg);
-            setNps(s.nps_score);
-            const trend = (s.trend ?? []) as Array<{ day: string; csat_avg: number | null }>;
-            const byDay = new Map(trend.map((t) => [t.day, t.csat_avg]));
-            setCsatSpark(days.map((d) => byDay.get(d) ?? 0));
-          } catch { /* ratings optional */ }
-          try {
-            const { data: ps } = await p2.propertySettings.get(first.id);
-            setBranded(!!(ps.logo_data_url || (ps.brand_name && ps.brand_name !== 'Brix Chat')));
-          } catch { /* branding optional */ }
-          try {
-            const hasDepts = typeof (p2 as unknown as { departments?: unknown }).departments !== 'undefined';
-            if (hasDepts) {
-              const { data: deps } = await (p2 as unknown as { departments: { list: (pid: string) => Promise<{ data: unknown[] }> } }).departments.list(first.id);
-              setStats((s0) => ({ ...s0, depts: (deps as unknown[]).length }));
-            }
-          } catch { /* departments optional */ }
-        }
-
-        setFailingHooks(hookRes.data.filter((w) => w.consecutive_failures > 0));
-        setIdleKeys(keyRes.data.filter((k) => k.usage_count === 0 && !k.revoked).length);
-      } catch { /* overview is best-effort */ }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const checklist: Array<{ done: boolean; label: string; hint: string; tab: Tab }> = [
-    { done: stats.props > 0, label: 'Property created', hint: 'A website connected to Brix Chat.', tab: 'properties' },
-    { done: branded, label: 'Branding set', hint: 'Logo and brand name replace Brix Chat defaults.', tab: 'branding' },
-    { done: stats.depts > 0, label: 'Departments set up', hint: 'Route chats to the right team.', tab: 'departments' },
-    { done: stats.members > 1, label: 'Team invited', hint: 'More than one member in the workspace.', tab: 'team' },
-    { done: stats.articles > 0, label: 'Help center stocked', hint: 'At least one help article published.', tab: 'content' },
-    { done: csat !== null, label: 'First rating received', hint: 'A visitor completed the chat survey.', tab: 'ratings' },
-  ];
-  const doneCount = checklist.filter((c) => c.done).length;
-  const pct = Math.round((doneCount / checklist.length) * 100);
-
-  const actions: Array<{ label: string; hint: string; tab: Tab; id?: string; tone: 'rose' | 'amber' }> = [];
-  if (stats.props === 0) actions.push({ label: 'No properties yet', hint: 'Add your first website to install the widget.', tab: 'properties', tone: 'rose' });
-  if (stats.props > 0 && stats.depts === 0) actions.push({ label: 'No departments yet', hint: 'Create one so chats route to the right team.', tab: 'departments', tone: 'amber' });
-  if (failingHooks.length > 0) actions.push({ label: `${failingHooks.length} webhook${failingHooks.length === 1 ? '' : 's'} failing`, hint: 'Consecutive delivery failures — inspect the log.', tab: 'webhooks', id: failingHooks[0].id, tone: 'rose' });
-  if (idleKeys > 0) actions.push({ label: `${idleKeys} API key${idleKeys === 1 ? '' : 's'} never used`, hint: 'Review or revoke idle keys.', tab: 'keys', tone: 'amber' });
-  if (stats.members <= 1) actions.push({ label: 'Team is just you', hint: 'Invite members to share the load.', tab: 'team', tone: 'amber' });
-
-  return (
-    <div>
-      <SectionTitle title="Setup health" sub="Workspace health at a glance. Deep-links jump straight to the fix." />
-
-      <LiveOpsPanel />
-
-      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <MetricCard label="Chats · 14d" value={String(convSpark.reduce((a, b) => a + b, 0))} icon="💬" spark={convSpark} sparkColor="#e11d48" sub="conversations started" />
-        <MetricCard label="Open tickets" value={String(stats.openTickets)} icon="🎫" spark={ticketSpark} sparkColor="#f59e0b" sub="not resolved" />
-        <MetricCard label="CSAT · 30d" value={csat !== null ? `${csat.toFixed(1)} / 5` : '—'} icon="⭐" spark={csatSpark} sparkColor="#10b981" sub="daily average" />
-        <MetricCard label="NPS · 30d" value={nps !== null ? String(Math.round(nps)) : '—'} icon="📊" sub={`${stats.unreadContact} unread contact mail`} />
+        <Button variant="secondary" size="sm" onClick={() => { setLoading(true); void load().then(() => setLoading(false)); }} disabled={loading}>
+          {loading ? 'Refreshing…' : '↻ Refresh now'}
+        </Button>
       </div>
 
-      <div className="grid lg:grid-cols-5 gap-5 mb-6">
-        <Card className="p-5 lg:col-span-3">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-bold text-slate-900">Setup checklist</h3>
-            <span className="text-xs font-bold text-slate-500">{doneCount} of {checklist.length} done</span>
-          </div>
-          <div className="flex items-center gap-5 mb-5">
-            <ProgressRing pct={pct} />
-            <div className="h-2.5 flex-1 rounded-full bg-slate-100 overflow-hidden">
-              <div className="h-full rounded-full bg-gradient-to-r from-brix-500 to-cyan-400 transition-all" style={{ width: `${pct}%` }} />
-            </div>
-          </div>
-          <div className="space-y-2.5">
-            {checklist.map((c) => (
-              <button key={c.label} onClick={() => jumpTo(c.tab)} className="w-full flex items-center gap-3 rounded-xl border border-slate-100 px-4 py-3 hover:border-brix-200 hover:bg-brix-50/50 text-left transition">
-                <span className={cx('w-6 h-6 rounded-full grid place-items-center text-sm font-bold shrink-0', c.done ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-400')}>
-                  {c.done ? '✓' : '·'}
-                </span>
-                <span className="flex-1">
-                  <span className="block text-sm font-bold text-slate-800">{c.label}</span>
-                  <span className="block text-xs text-slate-400">{c.hint}</span>
-                </span>
-                {!c.done && <span className="text-xs font-bold text-brix-600">Set up →</span>}
-              </button>
-            ))}
-          </div>
-        </Card>
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+        <StatCard label="Total clients" value={String(totals.clients)} icon="🏢" tone="indigo" />
+        <StatCard label="Active clients" value={String(totals.active)} icon="✅" tone="green" delta={totals.clients - totals.active > 0 ? `${totals.clients - totals.active} trial/suspended` : undefined} />
+        <StatCard label="Chats today" value={String(totals.chatsToday)} icon="💬" tone="cyan" />
+        <StatCard label="Messages (sampled)" value={totals.messagesTotal.toLocaleString()} icon="✉️" tone="amber" />
+        <StatCard label="CSAT avg" value={totals.csat !== null ? totals.csat.toFixed(1) : '—'} icon="⭐" tone="rose" />
+      </div>
 
-        <Card className="p-5 lg:col-span-2">
-          <h3 className="font-bold text-slate-900 mb-1">Needs attention</h3>
-          <p className="text-xs text-slate-500 mb-4">Actionable items — click to jump to the fix.</p>
-          {actions.length === 0 ? (
-            <div className="rounded-2xl bg-emerald-50 border border-emerald-200 px-4 py-6 text-center">
-              <div className="text-2xl mb-1">✅</div>
-              <p className="text-sm font-bold text-emerald-900">All clear</p>
-              <p className="text-xs text-emerald-700 mt-1">Nothing needs your attention right now.</p>
-            </div>
+      <div className="grid lg:grid-cols-2 gap-4">
+        <Card className="p-5">
+          <h3 className="font-bold text-slate-900 mb-1">Chats per day — all clients</h3>
+          <p className="text-xs text-slate-500 mb-4">Last 7 days, aggregated across workspaces.</p>
+          <BarChart data={chatsByDay} height={170} />
+        </Card>
+        <Card className="p-5">
+          <h3 className="font-bold text-slate-900 mb-1">Clients by plan</h3>
+          <p className="text-xs text-slate-500 mb-4">Distribution of the client base.</p>
+          {planDonut.length > 0 ? (
+            <Donut segments={planDonut} centerLabel="clients" centerValue={String(totals.clients)} />
           ) : (
-            <div className="space-y-2.5">
-              {actions.map((a) => (
-                <button
-                  key={a.label}
-                  onClick={() => jumpTo(a.tab, a.id)}
-                  className={cx(
-                    'w-full flex items-center gap-3 rounded-xl border px-4 py-3 text-left transition',
-                    a.tone === 'rose' ? 'border-rose-200 bg-rose-50/60 hover:border-rose-300' : 'border-amber-200 bg-amber-50/60 hover:border-amber-300',
-                  )}
-                >
-                  <span className="text-lg">{a.tone === 'rose' ? '🚨' : '⚠️'}</span>
-                  <span className="flex-1">
-                    <span className="block text-sm font-bold text-slate-800">{a.label}</span>
-                    <span className="block text-xs text-slate-500">{a.hint}</span>
-                  </span>
-                  <span className="text-xs font-bold text-brix-600 shrink-0">Fix →</span>
-                </button>
-              ))}
-            </div>
+            <EmptyState icon="📊" title="No plan data" hint="Add plans in Plans & billing." />
           )}
         </Card>
       </div>
 
-      <div className="grid lg:grid-cols-2 gap-5">
+      {/* Live ops — platform scope */}
+      <Card className="p-5 border-brix-200">
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+          <div className="flex items-center gap-2">
+            <span className="relative flex h-2.5 w-2.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
+            </span>
+            <h3 className="font-bold text-slate-900">Live operations</h3>
+          </div>
+          <span className="text-xs text-slate-400">auto-refreshes every 5s · updates as you work — local mode, no server push</span>
+        </div>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+          <MetricCard label="Open chats" value={String(totals.openChats)} icon="💬" />
+          <MetricCard label="Unassigned queue" value={String(totals.unassigned)} icon="📥" />
+          <MetricCard label="Longest current wait" value={totals.unassigned > 0 ? fmtWait(totals.oldestWait) : '—'} icon="⏱️" />
+          <MetricCard label="Chats today" value={String(totals.chatsToday)} icon="📈" spark={chatsByDay.map((d) => d.value)} sparkColor="#e11d48" />
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
+                <th className="py-2 pr-3 font-semibold">Client</th>
+                <th className="py-2 pr-3 font-semibold">Open</th>
+                <th className="py-2 pr-3 font-semibold">Unassigned</th>
+                <th className="py-2 pr-3 font-semibold">Status</th>
+                <th className="py-2 font-semibold">Chats today</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.client.slug} className="border-b border-slate-50 last:border-0">
+                  <td className="py-2 pr-3 font-semibold text-slate-900">{r.client.name}</td>
+                  <td className="py-2 pr-3">{r.openChats}</td>
+                  <td className="py-2 pr-3">{r.unassigned > 0 ? <Badge tone="amber">{r.unassigned}</Badge> : '0'}</td>
+                  <td className="py-2 pr-3"><Badge tone={r.client.status === 'active' ? 'green' : r.client.status === 'trial' ? 'indigo' : 'rose'}>{r.client.status}</Badge></td>
+                  <td className="py-2">{r.chatsToday}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      <div className="grid lg:grid-cols-2 gap-4">
         <Card className="p-5">
-          <h3 className="font-bold text-slate-900 mb-1">Conversations · last 14 days</h3>
-          <p className="text-xs text-slate-500 mb-4">Chats started per day.</p>
-          <BarChart data={convLabels.map((l, i) => ({ label: l, value: convSpark[i] ?? 0 }))} height={170} />
+          <h3 className="font-bold text-slate-900 mb-3">Setup checklist</h3>
+          {checklist.length === 0 ? (
+            <p className="text-sm text-emerald-600 font-semibold">✓ All clear — nothing needs attention.</p>
+          ) : (
+            <ul className="space-y-3">
+              {checklist.map((c, i) => (
+                <li key={i} className="flex items-start justify-between gap-3 rounded-xl border border-slate-100 p-3">
+                  <div>
+                    <div className="text-sm font-bold text-slate-900">{c.label}</div>
+                    <div className="text-xs text-slate-500 mt-0.5">{c.detail}</div>
+                  </div>
+                  <Button size="sm" variant="secondary" onClick={c.action}>{c.cta}</Button>
+                </li>
+              ))}
+            </ul>
+          )}
         </Card>
         <Card className="p-5">
-          <h3 className="font-bold text-slate-900 mb-1">Tickets by status</h3>
-          <p className="text-xs text-slate-500 mb-4">Current ticket pipeline.</p>
-          <Donut
-            segments={[
-              { label: 'New', value: ticketSplit.find((t) => t.label === 'new')?.value ?? 0, color: '#22d3ee' },
-              { label: 'Open', value: ticketSplit.find((t) => t.label === 'open')?.value ?? 0, color: '#f59e0b' },
-              { label: 'Resolved', value: ticketSplit.find((t) => t.label === 'resolved')?.value ?? 0, color: '#10b981' },
-            ]}
-            centerValue={String(ticketSplit.reduce((a, t) => a + t.value, 0))}
-            centerLabel="tickets"
-          />
+          <h3 className="font-bold text-slate-900 mb-3">System health <span className="text-xs font-semibold text-slate-400">this browser</span></h3>
+          <dl className="space-y-2 text-sm">
+            <div className="flex justify-between"><dt className="text-slate-500">localStorage used</dt><dd className="font-bold text-slate-900">{(storage.bytes / 1048576).toFixed(2)} MB</dd></div>
+            <div className="flex justify-between"><dt className="text-slate-500">Brix keys</dt><dd className="font-bold text-slate-900">{storage.keys}</dd></div>
+            <div className="flex justify-between"><dt className="text-slate-500">Workspace DBs</dt><dd className="font-bold text-slate-900">{rows.length + 1} <span className="font-normal text-slate-400">(clients + operator)</span></dd></div>
+            <div className="flex justify-between"><dt className="text-slate-500">Logged errors</dt><dd className={cx('font-bold', errorCount > 0 ? 'text-amber-600' : 'text-emerald-600')}>{errorCount}</dd></div>
+          </dl>
+          <p className="text-xs text-slate-400 mt-3">Health reflects this browser's local data only. Multi-device/server monitoring arrives with the backend phase.</p>
         </Card>
       </div>
     </div>
   );
 }
-// Content — blog posts, help articles (+ KB categories), contact inbox, status
-// ---------------------------------------------------------------------------
 
-const emptyPost: BlogSeed = { slug: '', title: '', excerpt: '', body: '', tags: [], author: 'Brix Team', published: false, reading_mins: 3 };
-const emptyHelp: HelpSeed = { slug: '', title: '', body: '', category: 'General', order: 0 };
+// --- clients ---------------------------------------------------------------------
 
-function BlogManager({ readOnly }: { readOnly: boolean }) {
-  const p2 = useP2();
+const CLIENT_STATUS_TONES: Record<ClientStatus, 'green' | 'indigo' | 'rose'> = {
+  active: 'green', trial: 'indigo', suspended: 'rose',
+};
+
+function ClientsTab({ highlightId, nonce }: { highlightId?: string; nonce: number }) {
+  const { setViewingWorkspace } = useStore();
+  const navigate = useNavigate();
+  const toast = useToast();
   const { confirm, dialog } = useConfirm();
-  const [posts, setPosts] = useState<ApiBlogPost2[]>([]);
-  const [editing, setEditing] = useState<(BlogSeed & { id?: string }) | null>(null);
+  const [clients, setClients] = useState<ClientRecord[]>([]);
+  const [plans, setPlans] = useState<PlanRecord[]>([]);
+  const [monthChats, setMonthChats] = useState<Record<string, number>>({});
+  const [openChats, setOpenChats] = useState<Record<string, number>>({});
+  const [q, setQ] = useState('');
+  const [statusF, setStatusF] = useState('');
+  const [planF, setPlanF] = useState('');
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [saveName, setSaveName] = useState('');
+  const [planModal, setPlanModal] = useState<{ slugs: string[] } | null>(null);
+  const [planChoice, setPlanChoice] = useState('');
+  const [importOpen, setImportOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   const load = async () => {
     try {
-      const { data } = await p2.blog.list(false);
-      setPosts(itemsOf(data));
-    } catch (e) { setError(errMsg(e)); }
+      const cs = listClients();
+      const ps = listPlans();
+      setClients(cs);
+      setPlans(ps);
+      setPlanChoice((prev) => prev || ps[0]?.id || '');
+      const overviews = await Promise.all(cs.map(loadClientOverview));
+      const mc: Record<string, number> = {};
+      const oc: Record<string, number> = {};
+      overviews.forEach((o) => { mc[o.client.slug] = o.chatsMonth; oc[o.client.slug] = o.openChats; });
+      setMonthChats(mc);
+      setOpenChats(oc);
+    } catch (e) { setError(e instanceof ApiError ? e.message : 'Something went wrong.'); }
+    setLoading(false);
   };
   useEffect(() => { void load(); }, []);
 
-  const save = async () => {
-    if (!editing || !editing.title.trim() || !editing.slug.trim()) return;
-    try {
-      if (editing.id) await p2.blog.update(editing.id, editing);
-      else await p2.blog.create(editing);
-      setEditing(null);
-      await load();
-    } catch (e) { setError(errMsg(e)); }
+  const flash = useRowFlash(highlightId, nonce);
+
+  const filtered = useMemo(() => clients.filter((c) => {
+    if (statusF && c.status !== statusF) return false;
+    if (planF && c.planId !== planF) return false;
+    if (q && !`${c.name} ${c.slug}`.toLowerCase().includes(q.toLowerCase())) return false;
+    return true;
+  }), [clients, q, statusF, planF]);
+
+  const persist = (next: ClientRecord[]) => {
+    saveClients(next);
+    setClients(next);
   };
 
-  const remove = (p: ApiBlogPost2) => {
+  const setStatus = (slugs: string[], status: ClientStatus) => {
+    persist(clients.map((c) => (slugs.includes(c.slug) ? { ...c, status } : c)));
+    toast.success(`${slugs.length} client${slugs.length > 1 ? 's' : ''} ${status === 'suspended' ? 'suspended' : 'set to ' + status}.`);
+    setSelected(new Set());
+  };
+
+  const askSuspend = (slugs: string[]) => {
     confirm({
-      title: 'Delete post?', body: `"${p.title}" will be removed from /blog.`,
-      action: async () => { await p2.blog.delete(p.id); await load(); },
+      title: slugs.length > 1 ? `Suspend ${slugs.length} clients?` : 'Suspend client?',
+      body: 'Suspended clients keep their data but their team cannot sign in. You can reactivate anytime.',
+      action: () => setStatus(slugs, 'suspended'),
     });
   };
 
+  const applyPlan = () => {
+    if (!planModal || !planChoice) return;
+    const plan = plans.find((p) => p.id === planChoice);
+    persist(clients.map((c) => {
+      if (!planModal.slugs.includes(c.slug)) return c;
+      return { ...c, planId: planChoice, seats: plan ? plan.seats : c.seats };
+    }));
+    toast.success(`${planModal.slugs.length} client${planModal.slugs.length > 1 ? 's' : ''} moved to ${plan?.name ?? planChoice}.`);
+    setPlanModal(null);
+    setSelected(new Set());
+  };
+
+  const viewAs = (c: ClientRecord) => {
+    setViewingWorkspace(c.slug);
+    toast.success(`Viewing as ${c.name}.`);
+    navigate('/app');
+  };
+
+  const toggleSel = (slug: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(slug)) next.delete(slug); else next.add(slug);
+      return next;
+    });
+  };
+
+  const allSel = filtered.length > 0 && filtered.every((c) => selected.has(c.slug));
+
   return (
-    <div className="mb-10">
+    <div className="space-y-4">
       {dialog}
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="font-bold text-slate-900">Blog posts <span className="text-xs font-semibold text-slate-400">/blog</span></h3>
-        {!readOnly && <Button size="sm" onClick={() => setEditing({ ...emptyPost })}>+ New post</Button>}
-      </div>
-      {error && <p className="text-sm text-rose-600 mb-3">{error}</p>}
-      {posts.length === 0 ? (
-        <EmptyState icon="✍️" title="No posts yet" hint="Write the first post for /blog." />
-      ) : (
-        <div className="space-y-3">
-          {posts.map((p) => (
-            <Card key={p.id} className="p-4">
-              <div className="flex flex-wrap items-center gap-3">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-bold text-slate-900">{p.title}</span>
-                    <Badge tone={p.published ? 'green' : 'amber'}>{p.published ? 'Published' : 'Draft'}</Badge>
-                  </div>
-                  <div className="text-xs text-slate-400 mt-1">/blog/{p.slug} · {p.reading_mins} min read</div>
-                </div>
-                {!readOnly && (
-                  <div className="flex gap-2">
-                    <Button variant="ghost" size="sm" onClick={() => setEditing({ ...p, tags: [...p.tags] })}>Edit</Button>
-                    <Button variant="ghost" size="sm" onClick={() => remove(p)} className="text-rose-600">Delete</Button>
-                  </div>
-                )}
-              </div>
-            </Card>
-          ))}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-xl font-extrabold text-slate-900">Clients</h2>
+          <p className="text-sm text-slate-500">Every workspace on the platform. “View as” opens their dashboard scoped to that workspace.</p>
         </div>
-      )}
-      <Modal open={editing !== null} onClose={() => setEditing(null)} title={editing?.id ? 'Edit post' : 'New post'} wide>
-        {editing && (
-          <div className="space-y-4">
-            <div className="grid sm:grid-cols-2 gap-4">
-              <div><Label>Title</Label><Input value={editing.title} onChange={(e) => setEditing({ ...editing, title: e.target.value })} /></div>
-              <div><Label>Slug</Label><Input value={editing.slug} onChange={(e) => setEditing({ ...editing, slug: e.target.value.toLowerCase().replace(/[^a-z0-9]+/g, '-') })} className="font-mono" /></div>
-            </div>
-            <div><Label>Excerpt</Label><Textarea value={editing.excerpt} onChange={(e) => setEditing({ ...editing, excerpt: e.target.value })} rows={2} /></div>
-            <div><Label>Body (plain text / markdown)</Label><Textarea value={editing.body} onChange={(e) => setEditing({ ...editing, body: e.target.value })} rows={8} className="font-mono text-[13px]" /></div>
-            <div className="grid sm:grid-cols-3 gap-4">
-              <div><Label>Author</Label><Input value={editing.author} onChange={(e) => setEditing({ ...editing, author: e.target.value })} /></div>
-              <div><Label>Tags (comma separated)</Label><Input value={editing.tags.join(', ')} onChange={(e) => setEditing({ ...editing, tags: e.target.value.split(',').map((t) => t.trim()).filter(Boolean) })} /></div>
-              <div><Label>Reading time (min)</Label><Input type="number" min={1} value={editing.reading_mins} onChange={(e) => setEditing({ ...editing, reading_mins: Number(e.target.value) || 3 })} /></div>
-            </div>
-            <div className="flex items-center justify-between">
-              <Toggle checked={editing.published} onChange={(v) => setEditing({ ...editing, published: v })} label="Published" />
-              <Button onClick={save} disabled={!editing.title.trim() || !editing.slug.trim()}>Save post</Button>
-            </div>
+        <div className="flex gap-2">
+          <Button variant="secondary" size="sm" onClick={() => setImportOpen(true)}>Import CSV</Button>
+          <Button variant="secondary" size="sm" onClick={() => exportCSV('brix-clients.csv', ['slug', 'name', 'plan', 'seats', 'status', 'created'], clients.map((c) => ({ slug: c.slug, name: c.name, plan: c.planId, seats: c.seats, status: c.status, created: c.created_at })))}>Export CSV</Button>
+        </div>
+      </div>
+
+      {error && <Notice>{error}</Notice>}
+
+      <SavedFilterBar
+        scope="platform-clients" workspace="platform"
+        current={{ q, status: statusF, plan: planF }}
+        onApply={(v) => { setQ(v.q ?? ''); setStatusF(v.status ?? ''); setPlanF(v.plan ?? ''); }}
+        saveName={saveName} setSaveName={setSaveName}
+        hint="Filter clients, then name and save the set."
+      />
+
+      <Card className="p-4">
+        <div className="grid sm:grid-cols-4 gap-3">
+          <div><Label>Search</Label><Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Name or slug…" /></div>
+          <div>
+            <Label>Status</Label>
+            <Select value={statusF} onChange={(e) => setStatusF(e.target.value)}>
+              <option value="">All statuses</option>
+              <option value="active">Active</option>
+              <option value="trial">Trial</option>
+              <option value="suspended">Suspended</option>
+            </Select>
           </div>
-        )}
+          <div>
+            <Label>Plan</Label>
+            <Select value={planF} onChange={(e) => setPlanF(e.target.value)}>
+              <option value="">All plans</option>
+              {plans.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </Select>
+          </div>
+          <div className="flex items-end">
+            <Button variant="ghost" size="sm" onClick={() => { setQ(''); setStatusF(''); setPlanF(''); }}>Clear</Button>
+          </div>
+        </div>
+      </Card>
+
+      {selected.size > 0 && (
+        <Card className="p-3 flex flex-wrap items-center gap-2 border-brix-200 bg-brix-50/50">
+          <span className="text-sm font-bold text-slate-900">{selected.size} selected</span>
+          <Button size="sm" variant="secondary" onClick={() => setPlanModal({ slugs: [...selected] })}>Change plan…</Button>
+          <Button size="sm" variant="secondary" onClick={() => setStatus([...selected], 'active')}>Activate</Button>
+          <Button size="sm" variant="danger" onClick={() => askSuspend([...selected])}>Suspend</Button>
+          <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>Clear</Button>
+        </Card>
+      )}
+
+      <Card className="overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
+                <th className="py-3 pl-4 pr-2 w-10"><input type="checkbox" checked={allSel} onChange={(e) => setSelected(e.target.checked ? new Set(filtered.map((c) => c.slug)) : new Set())} aria-label="Select all" /></th>
+                <th className="py-3 pr-3 font-semibold">Client</th>
+                <th className="py-3 pr-3 font-semibold">Plan</th>
+                <th className="py-3 pr-3 font-semibold">Seats</th>
+                <th className="py-3 pr-3 font-semibold">Status</th>
+                <th className="py-3 pr-3 font-semibold">Chats this month</th>
+                <th className="py-3 pr-3 font-semibold">Open now</th>
+                <th className="py-3 pr-3 font-semibold">Created</th>
+                <th className="py-3 pr-4 font-semibold text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr><td colSpan={9} className="py-10 text-center text-slate-400">Loading clients…</td></tr>
+              ) : filtered.length === 0 ? (
+                <tr><td colSpan={9}><EmptyState icon="🏢" title="No clients match" hint="Adjust the filters or import clients." /></td></tr>
+              ) : filtered.map((c) => {
+                const plan = plans.find((p) => p.id === c.planId);
+                return (
+                  <tr key={c.slug} className={cx('border-b border-slate-50 last:border-0 hover:bg-slate-50/60', flash === c.slug && 'bg-brix-50')}>
+                    <td className="py-3 pl-4 pr-2"><RowCheck checked={selected.has(c.slug)} onChange={() => toggleSel(c.slug)} label={`Select ${c.name}`} /></td>
+                    <td className="py-3 pr-3">
+                      <div className="font-bold text-slate-900">{c.name}</div>
+                      <div className="text-xs text-slate-400 font-mono">{c.slug}</div>
+                    </td>
+                    <td className="py-3 pr-3">{plan?.name ?? c.planId}</td>
+                    <td className="py-3 pr-3">{c.seats}</td>
+                    <td className="py-3 pr-3"><Badge tone={CLIENT_STATUS_TONES[c.status]}>{c.status}</Badge></td>
+                    <td className="py-3 pr-3">{monthChats[c.slug] ?? '—'}</td>
+                    <td className="py-3 pr-3">{openChats[c.slug] ?? '—'}</td>
+                    <td className="py-3 pr-3 text-slate-500">{fmtDate(c.created_at)}</td>
+                    <td className="py-3 pr-4">
+                      <div className="flex justify-end gap-1.5">
+                        <Button size="sm" variant="secondary" onClick={() => viewAs(c)}>View as</Button>
+                        <Button size="sm" variant="ghost" onClick={() => setPlanModal({ slugs: [c.slug] })}>Plan</Button>
+                        {c.status === 'suspended' ? (
+                          <Button size="sm" variant="ghost" onClick={() => setStatus([c.slug], 'active')}>Activate</Button>
+                        ) : (
+                          <Button size="sm" variant="ghost" className="text-rose-600" onClick={() => askSuspend([c.slug])}>Suspend</Button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      <Modal open={planModal !== null} onClose={() => setPlanModal(null)} title={planModal && planModal.slugs.length > 1 ? `Change plan — ${planModal.slugs.length} clients` : 'Change plan'}>
+        <Label>Plan</Label>
+        <Select value={planChoice} onChange={(e) => setPlanChoice(e.target.value)}>
+          {plans.map((p) => <option key={p.id} value={p.id}>{p.name} — ${p.price}/mo · {p.seats} seats</option>)}
+        </Select>
+        <p className="text-xs text-slate-400 mt-2">Seats update to the plan default. Billing is local-only until Stripe is connected (backend phase).</p>
+        <div className="flex justify-end gap-2 mt-5">
+          <Button variant="secondary" onClick={() => setPlanModal(null)}>Cancel</Button>
+          <Button onClick={applyPlan}>Apply plan</Button>
+        </div>
       </Modal>
+
+      <ImportModal
+        open={importOpen} onClose={() => setImportOpen(false)} title="Import clients"
+        template="slug,name,planId,seats,status\nacme,Acme Store,growth,10,active\n"
+        validate={(rows) => {
+          const valid: Record<string, string>[] = [];
+          const errors: { row: number; message: string }[] = [];
+          const planIds = new Set(plans.map((p) => p.id));
+          rows.forEach((r, i) => {
+            const slug = (r.slug ?? '').trim().toLowerCase();
+            const name = (r.name ?? '').trim();
+            const planId = (r.planId ?? '').trim();
+            const status = (r.status ?? '').trim() as ClientStatus;
+            if (!slug || !name) { errors.push({ row: i + 1, message: 'slug and name are required' }); return; }
+            if (planId && !planIds.has(planId)) { errors.push({ row: i + 1, message: `unknown plan "${planId}"` }); return; }
+            if (status && !['active', 'trial', 'suspended'].includes(status)) { errors.push({ row: i + 1, message: `bad status "${status}"` }); return; }
+            valid.push({ slug, name, planId: planId || 'starter', seats: r.seats ?? '3', status: status || 'trial' });
+          });
+          return { valid, errors };
+        }}
+        onImport={(rows) => {
+          const existing = new Set(clients.map((c) => c.slug));
+          const next = [...clients];
+          let added = 0;
+          rows.forEach((r) => {
+            if (existing.has(r.slug)) return;
+            next.push({ slug: r.slug, name: r.name, planId: r.planId, seats: Number(r.seats) || 3, status: r.status as ClientStatus, created_at: new Date().toISOString(), notes: '' });
+            added++;
+          });
+          persist(next);
+          toast.success(`Imported ${added} client${added === 1 ? '' : 's'}.`);
+          setImportOpen(false);
+        }}
+      />
     </div>
   );
 }
 
-function HelpManager({ readOnly }: { readOnly: boolean }) {
-  const p2 = useP2();
-  const api = useApi();
-  const [propId, setPropId] = useState('');
-  const catSrc = useCatSource(propId);
-  const { confirm, dialog } = useConfirm();
-  const [articles, setArticles] = useState<ApiHelpArticle2[]>([]);
-  const [kbCats, setKbCats] = useState<ApiCategory2[]>([]);
-  const [editing, setEditing] = useState<(HelpSeed & { id?: string }) | null>(null);
-  const [error, setError] = useState('');
+// --- properties (all workspaces, read-only) ------------------------------------------
 
-  const load = async () => {
-    try {
-      const { data: pr } = await api.properties.list();
-      setPropId(pr[0]?.id ?? '');
-      const { data } = await p2.helpDocs.list();
-      setArticles(itemsOf(data).sort((a, b) => a.order - b.order));
-    } catch (e) { setError(errMsg(e)); }
-  };
-  useEffect(() => { void load(); }, []);
+function PropertiesTab({ highlightId, nonce }: { highlightId?: string; nonce: number }) {
+  const { setViewingWorkspace } = useStore();
+  const navigate = useNavigate();
+  const [rows, setRows] = useState<PropertyRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [q, setQ] = useState('');
 
   useEffect(() => {
-    if (!propId || !catSrc.live) return;
-    catSrc.list('kb').then(setKbCats).catch(() => setKbCats([]));
-  }, [propId, catSrc]);
+    (async () => {
+      setRows(await allProperties(listClients()));
+      setLoading(false);
+    })();
+  }, []);
 
-  const save = async () => {
-    if (!editing || !editing.title.trim() || !editing.slug.trim()) return;
-    try {
-      if (editing.id) await p2.helpDocs.update(editing.id, editing);
-      else await p2.helpDocs.create(editing);
-      setEditing(null);
-      await load();
-    } catch (e) { setError(errMsg(e)); }
+  const flash = useRowFlash(highlightId, nonce);
+  const filtered = rows.filter((r) =>
+    !q || `${r.property.name} ${r.property.domain} ${r.workspaceName}`.toLowerCase().includes(q.toLowerCase()));
+
+  const openDashboard = (r: PropertyRow) => {
+    setViewingWorkspace(r.workspaceSlug);
+    navigate('/app');
   };
-
-  const remove = (a: ApiHelpArticle2) => {
-    confirm({
-      title: 'Delete article?', body: `"${a.title}" will be removed from /help.`,
-      action: async () => { await p2.helpDocs.delete(a.id); await load(); },
-    });
-  };
-
-  const catNames = [...new Set(articles.map((a) => a.category))];
 
   return (
-    <div className="mb-10">
-      {dialog}
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="font-bold text-slate-900">Help articles <span className="text-xs font-semibold text-slate-400">/help</span></h3>
-        {!readOnly && <Button size="sm" onClick={() => setEditing({ ...emptyHelp })}>+ New article</Button>}
-      </div>
-      <p className="text-sm text-slate-500 mb-4">{articles.length} articles · {catNames.length} categories</p>
-      {error && <p className="text-sm text-rose-600 mb-3">{error}</p>}
-      {articles.length === 0 ? (
-        <EmptyState icon="📖" title="No articles yet" hint="Seed articles appear automatically on the help page, or create one here." />
-      ) : (
-        <div className="space-y-3">
-          {articles.map((a) => (
-            <Card key={a.id} className="p-4">
-              <div className="flex flex-wrap items-center gap-3">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-bold text-slate-900">{a.title}</span>
-                    <Badge tone="indigo">{a.category}</Badge>
-                    {a.category_id && kbCats.find((c) => c.id === a.category_id) && (
-                      <Badge tone="cyan">{kbCats.find((c) => c.id === a.category_id)!.name}</Badge>
-                    )}
-                    <span className="text-xs text-slate-400">order {a.order}</span>
-                  </div>
-                  <div className="text-xs text-slate-400 mt-1">/help/{a.slug}</div>
-                </div>
-                {!readOnly && (
-                  <div className="flex gap-2">
-                    <Button variant="ghost" size="sm" onClick={() => setEditing({ ...a })}>Edit</Button>
-                    <Button variant="ghost" size="sm" onClick={() => remove(a)} className="text-rose-600">Delete</Button>
-                  </div>
-                )}
-              </div>
-            </Card>
-          ))}
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-xl font-extrabold text-slate-900">Properties</h2>
+          <p className="text-sm text-slate-500">Every chat property across all client workspaces. Read-only — clients manage their own.</p>
         </div>
-      )}
-      <Modal open={editing !== null} onClose={() => setEditing(null)} title={editing?.id ? 'Edit article' : 'New article'} wide>
-        {editing && (
-          <div className="space-y-4">
-            <div className="grid sm:grid-cols-2 gap-4">
-              <div><Label>Title</Label><Input value={editing.title} onChange={(e) => setEditing({ ...editing, title: e.target.value })} /></div>
-              <div><Label>Slug</Label><Input value={editing.slug} onChange={(e) => setEditing({ ...editing, slug: e.target.value.toLowerCase().replace(/[^a-z0-9]+/g, '-') })} className="font-mono" /></div>
-            </div>
-            <div className="grid sm:grid-cols-2 gap-4">
-              <div>
-                <Label>Category label</Label>
-                <Input value={editing.category} onChange={(e) => setEditing({ ...editing, category: e.target.value })} list="help-cat-names" />
-                <datalist id="help-cat-names">{catNames.map((c) => <option key={c} value={c} />)}</datalist>
-              </div>
-              <div>
-                <Label>KB category</Label>
-                <Select
-                  value={editing.category_id ?? ''}
-                  onChange={(e) => {
-                    const id = e.target.value;
-                    const found = kbCats.find((c) => c.id === id);
-                    setEditing({ ...editing, category_id: id || undefined, category: found ? found.name : editing.category });
-                  }}
-                >
-                  <option value="">— none —</option>
-                  {kbCats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </Select>
-                <p className="text-xs text-slate-400 mt-1">Links this article to a help-center category (managed below).</p>
-              </div>
-            </div>
-            <div><Label>Body</Label><Textarea value={editing.body} onChange={(e) => setEditing({ ...editing, body: e.target.value })} rows={8} className="font-mono text-[13px]" /></div>
-            <div className="flex items-center justify-between">
-              <div className="w-32"><Label>Sort order</Label><Input type="number" value={editing.order} onChange={(e) => setEditing({ ...editing, order: Number(e.target.value) || 0 })} /></div>
-              <Button onClick={save} disabled={!editing.title.trim() || !editing.slug.trim()}>Save article</Button>
-            </div>
-          </div>
-        )}
-      </Modal>
+        <div className="w-64"><Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search properties…" /></div>
+      </div>
+      <Card className="overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
+                <th className="py-3 pl-4 pr-3 font-semibold">Property</th>
+                <th className="py-3 pr-3 font-semibold">Workspace</th>
+                <th className="py-3 pr-3 font-semibold">Domain</th>
+                <th className="py-3 pr-3 font-semibold">Public key</th>
+                <th className="py-3 pr-3 font-semibold">Status</th>
+                <th className="py-3 pr-4 font-semibold text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr><td colSpan={6} className="py-10 text-center text-slate-400">Loading properties…</td></tr>
+              ) : filtered.length === 0 ? (
+                <tr><td colSpan={6}><EmptyState icon="🌐" title="No properties" hint="Properties appear once clients add them." /></td></tr>
+              ) : filtered.map((r) => (
+                <tr key={r.property.id} className={cx('border-b border-slate-50 last:border-0 hover:bg-slate-50/60', flash === r.property.id && 'bg-brix-50')}>
+                  <td className="py-3 pl-4 pr-3 font-bold text-slate-900">{r.property.name}</td>
+                  <td className="py-3 pr-3">{r.workspaceName} <span className="text-xs text-slate-400 font-mono">{r.workspaceSlug}</span></td>
+                  <td className="py-3 pr-3 text-slate-500">{r.property.domain}</td>
+                  <td className="py-3 pr-3"><Code text={r.property.public_key} /> <CopyBtn text={r.property.public_key} /></td>
+                  <td className="py-3 pr-3"><Badge tone={r.property.enabled ? 'green' : 'rose'}>{r.property.enabled ? 'enabled' : 'disabled'}</Badge></td>
+                  <td className="py-3 pr-4 text-right"><Button size="sm" variant="secondary" onClick={() => openDashboard(r)}>Open client dashboard</Button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
     </div>
   );
 }
 
-function ContactInbox({ readOnly }: { readOnly: boolean }) {
-  const p2 = useP2();
-  const [msgs, setMsgs] = useState<ApiContactMessage2[]>([]);
-  const [error, setError] = useState('');
+// --- plans & billing -------------------------------------------------------------------
 
-  const load = async () => {
-    try {
-      const { data } = await p2.contactMessages.list();
-      setMsgs(itemsOf(data));
-    } catch (e) { setError(errMsg(e)); }
-  };
-  useEffect(() => { void load(); }, []);
-
-  const markRead = async (m: ApiContactMessage2) => {
-    try {
-      await p2.contactMessages.markRead(m.id);
-      await load();
-    } catch (e) { setError(errMsg(e)); }
-  };
-
-  const unread = msgs.filter((m) => !m.read).length;
-
-  return (
-    <div className="mb-10">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="font-bold text-slate-900">Contact inbox {unread > 0 && <Badge tone="rose">{unread} unread</Badge>}</h3>
-      </div>
-      {error && <p className="text-sm text-rose-600 mb-3">{error}</p>}
-      {msgs.length === 0 ? (
-        <EmptyState icon="✉️" title="No messages" hint="Submissions from /contact land here." />
-      ) : (
-        <div className="space-y-3">
-          {msgs.map((m) => (
-            <Card key={m.id} className={cx('p-4', !m.read && 'border-brix-200 bg-brix-50/40')}>
-              <div className="flex flex-wrap items-start gap-3">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-bold text-slate-900">{m.name}</span>
-                    <span className="text-xs text-slate-400">{m.email}</span>
-                    {!m.read && <Badge tone="rose">new</Badge>}
-                  </div>
-                  <div className="text-xs text-slate-500 mt-0.5 font-semibold">{m.subject} · {fmtTs(m.created_at)}</div>
-                  <p className="text-sm text-slate-600 mt-2 whitespace-pre-wrap">{m.message}</p>
-                </div>
-                {!readOnly && !m.read && (
-                  <Button variant="ghost" size="sm" onClick={() => void markRead(m)}>Mark read</Button>
-                )}
-              </div>
-            </Card>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function StatusManager({ readOnly }: { readOnly: boolean }) {
-  const p2 = useP2();
+function PlansTab({ highlightId, nonce }: { highlightId?: string; nonce: number }) {
+  const toast = useToast();
   const { confirm, dialog } = useConfirm();
-  const [entries, setEntries] = useState<ApiStatusEntry2[]>([]);
-  const [title, setTitle] = useState('');
-  const [detail, setDetail] = useState('');
-  const [state, setState] = useState<ApiStatusEntry2['state']>('operational');
+  const [plans, setPlans] = useState<PlanRecord[]>([]);
+  const [clients, setClients] = useState<ClientRecord[]>([]);
+  const [editing, setEditing] = useState<(Partial<PlanRecord> & { featuresText?: string }) | null>(null);
+  const [stripeOpen, setStripeOpen] = useState(false);
   const [error, setError] = useState('');
 
-  const load = async () => {
-    try {
-      const { data } = await p2.statusEntries.list();
-      setEntries(itemsOf(data));
-    } catch (e) { setError(errMsg(e)); }
+  const load = () => {
+    setPlans(listPlans());
+    setClients(listClients());
   };
-  useEffect(() => { void load(); }, []);
+  useEffect(load, []);
 
-  const add = async () => {
-    if (!title.trim()) return;
-    try {
-      await p2.statusEntries.create({ title: title.trim(), detail: detail.trim(), state });
-      setTitle(''); setDetail('');
-      await load();
-    } catch (e) { setError(errMsg(e)); }
+  const flash = useRowFlash(highlightId, nonce);
+  const persist = (next: PlanRecord[]) => { savePlans(next); setPlans(next); };
+
+  const openNew = () => setEditing({ name: '', price: 49, seats: 5, featuresText: '' });
+  const openEdit = (p: PlanRecord) => setEditing({ ...p, featuresText: p.features.join('\n') });
+
+  const save = () => {
+    if (!editing || !editing.name?.trim()) { setError('Plan name is required.'); return; }
+    const price = Number(editing.price) || 0;
+    if (price < 0) { setError('Price cannot be negative.'); return; }
+    const features = (editing.featuresText ?? '').split('\n').map((f) => f.trim()).filter(Boolean);
+    setError('');
+    if (editing.id) {
+      persist(plans.map((p) => (p.id === editing.id ? { ...p, name: editing.name!.trim(), price, seats: Number(editing.seats) || 1, features } : p)));
+      toast.success(`Plan “${editing.name!.trim()}” updated.`);
+    } else {
+      const id = editing.name!.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-');
+      if (plans.some((p) => p.id === id)) { setError('A plan with that name already exists.'); return; }
+      persist([...plans, { id, name: editing.name!.trim(), price, seats: Number(editing.seats) || 1, features, created_at: new Date().toISOString() }]);
+      toast.success(`Plan “${editing.name!.trim()}” created.`);
+    }
+    setEditing(null);
   };
 
-  const remove = (e: ApiStatusEntry2) => {
+  const remove = (p: PlanRecord) => {
+    const users = clients.filter((c) => c.planId === p.id);
+    if (users.length > 0) {
+      toast.error(`Cannot delete — ${users.length} client${users.length > 1 ? 's' : ''} on this plan. Move them first.`);
+      return;
+    }
     confirm({
-      title: 'Delete status entry?', body: `"${e.title}" will be removed from /status.`,
-      action: async () => { await p2.statusEntries.delete(e.id); await load(); },
+      title: 'Delete plan?', body: `“${p.name}” will be removed from the catalog.`,
+      action: () => { persist(plans.filter((x) => x.id !== p.id)); toast.success('Plan deleted.'); },
     });
   };
 
-  const tone = (s: ApiStatusEntry2['state']) => (s === 'operational' ? 'green' : s === 'degraded' ? 'amber' : 'rose') as 'green' | 'amber' | 'rose';
+  const billable = clients.filter((c) => c.status !== 'suspended');
+  const mrr = billable.reduce((n, c) => n + (plans.find((p) => p.id === c.planId)?.price ?? 0), 0);
+  const planRows = plans.map((p, i) => {
+    const onPlan = clients.filter((c) => c.planId === p.id);
+    const paying = onPlan.filter((c) => c.status !== 'suspended');
+    return { plan: p, clients: onPlan.length, mrr: paying.length * p.price, color: ['#e11d48', '#4f46e5', '#0ea5e9', '#10b981', '#f59e0b'][i % 5] };
+  });
 
   return (
-    <div>
+    <div className="space-y-6">
       {dialog}
-      <h3 className="font-bold text-slate-900 mb-4">Status page <span className="text-xs font-semibold text-slate-400">/status</span></h3>
-      {error && <p className="text-sm text-rose-600 mb-3">{error}</p>}
-      {!readOnly && (
-        <Card className="p-5 mb-5">
-          <div className="grid sm:grid-cols-[1fr_180px] gap-3 mb-3">
-            <div><Label>Title</Label><Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Scheduled maintenance" /></div>
-            <div>
-              <Label>State</Label>
-              <Select value={state} onChange={(e) => setState(e.target.value as ApiStatusEntry2['state'])}>
-                <option value="operational">Operational</option>
-                <option value="degraded">Degraded</option>
-                <option value="incident">Incident</option>
-              </Select>
-            </div>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-xl font-extrabold text-slate-900">Plans & billing</h2>
+          <p className="text-sm text-slate-500">The plan catalog is real locally. Card processing needs Stripe — backend phase.</p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="secondary" size="sm" onClick={() => setStripeOpen(true)}>Connect Stripe</Button>
+          <Button size="sm" onClick={openNew}>+ New plan</Button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatCard label="MRR" value={`$${mrr.toLocaleString()}`} icon="💰" tone="green" delta="local-only figure" />
+        <StatCard label="Billable clients" value={String(billable.length)} icon="🏢" tone="indigo" />
+        <StatCard label="Plans" value={String(plans.length)} icon="📦" tone="cyan" />
+        <StatCard label="Avg per client" value={billable.length ? `$${Math.round(mrr / billable.length)}` : '—'} icon="📊" tone="amber" />
+      </div>
+
+      <div className="grid lg:grid-cols-2 gap-4">
+        <Card className="p-5">
+          <h3 className="font-bold text-slate-900 mb-1">Revenue by plan</h3>
+          <p className="text-xs text-slate-500 mb-4">Monthly recurring revenue per plan (suspended clients excluded).</p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
+                  <th className="py-2 pr-3 font-semibold">Plan</th>
+                  <th className="py-2 pr-3 font-semibold">Clients</th>
+                  <th className="py-2 font-semibold text-right">MRR</th>
+                </tr>
+              </thead>
+              <tbody>
+                {planRows.map((r) => (
+                  <tr key={r.plan.id} className="border-b border-slate-50 last:border-0">
+                    <td className="py-2 pr-3 font-bold text-slate-900">{r.plan.name} <span className="font-normal text-slate-400">${r.plan.price}/mo</span></td>
+                    <td className="py-2 pr-3">{r.clients}</td>
+                    <td className="py-2 text-right font-bold">${r.mrr.toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-          <div className="mb-3"><Label>Detail</Label><Textarea value={detail} onChange={(e) => setDetail(e.target.value)} rows={2} /></div>
-          <Button size="sm" onClick={() => void add()} disabled={!title.trim()}>Publish entry</Button>
         </Card>
-      )}
-      <div className="space-y-3">
-        {entries.length === 0 && <EmptyState icon="🟢" title="No entries" hint="The status page shows all-operational by default." />}
-        {entries.map((e) => (
-          <Card key={e.id} className="p-4">
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <Badge tone={tone(e.state)}>{e.state}</Badge>
-                  <span className="font-bold text-slate-900">{e.title}</span>
-                </div>
-                {e.detail && <p className="text-sm text-slate-500 mt-1">{e.detail}</p>}
-                <div className="text-xs text-slate-400 mt-1">{fmtTs(e.created_at)}</div>
+        <Card className="p-5">
+          <h3 className="font-bold text-slate-900 mb-1">Clients per plan</h3>
+          <p className="text-xs text-slate-500 mb-4">Including trials and suspended.</p>
+          {planRows.some((r) => r.clients > 0) ? (
+            <Donut segments={planRows.filter((r) => r.clients > 0).map((r) => ({ label: r.plan.name, value: r.clients, color: r.color }))} centerLabel="clients" centerValue={String(clients.length)} />
+          ) : (
+            <EmptyState icon="📊" title="No clients yet" hint="Clients appear here once added." />
+          )}
+        </Card>
+      </div>
+
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {plans.map((p) => (
+          <Card key={p.id} className={cx('p-5', flash === p.id && 'ring-2 ring-brix-400')}>
+            <div className="flex items-start justify-between gap-2 mb-2">
+              <div>
+                <div className="font-extrabold text-slate-900 text-lg">{p.name}</div>
+                <div className="text-sm text-slate-500"><span className="text-2xl font-extrabold text-slate-900">${p.price}</span>/mo · {p.seats} seats</div>
               </div>
-              {!readOnly && <Button variant="ghost" size="sm" onClick={() => remove(e)} className="text-rose-600">Delete</Button>}
+            </div>
+            <ul className="text-sm text-slate-600 space-y-1 mb-4">
+              {p.features.map((f, i) => <li key={i} className="flex gap-2"><span className="text-emerald-500">✓</span>{f}</li>)}
+            </ul>
+            <div className="flex gap-2">
+              <Button size="sm" variant="secondary" onClick={() => openEdit(p)}>Edit</Button>
+              <Button size="sm" variant="ghost" className="text-rose-600" onClick={() => remove(p)}>Delete</Button>
             </div>
           </Card>
         ))}
       </div>
+
+      <Modal open={editing !== null} onClose={() => { setEditing(null); setError(''); }} title={editing?.id ? 'Edit plan' : 'New plan'}>
+        {editing && (
+          <div className="space-y-4">
+            {error && <p className="text-sm text-rose-600">{error}</p>}
+            <div><Label>Name</Label><Input value={editing.name ?? ''} onChange={(e) => setEditing({ ...editing, name: e.target.value })} /></div>
+            <div className="grid grid-cols-2 gap-4">
+              <div><Label>Price (USD/mo)</Label><Input type="number" min={0} value={editing.price ?? 0} onChange={(e) => setEditing({ ...editing, price: Number(e.target.value) })} /></div>
+              <div><Label>Seats</Label><Input type="number" min={1} value={editing.seats ?? 1} onChange={(e) => setEditing({ ...editing, seats: Number(e.target.value) })} /></div>
+            </div>
+            <div><Label>Features (one per line)</Label><Textarea value={editing.featuresText ?? ''} onChange={(e) => setEditing({ ...editing, featuresText: e.target.value })} rows={5} /></div>
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" onClick={() => { setEditing(null); setError(''); }}>Cancel</Button>
+              <Button onClick={save}>Save plan</Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      <Modal open={stripeOpen} onClose={() => setStripeOpen(false)} title="Connect Stripe">
+        <div className="space-y-3">
+          <p className="text-sm text-slate-600">
+            Card processing is not available in local mode. The plan catalog above, per-client
+            assignment, and the MRR figures are fully functional locally — but no money moves
+            until the backend phase wires up Stripe.
+          </p>
+          <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800 font-semibold">
+            BACKEND-PHASE — payments are stubbed, not connected.
+          </div>
+          <p className="text-xs text-slate-400">When the backend lands, this dialog becomes the Stripe OAuth connect flow (publishable key + webhook signing).</p>
+          <div className="flex justify-end"><Button variant="secondary" onClick={() => setStripeOpen(false)}>Got it</Button></div>
+        </div>
+      </Modal>
     </div>
   );
 }
 
-function ContentTab({ readOnly }: { readOnly: boolean }) {
+// --- content (marketing site) ------------------------------------------------------------
+
+function ContentTab() {
   return (
-    <div>
-      <SectionTitle title="Content" sub="Everything the public site shows: blog, help center, contact inbox, status page." />
-      <Notice>
-        <span><strong>Marketing content.</strong> Posts and articles you publish here appear on <span className="font-mono">/blog</span> and <span className="font-mono">/help</span> immediately. Seed content fills empty lists automatically on first visit.</span>
-      </Notice>
-      <BlogManager readOnly={readOnly} />
-      <HelpManager readOnly={readOnly} />
-      <ContactInbox readOnly={readOnly} />
-      <StatusManager readOnly={readOnly} />
-      <CategoriesManager readOnly={readOnly} />
+    <div className="space-y-4">
+      <div>
+        <h2 className="text-xl font-extrabold text-slate-900">Content</h2>
+        <p className="text-sm text-slate-500">The Brix marketing site — blog, help center, contact inbox, status page.</p>
+      </div>
+      <BlogManager readOnly={false} />
+      <HelpManager readOnly={false} />
+      <ContactInbox readOnly={false} />
+      <StatusManager readOnly={false} />
     </div>
   );
 }
 
-const CAT_GROUPS: Array<{ scope: CategoryKind; label: string; hint: string }> = [
-  { scope: 'kb', label: 'Help center categories', hint: 'Organize /help and /kb articles.' },
-  { scope: 'canned', label: 'Canned-response categories', hint: 'Group saved replies in the agent panel.' },
-  { scope: 'tickets', label: 'Ticket categories', hint: 'Classify support tickets.' },
-];
+// --- system ----------------------------------------------------------------------
 
-function CategoriesManager({ readOnly }: { readOnly: boolean }) {
-  const api = useApi();
+const PROVIDER_KEYS_LS = 'brix.platform.v1.provider_keys';
+
+function providerKeys(): Record<string, string> {
+  try { return JSON.parse(localStorage.getItem(PROVIDER_KEYS_LS) ?? '{}'); } catch { return {}; }
+}
+
+function SystemTab() {
+  const toast = useToast();
   const { confirm, dialog } = useConfirm();
-  const [props, setProps] = useState<ApiProperty[]>([]);
-  const [propId, setPropId] = useState('');
-  const cats = useCatSource(propId);
-  const [byScope, setByScope] = useState<Record<CategoryKind, ApiCategory2[]>>({ kb: [], canned: [], tickets: [] });
-  const [name, setName] = useState<Record<CategoryKind, string>>({ kb: '', canned: '', tickets: '' });
-  const [color, setColor] = useState<Record<CategoryKind, string>>({ kb: '#4f46e5', canned: '#0ea5e9', tickets: '#f59e0b' });
-  const [error, setError] = useState('');
+  const [errors, setErrors] = useState(getPlatformErrors());
+  const [keys, setKeys] = useState<Record<string, string>>(providerKeys());
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const storage = useMemo(() => storageUsage(), [errors]);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const { data } = await api.properties.list();
-        setProps(data);
-        setPropId((p) => p || data[0]?.id || '');
-      } catch (e) { setError(errMsg(e)); }
-    })();
-  }, [api]);
-
-  const load = async () => {
-    if (!propId || !cats.live) return;
-    try {
-      const [kb, canned, tickets] = await Promise.all([
-        cats.list('kb'), cats.list('canned'), cats.list('tickets'),
-      ]);
-      setByScope({ kb, canned, tickets });
-    } catch (e) {
-      if (!missingP2(e)) setError(errMsg(e));
-    }
-  };
-  useEffect(() => { void load(); }, [propId, cats.live]);
-
-  const add = async (scope: CategoryKind) => {
-    const n = name[scope].trim();
-    if (!n || !propId) return;
-    try {
-      await cats.create(scope, n, color[scope]);
-      setName((s) => ({ ...s, [scope]: '' }));
-      await load();
-    } catch (e) { setError(errMsg(e)); }
+  const doExport = () => {
+    exportJSON(`brix-platform-export-${new Date().toISOString().slice(0, 10)}.json`, exportAllData());
+    toast.success('Platform export downloaded.');
   };
 
-  const remove = (c: ApiCategory2) => {
+  const doReset = () => {
     confirm({
-      title: 'Delete category?',
-      body: `"${c.name}" will be removed. Items using it keep their content but lose the label.`,
-      action: async () => { await cats.remove(c.id); await load(); },
+      title: 'Reset all demo data?',
+      body: 'Every workspace DB, the client registry, plans, settings and the error log in THIS browser will be wiped and reseeded on reload. This cannot be undone.',
+      action: () => { resetAllData(); window.location.reload(); },
     });
   };
 
+  const saveKey = (id: string, explicit?: string) => {
+    const v = (explicit ?? drafts[id] ?? '').trim();
+    const next = { ...keys };
+    if (v) next[id] = v; else delete next[id];
+    try { localStorage.setItem(PROVIDER_KEYS_LS, JSON.stringify(next)); } catch { /* ignore */ }
+    setKeys(next);
+    setDrafts((d) => ({ ...d, [id]: '' }));
+    toast.success(v ? 'Provider key saved locally.' : 'Provider key removed.');
+  };
+
+  const masked = (v: string) => (v.length <= 8 ? '••••' : `${v.slice(0, 4)}••••${v.slice(-4)}`);
+
   return (
-    <div className="mt-8">
+    <div className="space-y-6">
       {dialog}
-      <SectionTitle title="Categories" sub="Labels for help articles, canned replies, and tickets. Assign them from each item's editor." />
-      {!cats.live ? (
-        <EmptyState icon="🏷️" title="Categories API not available yet" hint="api.categories.* lands with the phase-2 data API. This section renders automatically once it does." />
-      ) : (
-        <>
-          <Card className="p-5 mb-4">
-            <div className="max-w-sm">
-              <Label>Property</Label>
-              <Select value={propId} onChange={(e) => setPropId(e.target.value)}>
-                {props.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </Select>
-            </div>
-          </Card>
-          {error && <p className="text-sm text-rose-600 mb-4">{error}</p>}
-          <div className="grid lg:grid-cols-3 gap-4">
-            {CAT_GROUPS.map((g) => (
-              <Card key={g.scope} className="p-5">
-                <h3 className="font-bold text-slate-900">{g.label}</h3>
-                <p className="text-xs text-slate-500 mb-4">{g.hint}</p>
-                <div className="space-y-2 mb-4">
-                  {byScope[g.scope].length === 0 && <p className="text-xs text-slate-400">No categories yet.</p>}
-                  {byScope[g.scope].map((c) => (
-                    <div key={c.id} className="flex items-center gap-2.5 rounded-xl border border-slate-100 bg-slate-50/60 px-3 py-2">
-                      <span className="w-3.5 h-3.5 rounded-full shrink-0" style={{ background: c.color }} />
-                      <span className="text-sm font-semibold text-slate-700 flex-1 truncate">{c.name}</span>
-                      {!readOnly && (
-                        <button onClick={() => remove(c)} className="text-xs text-rose-500 hover:text-rose-700 font-semibold">Delete</button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-                {!readOnly && (
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="color"
-                      value={color[g.scope]}
-                      onChange={(e) => setColor((s) => ({ ...s, [g.scope]: e.target.value }))}
-                      className="w-9 h-9 rounded-lg border border-slate-200 p-1 bg-white shrink-0"
-                      aria-label="Category color"
-                    />
-                    <Input
-                      value={name[g.scope]}
-                      onChange={(e) => setName((s) => ({ ...s, [g.scope]: e.target.value }))}
-                      placeholder="New category name"
-                      onKeyDown={(e) => { if (e.key === 'Enter') void add(g.scope); }}
-                    />
-                    <Button size="sm" onClick={() => void add(g.scope)} disabled={!name[g.scope].trim()}>Add</Button>
-                  </div>
-                )}
-              </Card>
-            ))}
+      <div>
+        <h2 className="text-xl font-extrabold text-slate-900">System</h2>
+        <p className="text-sm text-slate-500">Data management, platform provider keys, error log, scheduled reports.</p>
+      </div>
+
+      <div className="grid lg:grid-cols-2 gap-4">
+        <Card className="p-5">
+          <h3 className="font-bold text-slate-900 mb-1">Data management</h3>
+          <p className="text-xs text-slate-500 mb-4">Everything lives in this browser's localStorage.</p>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" size="sm" onClick={doExport}>Export all (JSON)</Button>
+            <Button variant="danger" size="sm" onClick={doReset}>Reset demo data…</Button>
           </div>
-        </>
-      )}
-    </div>
-  );
-}
+          <dl className="mt-4 space-y-2 text-sm">
+            <div className="flex justify-between"><dt className="text-slate-500">localStorage used</dt><dd className="font-bold">{(storage.bytes / 1048576).toFixed(2)} MB</dd></div>
+            <div className="flex justify-between"><dt className="text-slate-500">Brix keys</dt><dd className="font-bold">{storage.keys}</dd></div>
+          </dl>
+        </Card>
+        <Card className="p-5">
+          <div className="flex items-center justify-between mb-1">
+            <h3 className="font-bold text-slate-900">Error log</h3>
+            {errors.length > 0 && <Button variant="ghost" size="sm" onClick={() => { clearPlatformErrors(); setErrors([]); toast.success('Error log cleared.'); }}>Clear</Button>}
+          </div>
+          <p className="text-xs text-slate-500 mb-3">Client-side errors captured in this browser. Server-side logging arrives with the backend phase.</p>
+          {errors.length === 0 ? (
+            <p className="text-sm text-emerald-600 font-semibold">✓ No errors logged.</p>
+          ) : (
+            <ul className="space-y-2 max-h-56 overflow-auto">
+              {errors.map((e) => (
+                <li key={e.id} className="text-xs rounded-lg bg-slate-50 border border-slate-100 p-2">
+                  <div className="font-mono text-slate-700 break-words">{e.message}</div>
+                  <div className="text-slate-400 mt-1">{e.source} · {fmtDate(e.at)}</div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+      </div>
 
-// ---------------------------------------------------------------------------
-// Branding — white-label controls per property (logo, name, colors, domain)
-// ---------------------------------------------------------------------------
-
-const PALETTES: Array<{ name: string; color: string; accent: string }> = [
-  { name: 'Ocean', color: '#4f46e5', accent: '#0d9488' },
-  { name: 'Forest', color: '#059669', accent: '#84cc16' },
-  { name: 'Sunset', color: '#ea580c', accent: '#f59e0b' },
-  { name: 'Royal', color: '#7c3aed', accent: '#ec4899' },
-  { name: 'Slate', color: '#334155', accent: '#0ea5e9' },
-  { name: 'Blush', color: '#e11d48', accent: '#f472b6' },
-];
-
-function BrandingTab({ readOnly }: { readOnly: boolean }) {
-  const api = useApi();
-  const p2 = useP2();
-  const [props, setProps] = useState<ApiProperty[]>([]);
-  const [propId, setPropId] = useState('');
-  const [s, setS] = useState<PropertySettings2 | null>(null);
-  const [error, setError] = useState('');
-  const [saved, setSaved] = useState(false);
-  const [logoError, setLogoError] = useState('');
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const { data } = await api.properties.list();
-        setProps(data);
-        setPropId((p) => p || data[0]?.id || '');
-      } catch (e) { setError(errMsg(e)); }
-    })();
-  }, [api]);
-
-  useEffect(() => {
-    if (!propId) return;
-    (async () => {
-      try {
-        const { data } = await p2.propertySettings.get(propId);
-        setS(data);
-        setSaved(false);
-      } catch (e) { setError(errMsg(e)); }
-    })();
-  }, [propId, p2]);
-
-  const patch = (k: keyof PropertySettings2, v: string) => {
-    setS((prev) => (prev ? { ...prev, [k]: v } : prev));
-    setSaved(false);
-  };
-
-  const save = async () => {
-    if (!s || !propId) return;
-    try {
-      await p2.propertySettings.patch(propId, {
-        logo_data_url: s.logo_data_url, brand_name: s.brand_name, tagline: s.tagline,
-        accent_color: s.accent_color, custom_domain: s.custom_domain,
-        custom_subdomain: (s.custom_subdomain || '').trim().toLowerCase(),
-        widget_color: s.widget_color, theme: s.theme,
-      });
-      setSaved(true);
-    } catch (e) { setError(errMsg(e)); }
-  };
-
-  const onLogo = (f: File | undefined) => {
-    setLogoError('');
-    if (!f) return;
-    if (f.size > 500 * 1024) { setLogoError('Logo must be under 500 KB.'); return; }
-    const r = new FileReader();
-    r.onload = () => patch('logo_data_url', String(r.result ?? ''));
-    r.readAsDataURL(f);
-  };
-
-  const prop = props.find((p) => p.id === propId);
-
-  return (
-    <div>
-      <SectionTitle title="Branding" sub="White-label each property: logo, name, colors, and domain." />
-      <Notice>
-        <span><strong>White-label.</strong> Branding applies to the widget and the property help center (<span className="font-mono">/kb/:key</span>) today. Path routing works now; subdomain mapping activates with the backend phase.</span>
-      </Notice>
-      {error && <p className="text-sm text-rose-600 mb-4">{error}</p>}
-
-      <Card className="p-5 mb-5">
-        <div className="max-w-sm">
-          <Label>Property</Label>
-          <Select value={propId} onChange={(e) => setPropId(e.target.value)}>
-            {props.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </Select>
+      <Card className="p-5">
+        <h3 className="font-bold text-slate-900 mb-1">Integrations registry</h3>
+        <p className="text-xs text-slate-500 mb-4">Platform-level provider keys. Stored locally in this browser — a real vault arrives with the backend phase.</p>
+        <div className="space-y-3">
+          {INTEGRATION_REGISTRY.map((def) => {
+            const saved = keys[def.id];
+            return (
+              <div key={def.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-100 p-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-slate-900">{def.name}</span>
+                    {saved ? <Badge tone="green">configured</Badge> : <Badge tone="slate">not set</Badge>}
+                  </div>
+                  {saved && <div className="text-xs font-mono text-slate-400 mt-0.5">{masked(saved)}</div>}
+                </div>
+                <Input
+                  type="password"
+                  className="w-56"
+                  placeholder={saved ? 'Replace key…' : 'Paste key…'}
+                  value={drafts[def.id] ?? ''}
+                  onChange={(e) => setDrafts((d) => ({ ...d, [def.id]: e.target.value }))}
+                />
+                <Button size="sm" variant="secondary" onClick={() => saveKey(def.id)} disabled={!(drafts[def.id] ?? '').trim() && !saved}>
+                  {saved ? 'Update' : 'Save'}
+                </Button>
+                {saved && <Button size="sm" variant="ghost" className="text-rose-600" onClick={() => saveKey(def.id, '')}>Remove</Button>}
+              </div>
+            );
+          })}
         </div>
       </Card>
 
-      {!s ? (
-        <EmptyState icon="🎨" title="Loading branding…" hint="Fetching property settings." />
-      ) : (
-        <div className="grid lg:grid-cols-2 gap-5">
-          <div className="space-y-5">
-            <Card className="p-5">
-              <h3 className="font-bold text-slate-900 mb-4">Logo & name</h3>
-              <div className="flex items-center gap-4 mb-4">
-                <div className="w-16 h-16 rounded-2xl bg-slate-100 border border-slate-200 grid place-items-center overflow-hidden shrink-0">
-                  {s.logo_data_url ? (
-                    <img src={s.logo_data_url} alt="Brand logo" className="w-full h-full object-contain" />
-                  ) : (
-                    <span className="text-2xl font-black text-slate-300">{(s.brand_name || prop?.name || 'B').charAt(0)}</span>
-                  )}
-                </div>
-                {!readOnly && (
-                  <div>
-                    <label className="inline-block px-3.5 py-2 rounded-xl bg-slate-900 text-white text-sm font-semibold cursor-pointer hover:bg-slate-700">
-                      Upload logo
-                      <input type="file" accept="image/*" className="hidden" onChange={(e) => onLogo(e.target.files?.[0])} />
-                    </label>
-                    {s.logo_data_url && (
-                      <button onClick={() => patch('logo_data_url', '')} className="ml-2 text-xs font-semibold text-rose-600 hover:underline">Remove</button>
-                    )}
-                    <p className="text-xs text-slate-400 mt-1.5">PNG/SVG, under 500 KB. Stored in this browser.</p>
-                    {logoError && <p className="text-xs text-rose-600 mt-1">{logoError}</p>}
-                  </div>
-                )}
-              </div>
-              <div className="grid sm:grid-cols-2 gap-4">
-                <div><Label>Brand name</Label><Input value={s.brand_name} onChange={(e) => patch('brand_name', e.target.value)} placeholder={prop?.name} disabled={readOnly} /></div>
-                <div><Label>Tagline</Label><Input value={s.tagline} onChange={(e) => patch('tagline', e.target.value)} placeholder="Chat with us — we reply fast." disabled={readOnly} /></div>
-              </div>
-            </Card>
-
-            <Card className="p-5">
-              <h3 className="font-bold text-slate-900 mb-4">Colors</h3>
-              <div className="flex flex-wrap gap-2 mb-4">
-                {PALETTES.map((p) => (
-                  <button
-                    key={p.name}
-                    disabled={readOnly}
-                    onClick={() => { patch('widget_color', p.color); patch('accent_color', p.accent); }}
-                    className={cx('flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-bold', s.widget_color === p.color ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 text-slate-600 hover:border-slate-300')}
-                    title={`${p.name}: ${p.color} / ${p.accent}`}
-                  >
-                    <span className="flex -space-x-1">
-                      <span className="w-4 h-4 rounded-full border border-white" style={{ background: p.color }} />
-                      <span className="w-4 h-4 rounded-full border border-white" style={{ background: p.accent }} />
-                    </span>
-                    {p.name}
-                  </button>
-                ))}
-              </div>
-              <div className="grid sm:grid-cols-2 gap-4">
-                <div>
-                  <Label>Primary color</Label>
-                  <div className="flex items-center gap-2">
-                    <input type="color" value={s.widget_color} onChange={(e) => patch('widget_color', e.target.value)} disabled={readOnly} className="w-10 h-10 rounded-lg border border-slate-200 p-1 bg-white" />
-                    <Input value={s.widget_color} onChange={(e) => patch('widget_color', e.target.value)} disabled={readOnly} className="font-mono" />
-                  </div>
-                </div>
-                <div>
-                  <Label>Accent color</Label>
-                  <div className="flex items-center gap-2">
-                    <input type="color" value={s.accent_color || '#0d9488'} onChange={(e) => patch('accent_color', e.target.value)} disabled={readOnly} className="w-10 h-10 rounded-lg border border-slate-200 p-1 bg-white" />
-                    <Input value={s.accent_color || ''} onChange={(e) => patch('accent_color', e.target.value)} disabled={readOnly} className="font-mono" />
-                  </div>
-                </div>
-              </div>
-              <div className="mt-4 max-w-sm">
-                <Label>Widget theme</Label>
-                <Select value={s.theme || 'light'} onChange={(e) => patch('theme', e.target.value)} disabled={readOnly} className="w-full">
-                  <option value="light">Light</option>
-                  <option value="dark">Dark</option>
-                  <option value="auto">Auto — follow the visitor's device</option>
-                </Select>
-                <p className="text-xs text-slate-400 mt-1.5">Dark re-skins the whole widget — chat, forms, prompts, ratings. Saved per property.</p>
-              </div>
-            </Card>
-
-            <Card className="p-5">
-              <h3 className="font-bold text-slate-900 mb-1">Domain</h3>
-              <p className="text-xs text-slate-500 mb-4">Custom domains arrive with the backend phase.</p>
-              <div className="mb-4">
-                <Label>Subdomain</Label>
-                <div className="flex items-center gap-2">
-                  <Input value={s.custom_subdomain || ''} onChange={(e) => patch('custom_subdomain', e.target.value.replace(/[^a-z0-9-]/gi, ''))} placeholder="acme" disabled={readOnly} className="font-mono" />
-                  <span className="text-sm text-slate-400 font-mono shrink-0">.brixchat.com</span>
-                </div>
-                {(s.custom_subdomain || '').trim() && (
-                  <p className="text-xs text-slate-400 mt-1.5">Preview: <span className="font-mono text-slate-600">{(s.custom_subdomain || '').trim().toLowerCase()}.brixchat.com</span> — mapping activates with the backend phase.</p>
-                )}
-              </div>
-              <div>
-                <Label>Custom domain</Label>
-                <Input value={s.custom_domain || ''} disabled placeholder="support.acme.com" />
-              </div>
-              {!readOnly && (
-                <div className="mt-5 flex items-center gap-3">
-                  <Button onClick={() => void save()}>Save branding</Button>
-                  {saved && <span className="text-sm font-semibold text-emerald-600">✓ Saved</span>}
-                </div>
-              )}
-            </Card>
-          </div>
-
-          <div>
-            <Card className="p-5 lg:sticky lg:top-6">
-              <h3 className="font-bold text-slate-900 mb-1">Live preview</h3>
-              <p className="text-xs text-slate-500 mb-4">How the widget bubble looks with this branding.</p>
-              <div className="rounded-2xl bg-slate-100 p-8 grid place-items-center">
-                <div className="w-full max-w-[240px] rounded-2xl bg-white shadow-xl overflow-hidden">
-                  <div className="px-4 py-3 flex items-center gap-2.5" style={{ background: s.widget_color }}>
-                    {s.logo_data_url ? (
-                      <img src={s.logo_data_url} alt="" className="w-9 h-9 rounded-xl bg-white object-contain p-0.5" />
-                    ) : (
-                      <span className="w-9 h-9 rounded-xl bg-white/20 grid place-items-center text-white font-black">{(s.brand_name || prop?.name || 'B').charAt(0)}</span>
-                    )}
-                    <div className="min-w-0">
-                      <div className="text-white font-bold text-sm truncate">{s.brand_name || prop?.name || 'Brand'}</div>
-                      <div className="text-white/70 text-xs truncate">{s.tagline || 'We reply fast.'}</div>
-                    </div>
-                  </div>
-                  <div className="p-4 space-y-2">
-                    <div className="rounded-xl rounded-tl-sm bg-slate-100 px-3 py-2 text-xs text-slate-700 w-fit">Hi there! 👋 How can we help?</div>
-                    <div className="rounded-xl rounded-tr-sm px-3 py-2 text-xs text-white w-fit ml-auto" style={{ background: s.accent_color || s.widget_color }}>I need help with my order</div>
-                  </div>
-                </div>
-              </div>
-            </Card>
-          </div>
+      <div>
+        <div className="flex items-center gap-2 mb-3">
+          <h3 className="font-bold text-slate-900">Scheduled reports</h3>
+          <Badge tone="amber">BACKEND-PHASE</Badge>
         </div>
-      )}
+        <p className="text-xs text-slate-500 mb-3">Schedules and run history work locally. Actual email delivery needs the backend mailer.</p>
+        <ScheduledReportsPanel workspace="platform" />
+      </div>
     </div>
   );
 }
 
-function RatingsTab() {
-  const api = useApi();
-  const p2 = useP2();
-  const [props, setProps] = useState<ApiProperty[]>([]);
-  const [propId, setPropId] = useState('');
-  const [summary, setSummary] = useState<RatingsSummary2 | null>(null);
-  const [ratings, setRatings] = useState<ApiRating2[]>([]);
-  const [members, setMembers] = useState<ApiMember2[]>([]);
-  const [days, setDays] = useState(30);
-  const [missing, setMissing] = useState(false);
+// --- audit (platform-wide) -----------------------------------------------------------------
+
+function AuditTab() {
+  const [entries, setEntries] = useState<ScopedAuditEntry[]>([]);
+  const [q, setQ] = useState('');
+  const [wsF, setWsF] = useState('');
+  const [actionF, setActionF] = useState('');
+  const [saveName, setSaveName] = useState('');
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   useEffect(() => {
     (async () => {
       try {
-        const { data } = await api.properties.list();
-        setProps(data);
-        setPropId((p) => p || data[0]?.id || '');
-        const { data: m } = await p2.members.list();
-        setMembers(itemsOf(m));
-      } catch (e) { setError(errMsg(e)); }
+        setEntries(await aggregateAudit(listClients()));
+      } catch (e) { setError(e instanceof ApiError ? e.message : 'Something went wrong.'); }
+      setLoading(false);
     })();
-  }, [api, p2]);
+  }, []);
 
-  const load = async () => {
-    if (!propId) return;
-    try {
-      const { data: s } = await p2.ratings.summary(propId, days);
-      setSummary(s);
-      const { data: l } = await p2.ratings.list({ property_id: propId, limit: 100 });
-      setRatings(itemsOf(l));
-      setMissing(false);
-    } catch (e) {
-      if (missingP2(e)) setMissing(true);
-      else setError(errMsg(e));
+  const workspaces = useMemo(() => {
+    const m = new Map<string, string>();
+    entries.forEach((e) => m.set(e.workspaceSlug, e.workspaceName));
+    return [...m.entries()];
+  }, [entries]);
+
+  const actions = useMemo(() => [...new Set(entries.map((e) => e.action))].sort(), [entries]);
+
+  const filtered = useMemo(() => entries.filter((e) => {
+    if (wsF && e.workspaceSlug !== wsF) return false;
+    if (actionF && e.action !== actionF) return false;
+    if (q) {
+      const hay = `${e.actor} ${e.action} ${e.entity} ${e.entity_id}`.toLowerCase();
+      if (!hay.includes(q.toLowerCase())) return false;
     }
-  };
-  useEffect(() => { void load(); }, [propId, days]);
+    return true;
+  }), [entries, q, wsF, actionF]);
 
-  if (missing) {
-    return (
+  return (
+    <div className="space-y-4">
       <div>
-        <SectionTitle title="Ratings" sub="Customer satisfaction (CSAT) and NPS from post-chat surveys." />
-        <EmptyState icon="⭐" title="Ratings API not available yet" hint="api.ratings.* lands with the phase-2 data API. This dashboard renders automatically once it does." />
+        <h2 className="text-xl font-extrabold text-slate-900">Audit log</h2>
+        <p className="text-sm text-slate-500">Every workspace's audit trail, merged. Newest first.</p>
+      </div>
+      {error && <Notice>{error}</Notice>}
+
+      <SavedFilterBar
+        scope="platform-audit" workspace="platform"
+        current={{ q, ws: wsF, action: actionF }}
+        onApply={(v) => { setQ(v.q ?? ''); setWsF(v.ws ?? ''); setActionF(v.action ?? ''); }}
+        saveName={saveName} setSaveName={setSaveName}
+        hint="Filter the audit log, then name and save the set."
+      />
+
+      <Card className="p-4">
+        <div className="grid sm:grid-cols-4 gap-3">
+          <div><Label>Search</Label><Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Actor, action, entity…" /></div>
+          <div>
+            <Label>Workspace</Label>
+            <Select value={wsF} onChange={(e) => setWsF(e.target.value)}>
+              <option value="">All workspaces</option>
+              {workspaces.map(([slug, name]) => <option key={slug} value={slug}>{name}</option>)}
+            </Select>
+          </div>
+          <div>
+            <Label>Action</Label>
+            <Select value={actionF} onChange={(e) => setActionF(e.target.value)}>
+              <option value="">All actions</option>
+              {actions.map((a) => <option key={a} value={a}>{a}</option>)}
+            </Select>
+          </div>
+          <div className="flex items-end">
+            <Button variant="ghost" size="sm" onClick={() => { setQ(''); setWsF(''); setActionF(''); }}>Clear</Button>
+          </div>
+        </div>
+      </Card>
+
+      <Card className="overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
+                <th className="py-3 pl-4 pr-3 font-semibold">When</th>
+                <th className="py-3 pr-3 font-semibold">Workspace</th>
+                <th className="py-3 pr-3 font-semibold">Actor</th>
+                <th className="py-3 pr-3 font-semibold">Action</th>
+                <th className="py-3 pr-3 font-semibold">Entity</th>
+                <th className="py-3 pr-4 font-semibold"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr><td colSpan={6} className="py-10 text-center text-slate-400">Loading audit log…</td></tr>
+              ) : filtered.length === 0 ? (
+                <tr><td colSpan={6}><EmptyState icon="📜" title="No entries" hint="Actions across workspaces will appear here." /></td></tr>
+              ) : filtered.slice(0, 200).map((e) => (
+                <Fragment key={e.id}>
+                  <tr className="border-b border-slate-50 last:border-0 hover:bg-slate-50/60 cursor-pointer" onClick={() => setExpanded((x) => (x === e.id ? null : e.id))}>
+                    <td className="py-2.5 pl-4 pr-3 text-slate-500 whitespace-nowrap">{fmtDate(e.created_at)}</td>
+                    <td className="py-2.5 pr-3"><Badge tone="indigo">{e.workspaceName}</Badge></td>
+                    <td className="py-2.5 pr-3 font-semibold text-slate-900">{e.actor}</td>
+                    <td className="py-2.5 pr-3 font-mono text-xs">{e.action}</td>
+                    <td className="py-2.5 pr-3 text-slate-500">{e.entity}{e.entity_id ? ` · ${e.entity_id.slice(0, 12)}` : ''}</td>
+                    <td className="py-2.5 pr-4 text-right text-slate-400">{expanded === e.id ? '▾' : '▸'}</td>
+                  </tr>
+                  {expanded === e.id && (
+                    <tr className="bg-slate-50/70">
+                      <td colSpan={6} className="py-3 px-4"><Code text={JSON.stringify(e.meta ?? {}, null, 2)} maxH="200px" /></td>
+                    </tr>
+                  )}
+                </Fragment>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {filtered.length > 200 && <p className="text-xs text-slate-400 p-3">Showing 200 of {filtered.length} — refine the filters.</p>}
+      </Card>
+    </div>
+  );
+}
+
+// --- settings (platform) -------------------------------------------------------------------
+
+function SettingsTab() {
+  const toast = useToast();
+  const [draft, setDraft] = useState(getPlatformSettings());
+  const [error, setError] = useState('');
+
+  const save = () => {
+    if (!draft.platform_name.trim()) { setError('Platform name is required.'); return; }
+    if (draft.session_timeout_mins < 5 || draft.session_timeout_mins > 1440) { setError('Session timeout must be 5–1440 minutes.'); return; }
+    if (draft.passcode_min_length < 4 || draft.passcode_min_length > 12) { setError('Passcode length must be 4–12.'); return; }
+    setError('');
+    savePlatformSettings({ ...draft, platform_name: draft.platform_name.trim() });
+    toast.success('Platform settings saved.');
+  };
+
+  const onLogo = (f: File | undefined) => {
+    if (!f) return;
+    if (f.size > 512 * 1024) { setError('Logo must be under 512 KB.'); return; }
+    const r = new FileReader();
+    r.onload = () => setDraft((d) => ({ ...d, logo_data_url: String(r.result) }));
+    r.readAsDataURL(f);
+  };
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-xl font-extrabold text-slate-900">Settings</h2>
+        <p className="text-sm text-slate-500">Platform-level settings. Client workspace settings live in each client's dashboard.</p>
+      </div>
+      {error && <Notice>{error}</Notice>}
+      <div className="grid lg:grid-cols-2 gap-4">
+        <Card className="p-5 space-y-4">
+          <h3 className="font-bold text-slate-900">Platform</h3>
+          <div><Label>Platform name</Label><Input value={draft.platform_name} onChange={(e) => setDraft({ ...draft, platform_name: e.target.value })} /></div>
+          <div>
+            <Label>Logo</Label>
+            <div className="flex items-center gap-3">
+              {draft.logo_data_url && <img src={draft.logo_data_url} alt="logo" className="w-10 h-10 rounded-xl object-contain bg-slate-100" />}
+              <input type="file" accept="image/*" onChange={(e) => onLogo(e.target.files?.[0])} className="text-sm" />
+              {draft.logo_data_url && <Button variant="ghost" size="sm" onClick={() => setDraft({ ...draft, logo_data_url: null })}>Remove</Button>}
+            </div>
+          </div>
+          <div className="flex items-center justify-between">
+            <div><div className="text-sm font-bold text-slate-900">Allow new signups</div><div className="text-xs text-slate-500">New workspaces can self-register.</div></div>
+            <Toggle checked={draft.allow_signup} onChange={(v) => setDraft({ ...draft, allow_signup: v })} label="" />
+          </div>
+          <div className="flex justify-end"><Button onClick={save}>Save settings</Button></div>
+        </Card>
+        <div className="space-y-4">
+          <Card className="p-5 space-y-4">
+            <h3 className="font-bold text-slate-900">Security</h3>
+            <div><Label>Session timeout (minutes)</Label><Input type="number" min={5} max={1440} value={draft.session_timeout_mins} onChange={(e) => setDraft({ ...draft, session_timeout_mins: Number(e.target.value) })} /></div>
+            <div><Label>Minimum passcode length</Label><Input type="number" min={4} max={12} value={draft.passcode_min_length} onChange={(e) => setDraft({ ...draft, passcode_min_length: Number(e.target.value) })} /></div>
+            <p className="text-xs text-slate-400">Applies to newly set passcodes. Existing sessions are unaffected until re-login.</p>
+            <div className="flex justify-end"><Button onClick={save}>Save settings</Button></div>
+          </Card>
+          <Card className="p-5">
+            <h3 className="font-bold text-slate-900 mb-3">Live preview</h3>
+            <div className="rounded-2xl bg-ink-950 text-white p-4 flex items-center gap-3">
+              {draft.logo_data_url
+                ? <img src={draft.logo_data_url} alt="" className="w-8 h-8 rounded-lg object-contain bg-white/10" />
+                : <div className="w-8 h-8 rounded-lg bg-brix-600 grid place-items-center font-extrabold">B</div>}
+              <div>
+                <div className="font-extrabold text-sm">{draft.platform_name || 'Brix Chat'}</div>
+                <div className="text-[11px] text-white/50 uppercase tracking-widest">Platform console</div>
+              </div>
+              <span className="ml-auto text-[10px] font-bold uppercase tracking-widest bg-brix-600 rounded-full px-2 py-0.5">Platform</span>
+            </div>
+            <p className="text-xs text-slate-400 mt-2">Preview updates as you edit — save to apply.</p>
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --- admin shell -------------------------------------------------------------------
+
+function AdminInner() {
+  const { session, logout, setViewingWorkspace } = useStore();
+  const navigate = useNavigate();
+  const [tab, setTab] = useState<Tab>('overview');
+  const [highlightId, setHighlightId] = useState<string | undefined>(undefined);
+  const [nonce, setNonce] = useState(0);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [items, setItems] = useState<SearchItem[]>([]);
+  const [itemsLoading, setItemsLoading] = useState(false);
+  const [platformName, setPlatformName] = useState(getPlatformSettings().platform_name);
+
+  // Client-side error capture (this browser only).
+  useEffect(() => {
+    const onErr = (e: ErrorEvent) => logPlatformError(e.message || 'Unknown error', 'window.onerror');
+    const onRej = (e: PromiseRejectionEvent) => logPlatformError(String(e.reason?.message ?? e.reason ?? 'Unhandled rejection'), 'unhandledrejection');
+    window.addEventListener('error', onErr);
+    window.addEventListener('unhandledrejection', onRej);
+    return () => { window.removeEventListener('error', onErr); window.removeEventListener('unhandledrejection', onRej); };
+  }, []);
+
+  useEffect(() => { setPlatformName(getPlatformSettings().platform_name); }, [tab]);
+
+  const jumpTo = (t: Tab, id?: string) => {
+    setTab(t);
+    setHighlightId(id);
+    setNonce((n) => n + 1);
+    window.scrollTo({ top: 0 });
+  };
+
+  const openPalette = () => {
+    setPaletteOpen(true);
+    setItemsLoading(true);
+    collectPlatformSearchItems().then((list) => { setItems(list); setItemsLoading(false); });
+  };
+
+  useAdminShortcuts({
+    onGo: (t) => jumpTo(t as Tab),
+    onSearch: openPalette,
+    onHelp: () => setHelpOpen(true),
+    enabled: true,
+  });
+
+  if (!session || !session.isPlatformAdmin) {
+    return (
+      <div className="min-h-screen bg-slate-50 grid place-items-center p-6">
+        <Card className="p-8 max-w-md text-center">
+          <div className="text-4xl mb-3">🛡️</div>
+          <h1 className="text-lg font-extrabold text-slate-900 mb-2">Platform admin only</h1>
+          <p className="text-sm text-slate-500 mb-5">
+            The operator console needs a platform-admin session. Sign in as the owner
+            (workspace <span className="font-mono font-bold">demo</span>) to continue.
+          </p>
+          <div className="flex justify-center gap-2">
+            <Button variant="secondary" onClick={() => navigate('/login')}>Go to login</Button>
+            {session && <Button variant="ghost" onClick={logout}>Sign out</Button>}
+          </div>
+        </Card>
       </div>
     );
   }
 
-  const csat = summary?.csat_avg ?? null;
-  const nps = summary?.nps_score ?? null;
-  const maxTrend = Math.max(1, ...((summary?.trend ?? []).map((t) => t.count)));
-  const memberName = (id: string | null) =>
-    members.find((m) => m.id === id)?.display_name ?? 'Unassigned';
-
-  const isLow = (r: ApiRating2) => (r.kind === 'csat' ? r.score <= 2 : r.score <= 6);
-  const low = ratings.filter(isLow);
-  const commented = ratings.filter((r) => r.comment.trim());
-
-  const byAgent = (() => {
-    const map = new Map<string, { name: string; count: number; csatSum: number; csatN: number }>();
-    for (const r of ratings) {
-      const key = r.agent_id ?? 'unassigned';
-      const e = map.get(key) ?? { name: memberName(r.agent_id), count: 0, csatSum: 0, csatN: 0 };
-      e.count += 1;
-      if (r.kind === 'csat') { e.csatSum += r.score; e.csatN += 1; }
-      map.set(key, e);
-    }
-    return [...map.values()].sort((a, b) => b.count - a.count);
-  })();
-
-  const totalNps = (summary?.promoters ?? 0) + (summary?.passives ?? 0) + (summary?.detractors ?? 0);
+  const viewingSlug = session.viewingWorkspaceId;
+  const viewingName = viewingSlug ? (listClients().find((c) => c.slug === viewingSlug)?.name ?? viewingSlug) : null;
 
   return (
-    <div>
-      <SectionTitle title="Ratings" sub="Customer satisfaction (CSAT) and NPS from the widget's two-step survey." />
-      <Notice>
-        <span><strong>Local mode.</strong> Ratings are collected by the widget survey (CSAT 1–5, then NPS 0–10) and stored in this browser until the backend phase. Low ratings also raise a notification.</span>
-      </Notice>
-      {error && <p className="text-sm text-rose-600 mb-4">{error}</p>}
-
-      <div className="flex flex-wrap items-center gap-3 mb-5">
-        <div className="flex items-center gap-2">
-          <Label>Property</Label>
-          <Select value={propId} onChange={(e) => setPropId(e.target.value)} className="w-48">
-            {props.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </Select>
-        </div>
-        <div className="flex items-center gap-2">
-          <Label>Window</Label>
-          <Select value={String(days)} onChange={(e) => setDays(Number(e.target.value))} className="w-32">
-            <option value="7">7 days</option>
-            <option value="30">30 days</option>
-            <option value="90">90 days</option>
-          </Select>
-        </div>
-      </div>
-
-      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <StatCard label="CSAT average" value={csat !== null ? `${csat.toFixed(1)} / 5` : '—'} delta={`${summary?.csat_count ?? 0} responses`} icon="⭐" tone="green" />
-        <StatCard label="NPS" value={nps !== null ? String(Math.round(nps)) : '—'} delta={`${summary?.nps_count ?? 0} responses`} icon="📊" tone="indigo" />
-        <StatCard label="Responses" value={String(ratings.length)} delta={`last ${days} days`} icon="💬" tone="cyan" />
-        <StatCard label="Needs attention" value={String(low.length)} delta="CSAT ≤ 2 or NPS ≤ 6" icon="⚠️" tone="rose" />
-      </div>
-
-      <div className="grid lg:grid-cols-2 gap-6 mb-6">
-        <Card className="p-5">
-          <h3 className="font-bold text-slate-900 mb-1">CSAT trend</h3>
-          <p className="text-xs text-slate-500 mb-4">Average satisfaction per day.</p>
-          {(summary?.trend.length ?? 0) === 0 ? (
-            <p className="text-sm text-slate-400">No ratings in this window yet.</p>
-          ) : (
-            <div className="flex items-end gap-1.5 h-36">
-              {summary!.trend.map((t) => (
-                <div key={t.day} className="flex-1 flex flex-col items-center gap-1" title={`${t.day}: CSAT ${t.csat_avg !== null ? t.csat_avg.toFixed(1) : '—'} · NPS ${t.nps_avg !== null ? t.nps_avg.toFixed(0) : '—'} (${t.count})`}>
-                  <div
-                    className="w-full rounded-t-md bg-gradient-to-t from-brix-600 to-cyan-400 min-h-[4px]"
-                    style={{ height: `${(t.count / maxTrend) * 100}%`, opacity: t.csat_avg !== null && t.csat_avg < 3 ? 0.45 : 1 }}
-                  />
-                  <span className="text-[10px] text-slate-400 font-mono">{t.day.slice(5)}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </Card>
-        <Card className="p-5">
-          <h3 className="font-bold text-slate-900 mb-1">NPS gauge</h3>
-          <p className="text-xs text-slate-500 mb-4">Promoters (9–10) minus detractors (0–6). −100 to +100.</p>
-          {nps === null ? (
-            <p className="text-sm text-slate-400">No NPS responses yet.</p>
-          ) : (
+    <div className="min-h-screen bg-slate-50 flex">
+      {/* operator sidebar */}
+      <aside className="w-60 shrink-0 bg-ink-950 text-white flex flex-col min-h-screen sticky top-0 h-screen">
+        <div className="p-5 border-b border-white/10">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl bg-brix-600 grid place-items-center font-extrabold text-lg">B</div>
             <div>
-              <div className="relative h-4 rounded-full bg-gradient-to-r from-rose-500 via-amber-400 to-emerald-500">
-                <div
-                  className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-1 h-7 bg-slate-900 rounded-full"
-                  style={{ left: `${((nps + 100) / 200) * 100}%` }}
-                />
-              </div>
-              <div className="flex justify-between text-[11px] text-slate-400 font-mono mt-1.5">
-                <span>−100</span><span className="text-slate-900 font-bold text-sm">{Math.round(nps)}</span><span>+100</span>
-              </div>
-              {totalNps > 0 && (
-                <div className="flex h-2.5 rounded-full overflow-hidden mt-4">
-                  <div className="bg-emerald-500" style={{ width: `${(summary!.promoters / totalNps) * 100}%` }} title={`Promoters: ${summary!.promoters}`} />
-                  <div className="bg-amber-400" style={{ width: `${(summary!.passives / totalNps) * 100}%` }} title={`Passives: ${summary!.passives}`} />
-                  <div className="bg-rose-500" style={{ width: `${(summary!.detractors / totalNps) * 100}%` }} title={`Detractors: ${summary!.detractors}`} />
-                </div>
-              )}
-              <div className="flex gap-4 text-xs text-slate-500 mt-2">
-                <span><span className="font-bold text-emerald-600">{summary?.promoters ?? 0}</span> promoters</span>
-                <span><span className="font-bold text-amber-600">{summary?.passives ?? 0}</span> passives</span>
-                <span><span className="font-bold text-rose-600">{summary?.detractors ?? 0}</span> detractors</span>
-              </div>
-              <p className="text-xs text-slate-500 mt-3">
-                {nps >= 50 ? 'Excellent — advocates far outweigh critics.' : nps >= 0 ? 'Healthy — more promoters than detractors.' : 'At risk — detractors outweigh promoters. Check the alerts below.'}
-              </p>
+              <div className="font-extrabold text-sm leading-tight">{platformName}</div>
+              <div className="text-[10px] uppercase tracking-[0.2em] text-white/50">Operator console</div>
             </div>
-          )}
-        </Card>
-      </div>
-
-      {low.length > 0 && (
-        <Card className="p-5 mb-6 border-rose-200 bg-rose-50/50">
-          <h3 className="font-bold text-rose-900 mb-3">⚠️ Low-rating alerts</h3>
-          <div className="space-y-2.5">
-            {low.slice(0, 8).map((r) => (
-              <div key={r.id} className="flex flex-wrap items-center gap-2 text-sm">
-                <Badge tone="rose">{r.kind === 'csat' ? `CSAT ${r.score}/5` : `NPS ${r.score}/10`}</Badge>
-                <span className="text-slate-700">{memberName(r.agent_id)}</span>
-                <span className="text-slate-400 text-xs">{fmtTs(r.created_at)}</span>
-                {r.comment.trim() && <span className="text-slate-600 italic w-full">“{r.comment}”</span>}
-              </div>
-            ))}
           </div>
-        </Card>
-      )}
-
-      <div className="grid lg:grid-cols-2 gap-6">
-        <Card className="p-5">
-          <h3 className="font-bold text-slate-900 mb-4">Per-agent ratings</h3>
-          {byAgent.length === 0 ? (
-            <p className="text-sm text-slate-400">No agent ratings yet.</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-left text-xs uppercase tracking-wider text-slate-400 border-b border-slate-100">
-                    <th className="py-2 pr-4 font-semibold">Agent</th>
-                    <th className="py-2 pr-4 font-semibold">Responses</th>
-                    <th className="py-2 font-semibold">CSAT avg</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {byAgent.map((a) => (
-                    <tr key={a.name} className="border-b border-slate-50 last:border-0">
-                      <td className="py-2.5 pr-4 font-semibold text-slate-800">{a.name}</td>
-                      <td className="py-2.5 pr-4 text-slate-500">{a.count}</td>
-                      <td className="py-2.5">
-                        <span className={cx('font-bold', a.csatN > 0 && a.csatSum / a.csatN < 3 ? 'text-rose-600' : 'text-slate-800')}>
-                          {a.csatN > 0 ? (a.csatSum / a.csatN).toFixed(1) : '—'}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </Card>
-        <Card className="p-5">
-          <h3 className="font-bold text-slate-900 mb-4">Recent comments</h3>
-          {commented.length === 0 ? (
-            <p className="text-sm text-slate-400">No written feedback yet.</p>
-          ) : (
-            <div className="space-y-3 max-h-80 overflow-y-auto slim-scroll">
-              {commented.slice(0, 12).map((r) => (
-                <div key={r.id} className="rounded-xl bg-slate-50 border border-slate-100 px-3.5 py-3">
-                  <p className="text-sm text-slate-700 italic">“{r.comment}”</p>
-                  <div className="flex items-center gap-2 mt-2 text-xs text-slate-400">
-                    <Badge tone={isLow(r) ? 'rose' : 'green'}>{r.kind === 'csat' ? `CSAT ${r.score}` : `NPS ${r.score}`}</Badge>
-                    <span>{memberName(r.agent_id)}</span>
-                    <span>·</span>
-                    <span>{fmtTs(r.created_at)}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </Card>
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Departments + routing (api.departments.*, api.routing.routeChat)
-// ---------------------------------------------------------------------------
-
-const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-
-const ROUTING_MODES: Array<{ id: RoutingMode; name: string; blurb: string }> = [
-  { id: 'round-robin', name: 'Round robin', blurb: 'Chats are dealt out to agents one after another, in rotation — everyone gets a fair share.' },
-  { id: 'least-busy', name: 'Least busy', blurb: 'Each new chat goes to the agent with the fewest open chats right now.' },
-  { id: 'first-available', name: 'First available', blurb: 'The chat goes to whichever agent picks it up first — fastest response wins.' },
-];
-
-const OFFLINE_BEHAVIORS: Array<{ id: OfflineBehavior; name: string; blurb: string }> = [
-  { id: 'ticket', name: 'Create a ticket', blurb: 'The visitor\'s message becomes a support ticket for the team.' },
-  { id: 'message', name: 'Take a message', blurb: 'The visitor leaves a message; the team follows up later.' },
-  { id: 'hide', name: 'Hide the widget', blurb: 'Visitors can\'t start a chat outside business hours.' },
-];
-
-function DayHoursEditor({ value, onChange }: { value: DayHours[]; onChange: (v: DayHours[]) => void }) {
-  const set = (day: number, k: keyof DayHours, v: string | boolean) => {
-    onChange(value.map((r) => (r.day === day ? { ...r, [k]: v } : r)));
-  };
-  return (
-    <div className="space-y-1.5">
-      {DAYS.map((name, day) => {
-        const row = value.find((r) => r.day === day) ?? { day, open: '09:00', close: '18:00', closed: false };
-        return (
-          <div key={day} className="flex items-center gap-3 rounded-xl border border-slate-100 px-3 py-2">
-            <span className="w-10 text-sm font-bold text-slate-700">{name}</span>
-            <Toggle checked={!row.closed} onChange={(v: boolean) => set(day, 'closed', !v)} label={row.closed ? 'Closed' : 'Open'} />
-            {!row.closed && (
-              <>
-                <Input type="time" value={row.open} onChange={(e) => set(day, 'open', e.target.value)} className="w-28" />
-                <span className="text-slate-400 text-sm">–</span>
-                <Input type="time" value={row.close} onChange={(e) => set(day, 'close', e.target.value)} className="w-28" />
-              </>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-const emptyDept: DepartmentInput2 & { useHours: boolean; hours: DayHours[] } = {
-  name: '', description: '', agent_ids: [], routing_mode: 'round-robin',
-  hours_override: null, offline_behavior: 'message',
-  useHours: false,
-  hours: DAYS.map((_, day) => ({ day, open: '09:00', close: '18:00', closed: day === 0 || day === 6 })),
-};
-
-function DepartmentsTab({ readOnly }: { readOnly: boolean }) {
-  const api = useApi();
-  const p2 = useP2();
-  const { confirm, dialog } = useConfirm();
-  const [props, setProps] = useState<ApiProperty[]>([]);
-  const [propId, setPropId] = useState('');
-  const depts = useDeptSource(propId);
-  const [items, setItems] = useState<ApiDepartment2[]>([]);
-  const [members, setMembers] = useState<ApiMember2[]>([]);
-  const [defaults, setDefaults] = useState<Record<string, string>>({});
-  const [editing, setEditing] = useState<(typeof emptyDept & { id?: string }) | null>(null);
-  const [simResult, setSimResult] = useState<Record<string, string>>({});
-  const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const { data } = await api.properties.list();
-        setProps(data);
-        setPropId((p) => p || data[0]?.id || '');
-        const { data: m } = await p2.members.list();
-        setMembers(itemsOf(m));
-        const d: Record<string, string> = {};
-        for (const pr of data) {
-          try {
-            const { data: s } = await p2.propertySettings.get(pr.id);
-            d[pr.id] = (s as PropertySettings2).default_department_id ?? '';
-          } catch { /* keep empty */ }
-        }
-        setDefaults(d);
-      } catch (e) {
-        if (!missingP2(e)) setError(errMsg(e));
-      }
-    })();
-  }, [api, p2]);
-
-  const loadDepts = async (pid: string) => {
-    if (!pid || !depts.live) return;
-    try {
-      setItems(await depts.list());
-    } catch (e) {
-      if (!missingP2(e)) setError(errMsg(e));
-      setItems([]);
-    }
-  };
-  useEffect(() => { void loadDepts(propId); }, [propId, depts.live]);
-
-  /** Runtime hours (empty open/close = closed) -> editor hours (closed flag). */
-  const toEditorHours = (h: ApiDepartment2['hours_override']): DayHours[] =>
-    DAYS.map((_, day) => {
-      const row = h?.find((x) => x.day === day);
-      const closed = !row || !row.open || !row.close;
-      return { day, open: row?.open || '09:00', close: row?.close || '18:00', closed };
-    });
-  /** Editor hours -> runtime hours (closed days get empty open/close). */
-  const toRuntimeHours = (h: DayHours[]) =>
-    h.map((x) => ({ day: x.day, open: x.closed ? '' : x.open, close: x.closed ? '' : x.close }));
-
-  const save = async () => {
-    if (!editing || !editing.name.trim() || !propId) return;
-    setBusy(true); setError('');
-    try {
-      const input: DepartmentInput2 = {
-        name: editing.name.trim(),
-        description: (editing.description ?? '').trim(),
-        agent_ids: editing.agent_ids ?? [],
-        routing_mode: editing.routing_mode ?? 'round-robin',
-        hours_override: editing.useHours ? toRuntimeHours(editing.hours) : null,
-        offline_behavior: editing.offline_behavior ?? 'message',
-      };
-      if (editing.id) await depts.update(editing.id, input);
-      else await depts.create(input);
-      setEditing(null);
-      await loadDepts(propId);
-    } catch (e) { setError(errMsg(e)); }
-    finally { setBusy(false); }
-  };
-
-  const remove = (d: ApiDepartment2) => {
-    confirm({
-      title: 'Delete department?',
-      body: `"${d.name}" will be removed. Chats will fall back to the property default routing.`,
-      action: async () => { await depts.remove(d.id); await loadDepts(propId); },
-    });
-  };
-
-  const setDefault = async (pid: string, deptId: string) => {
-    try {
-      await p2.propertySettings.patch(pid, { default_department_id: deptId } as Partial<PropertySettings2>);
-      setDefaults((p) => ({ ...p, [pid]: deptId }));
-    } catch (e) { setError(errMsg(e)); }
-  };
-
-  const simulate = async (d: ApiDepartment2) => {
-    try {
-      const { data: r } = await p2.routing.routeChat(propId, d.id);
-      const agent = members.find((m) => m.id === r.agent_id);
-      setSimResult((s) => ({
-        ...s,
-        [d.id]: r.agent_id ? `→ ${agent?.display_name ?? 'an agent'} (${modeName(d.routing_mode)})` : '→ no agent available right now',
-      }));
-    } catch (e) { setError(errMsg(e)); }
-  };
-
-  const toggleAgent = (id: string) => {
-    if (!editing) return;
-    const cur = editing.agent_ids ?? [];
-    setEditing({ ...editing, agent_ids: cur.includes(id) ? cur.filter((a) => a !== id) : [...cur, id] });
-  };
-
-  const modeName = (id: RoutingMode) => ROUTING_MODES.find((m) => m.id === id)?.name ?? id;
-  const offlineName = (id: OfflineBehavior) => OFFLINE_BEHAVIORS.find((m) => m.id === id)?.name ?? id;
-
-  return (
-    <div>
-      {dialog}
-      <SectionTitle title="Departments" sub="Organize agents into departments, each with its own routing, hours, and offline behavior." />
-      {!depts.live ? (
-        <EmptyState icon="🏢" title="Departments API not available yet" hint="api.departments.* lands with the phase-2 data API. This tab renders automatically once it does." />
-      ) : (
-        <>
-          <Card className="p-5 mb-6">
-            <div className="grid sm:grid-cols-2 gap-4">
-              <div>
-                <Label>Property</Label>
-                <Select value={propId} onChange={(e) => setPropId(e.target.value)}>
-                  {props.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                </Select>
-              </div>
-            </div>
-          </Card>
-
-          {error && <p className="text-sm text-rose-600 mb-4">{error}</p>}
-
-          <Card className="p-5 mb-6">
-            <h3 className="font-bold text-slate-900 mb-1">Routing rules</h3>
-            <p className="text-xs text-slate-500 mb-4">
-              When a chat starts, it is routed to the property's default department. The <em>routing mode</em> (round robin, least busy, first available) lives on each department below. Routing is simulated locally — live skill-based routing arrives with the backend phase.
-            </p>
-            <div className="grid sm:grid-cols-2 gap-4">
-              {props.map((p) => (
-                <div key={p.id}>
-                  <Label>{p.name} — default department</Label>
-                  <Select value={defaults[p.id] ?? ''} onChange={(e) => void setDefault(p.id, e.target.value)} disabled={readOnly}>
-                    <option value="">None (unassigned pool)</option>
-                    {items.filter((d) => d.property_id === p.id).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-                  </Select>
-                </div>
-              ))}
-              {props.length === 0 && <p className="text-sm text-slate-400">No properties yet.</p>}
-            </div>
-          </Card>
-
-          <div className="flex items-center justify-between mb-4">
-            <p className="text-sm text-slate-500">{items.length} departments</p>
-            {!readOnly && propId && <Button size="sm" onClick={() => setEditing({ ...emptyDept, hours: emptyDept.hours.map((h) => ({ ...h })) })}>+ New department</Button>}
-          </div>
-
-          {items.length === 0 ? (
-            <EmptyState icon="🏢" title="No departments yet" hint={readOnly ? '' : 'Create departments like Sales and Support, assign agents, and choose how chats are routed.'} />
-          ) : (
-            <div className="grid md:grid-cols-2 gap-4">
-              {items.map((d) => {
-                const agents = members.filter((m) => d.agent_ids.includes(m.id));
-                return (
-                  <Card key={d.id} className="p-5">
-                    <div className="flex items-start justify-between gap-3 mb-2">
-                      <div>
-                        <div className="font-bold text-slate-900 text-lg">{d.name}</div>
-                        {d.description && <p className="text-sm text-slate-500 mt-0.5">{d.description}</p>}
-                      </div>
-                      {!readOnly && (
-                        <div className="flex gap-1.5 shrink-0">
-                          <Button variant="ghost" size="sm" onClick={() => setEditing({
-                            id: d.id, name: d.name, description: d.description,
-                            agent_ids: d.agent_ids, routing_mode: d.routing_mode,
-                            offline_behavior: d.offline_behavior,
-                            useHours: d.hours_override !== null,
-                            hours: toEditorHours(d.hours_override),
-                          })}>Edit</Button>
-                          <Button variant="ghost" size="sm" onClick={() => remove(d)} className="text-rose-600">Delete</Button>
-                        </div>
-                      )}
-                    </div>
-                    <div className="flex flex-wrap gap-2 mb-3">
-                      <Badge tone="indigo">{modeName(d.routing_mode)}</Badge>
-                      <Badge tone="slate">{offlineName(d.offline_behavior)} when offline</Badge>
-                      {d.hours_override && <Badge tone="amber">Custom hours</Badge>}
-                    </div>
-                    <div className="flex items-center gap-2 flex-wrap mb-3">
-                      {agents.length === 0 ? (
-                        <span className="text-xs text-slate-400">No agents assigned</span>
-                      ) : agents.map((a) => (
-                        <span key={a.id} className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-700 bg-slate-100 rounded-full pl-1 pr-2.5 py-1">
-                          <span className="w-5 h-5 rounded-full grid place-items-center text-white text-[9px] font-extrabold" style={{ background: a.color || '#4f46e5' }}>
-                            {a.initials || a.display_name.slice(0, 2).toUpperCase()}
-                          </span>
-                          {a.display_name}
-                        </span>
-                      ))}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Button variant="ghost" size="sm" onClick={() => void simulate(d)}>Simulate route</Button>
-                      {simResult[d.id] && <span className="text-xs text-slate-500">{simResult[d.id]}</span>}
-                    </div>
-                  </Card>
-                );
-              })}
-            </div>
-          )}
-
-          <Modal open={editing !== null} onClose={() => setEditing(null)} title={editing?.id ? 'Edit department' : 'New department'} wide>
-            {editing && (
-              <div className="space-y-5">
-                <div className="grid sm:grid-cols-2 gap-4">
-                  <div><Label>Name</Label><Input value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} placeholder="e.g. Sales" /></div>
-                  <div><Label>Description</Label><Input value={editing.description} onChange={(e) => setEditing({ ...editing, description: e.target.value })} placeholder="What this team handles" /></div>
-                </div>
-                <div>
-                  <Label>Agents in this department</Label>
-                  {members.length === 0 ? (
-                    <p className="text-sm text-slate-400">No team members yet — invite them from the Team tab first.</p>
-                  ) : (
-                    <div className="grid sm:grid-cols-2 gap-2">
-                      {members.map((m) => (
-                        <label key={m.id} className="flex items-center gap-2.5 rounded-xl border border-slate-200 px-3 py-2 text-sm cursor-pointer hover:border-slate-300">
-                          <input type="checkbox" checked={(editing.agent_ids ?? []).includes(m.id)} onChange={() => toggleAgent(m.id)} className="w-4 h-4 accent-indigo-600" />
-                          <span className="w-6 h-6 rounded-full grid place-items-center text-white text-[9px] font-extrabold shrink-0" style={{ background: m.color || '#4f46e5' }}>
-                            {m.initials || m.display_name.slice(0, 2).toUpperCase()}
-                          </span>
-                          <span className="font-semibold text-slate-700">{m.display_name}</span>
-                        </label>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <div>
-                  <Label>Routing mode</Label>
-                  <div className="grid sm:grid-cols-3 gap-2.5">
-                    {ROUTING_MODES.map((m) => (
-                      <button
-                        key={m.id}
-                        onClick={() => setEditing({ ...editing, routing_mode: m.id })}
-                        className={cx(
-                          'rounded-xl border p-3.5 text-left transition',
-                          editing.routing_mode === m.id ? 'border-indigo-500 bg-indigo-50/60 ring-1 ring-indigo-500' : 'border-slate-200 hover:border-slate-300',
-                        )}
-                      >
-                        <div className="font-bold text-sm text-slate-900 mb-1">{m.name}</div>
-                        <div className="text-xs text-slate-500 leading-relaxed">{m.blurb}</div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div>
-                  <div className="flex items-center gap-2.5 mb-3">
-                    <Toggle checked={editing.useHours} onChange={(v: boolean) => setEditing({ ...editing, useHours: v })} />
-                    <span className="text-sm font-semibold text-slate-700">Custom business hours for this department</span>
-                  </div>
-                  {editing.useHours ? (
-                    <DayHoursEditor value={editing.hours} onChange={(h) => setEditing({ ...editing, hours: h })} />
-                  ) : (
-                    <p className="text-xs text-slate-400">Inherits the property's business hours.</p>
-                  )}
-                </div>
-                <div>
-                  <Label>When the department is offline</Label>
-                  <div className="grid sm:grid-cols-3 gap-2.5">
-                    {OFFLINE_BEHAVIORS.map((b) => (
-                      <button
-                        key={b.id}
-                        onClick={() => setEditing({ ...editing, offline_behavior: b.id })}
-                        className={cx(
-                          'rounded-xl border p-3.5 text-left transition',
-                          editing.offline_behavior === b.id ? 'border-indigo-500 bg-indigo-50/60 ring-1 ring-indigo-500' : 'border-slate-200 hover:border-slate-300',
-                        )}
-                      >
-                        <div className="font-bold text-sm text-slate-900 mb-1">{b.name}</div>
-                        <div className="text-xs text-slate-500 leading-relaxed">{b.blurb}</div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                {error && <p className="text-sm text-rose-600">{error}</p>}
-                <div className="flex justify-end gap-2">
-                  <Button variant="ghost" onClick={() => setEditing(null)}>Cancel</Button>
-                  <Button onClick={save} disabled={busy || !editing.name.trim()}>{busy ? 'Saving…' : 'Save department'}</Button>
-                </div>
-              </div>
-            )}
-          </Modal>
-        </>
-      )}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Member profiles — extended team profiles: job title, photo, departments
-// (api.members.*). Shown across the dashboard and the widget.
-// ---------------------------------------------------------------------------
-
-const AVATAR_COLORS = ['#4f46e5', '#0891b2', '#059669', '#f59e0b', '#8b5cf6', '#e11d48', '#334155'];
-
-function MemberProfileModal({ member, onClose, onSaved }: { member: ApiMember2; onClose: () => void; onSaved: () => void }) {
-  const p2 = useP2();
-  const api = useApi();
-  const [propId, setPropId] = useState('');
-  const deptSrc = useDeptSource(propId);
-  const [departments, setDepartments] = useState<ApiDepartment2[]>([]);
-  const [name, setName] = useState(member.display_name);
-  const [jobTitle, setJobTitle] = useState(member.job_title ?? '');
-  const [color, setColor] = useState(member.color);
-  const [avatar, setAvatar] = useState<string | null>(member.avatar_data_url ?? null);
-  const [deptIds, setDeptIds] = useState<string[]>(member.department_ids ?? []);
-  const [role, setRole] = useState(member.role);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const [imgError, setImgError] = useState('');
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const { data } = await api.properties.list();
-        setPropId(data[0]?.id ?? '');
-      } catch { /* departments stay empty */ }
-    })();
-  }, [api]);
-
-  useEffect(() => {
-    if (!propId || !deptSrc.live) return;
-    deptSrc.list().then(setDepartments).catch(() => setDepartments([]));
-  }, [propId, deptSrc]);
-
-  const toggleDept = (id: string) => {
-    setDeptIds((prev) => (prev.includes(id) ? prev.filter((d) => d !== id) : [...prev, id]));
-  };
-
-  const onFile = (f: File | undefined) => {
-    setImgError('');
-    if (!f) return;
-    if (f.size > 300 * 1024) { setImgError('Photo must be under 300 KB.'); return; }
-    const r = new FileReader();
-    r.onload = () => setAvatar(String(r.result ?? ''));
-    r.readAsDataURL(f);
-  };
-
-  const save = async () => {
-    if (!name.trim()) { setError('Display name is required.'); return; }
-    setBusy(true);
-    setError('');
-    try {
-      await p2.members.update(member.id, {
-        display_name: name.trim(), job_title: jobTitle.trim(), color,
-        avatar_data_url: avatar, department_ids: deptIds, role,
-      });
-      onSaved();
-      onClose();
-    } catch (e) { setError(errMsg(e)); }
-    finally { setBusy(false); }
-  };
-
-  return (
-    <Modal open onClose={onClose} title={`Profile — ${member.display_name}`} wide>
-      <div className="space-y-5">
-        {error && <p className="text-sm text-rose-600">{error}</p>}
-        <div className="flex items-center gap-4">
-          <div className="w-16 h-16 rounded-2xl grid place-items-center text-white text-xl font-black overflow-hidden shrink-0" style={{ background: color }}>
-            {avatar ? <img src={avatar} alt="" className="w-full h-full object-cover" /> : member.initials}
-          </div>
-          {!avatar ? (
-            <div>
-              <div className="flex gap-1.5 mb-2">
-                {AVATAR_COLORS.map((c) => (
-                  <button key={c} onClick={() => setColor(c)} className={cx('w-7 h-7 rounded-full border-2', color === c ? 'border-slate-900' : 'border-transparent')} style={{ background: c }} aria-label={`Color ${c}`} />
-                ))}
-              </div>
-              <label className="inline-block px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-xs font-bold text-slate-700 cursor-pointer">
-                Upload photo
-                <input type="file" accept="image/*" className="hidden" onChange={(e) => onFile(e.target.files?.[0])} />
-              </label>
-              {imgError && <p className="text-xs text-rose-600 mt-1">{imgError}</p>}
-            </div>
-          ) : (
-            <button onClick={() => setAvatar(null)} className="text-xs font-semibold text-rose-600 hover:underline">Remove photo</button>
-          )}
+          <span className="mt-3 inline-block text-[10px] font-bold uppercase tracking-widest bg-brix-600 rounded-full px-2.5 py-1">Platform</span>
         </div>
-        <div className="grid sm:grid-cols-2 gap-4">
-          <div><Label>Display name</Label><Input value={name} onChange={(e) => setName(e.target.value)} /></div>
-          <div><Label>Job title</Label><Input value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} placeholder="e.g. Support lead" /></div>
-        </div>
-        <div>
-          <Label>Role</Label>
-          <Select value={role} onChange={(e) => setRole(e.target.value)} className="max-w-xs">
-            {(Object.keys(ROLE_LABELS) as TeamRole[]).map((r) => (
-              <option key={r} value={r}>{ROLE_LABELS[r]}</option>
-            ))}
-          </Select>
-        </div>
-        <div>
-          <Label>Departments</Label>
-          {departments.length === 0 ? (
-            <p className="text-xs text-slate-400">No departments yet — create them under Departments first.</p>
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              {departments.map((d) => (
-                <button
-                  key={d.id}
-                  onClick={() => toggleDept(d.id)}
-                  className={cx('rounded-full border px-3.5 py-1.5 text-xs font-bold transition', deptIds.includes(d.id) ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 text-slate-600 hover:border-slate-300')}
-                >
-                  {deptIds.includes(d.id) ? '✓ ' : ''}{d.name}
-                </button>
-              ))}
-            </div>
-          )}
-          <p className="text-xs text-slate-400 mt-1.5">Department membership drives chat routing and the Ratings per-agent table.</p>
-        </div>
-        <div className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button onClick={() => void save()} disabled={busy || !name.trim()}>{busy ? 'Saving…' : 'Save profile'}</Button>
-        </div>
-        <p className="text-xs text-slate-400">Job title, photo, and department memberships are stored on the member record and shown across the dashboard and widget.</p>
-      </div>
-    </Modal>
-  );
-}
-
-function MemberProfiles({ readOnly }: { readOnly: boolean }) {
-  const p2 = useP2();
-  const [members, setMembers] = useState<ApiMember2[]>([]);
-  const [editing, setEditing] = useState<ApiMember2 | null>(null);
-  const [error, setError] = useState('');
-
-  const load = async () => {
-    try {
-      const { data } = await p2.members.list();
-      setMembers(itemsOf(data));
-    } catch (e) { setError(errMsg(e)); }
-  };
-  useEffect(() => { void load(); }, []);
-
-  return (
-    <div className="mt-10">
-      <h3 className="font-bold text-slate-900 text-lg mb-1">Member profiles</h3>
-      <p className="text-sm text-slate-500 mb-5">Job titles, photos, and department memberships — shown across the dashboard and the widget.</p>
-      {error && <p className="text-sm text-rose-600 mb-3">{error}</p>}
-      {members.length === 0 ? (
-        <EmptyState icon="👤" title="No members" hint="Members are created through the invite flow or login." />
-      ) : (
-        <div className="grid sm:grid-cols-2 gap-3">
-          {members.map((m) => (
-            <Card key={m.id} className="p-4">
-              <div className="flex items-center gap-3">
-                <div className="w-11 h-11 rounded-xl grid place-items-center text-white font-black overflow-hidden shrink-0" style={{ background: m.color }}>
-                  {m.avatar_data_url ? <img src={m.avatar_data_url} alt="" className="w-full h-full object-cover" /> : m.initials}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="font-bold text-slate-900 truncate">{m.display_name}</div>
-                  <div className="text-xs text-slate-400 truncate">{m.job_title || ROLE_LABELS[m.role as TeamRole] || m.role}{(m.department_ids?.length ?? 0) > 0 && ` · ${m.department_ids!.length} dept${m.department_ids!.length === 1 ? '' : 's'}`}</div>
-                </div>
-                {!readOnly && (
-                  <Button variant="ghost" size="sm" onClick={() => setEditing(m)}>Edit profile</Button>
-                )}
-              </div>
-            </Card>
-          ))}
-        </div>
-      )}
-      {editing && (
-        <MemberProfileModal member={editing} onClose={() => setEditing(null)} onSaved={() => void load()} />
-      )}
-    </div>
-  );
-}
-
-
-// ---------------------------------------------------------------------------
-// Admin shell
-// ---------------------------------------------------------------------------
-
-export default function Admin() {
-  const { session, logout } = useStore();
-  const [tab, setTab] = useState<Tab>('overview');
-  const [tick, setTick] = useState(0);
-  const refresh = () => setTick((t) => t + 1);
-  const readOnly = session?.role !== 'admin';
-
-  return (
-    <div className="min-h-screen bg-slate-50 flex" key={tick}>
-      <aside className="hidden md:flex w-64 shrink-0 bg-ink-950 flex-col">
-        <div className="py-5 px-5">
-          <Link to="/app" className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-brix-500 to-cyan-400 grid place-items-center text-white text-lg font-black">B</div>
-            <div className="font-display font-extrabold text-white text-lg tracking-tight">Brix<span className="text-cyan-300">Chat</span></div>
-          </Link>
-          <div className="mt-2 text-[11px] font-bold uppercase tracking-widest text-amber-300/90">Admin console</div>
-        </div>
-        <nav className="flex-1 px-3 py-2 space-y-1">
+        <nav className="flex-1 overflow-auto p-3 space-y-1">
           {TABS.map((t) => (
             <button
               key={t.id}
-              onClick={() => setTab(t.id)}
+              onClick={() => jumpTo(t.id)}
               className={cx(
-                'w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-semibold transition',
-                tab === t.id ? 'bg-brix-600 text-white shadow-lg shadow-brix-600/30' : 'text-slate-300 hover:bg-white/5 hover:text-white',
+                'w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition',
+                tab === t.id ? 'bg-brix-600 text-white' : 'text-white/60 hover:bg-white/5 hover:text-white',
               )}
             >
-              <span className="text-base w-6 text-center">{t.icon}</span>
+              <span className="text-base w-5 text-center">{t.icon}</span>
               {t.label}
             </button>
           ))}
         </nav>
-        <div className="p-4 border-t border-white/10 space-y-2">
-          <Link to="/app" className="block px-3.5 py-2.5 rounded-xl text-sm font-semibold text-slate-300 bg-white/5 hover:bg-white/10">
-            ← Back to dashboard
-          </Link>
-          <button onClick={logout} className="w-full px-3.5 py-2.5 rounded-xl text-sm font-semibold text-slate-300 bg-white/5 hover:bg-white/10 text-left">
-            ⎋ Log out ({session?.displayName})
+        <div className="p-3 border-t border-white/10 space-y-1">
+          <button onClick={openPalette} className="w-full flex items-center gap-3 rounded-xl px-3 py-2 text-xs text-white/50 hover:text-white hover:bg-white/5">
+            <span>⌘K</span> Search…
+          </button>
+          <button onClick={() => setHelpOpen(true)} className="w-full flex items-center gap-3 rounded-xl px-3 py-2 text-xs text-white/50 hover:text-white hover:bg-white/5">
+            <span>?</span> Shortcuts
+          </button>
+          <button onClick={logout} className="w-full flex items-center gap-3 rounded-xl px-3 py-2 text-xs text-white/50 hover:text-white hover:bg-white/5">
+            <span>⎋</span> Sign out ({session.displayName})
           </button>
         </div>
       </aside>
 
+      {/* main */}
       <div className="flex-1 min-w-0">
-        <header className="md:hidden sticky top-0 z-30 bg-ink-950 text-white px-4 py-3 flex items-center gap-2 overflow-x-auto">
-          {TABS.map((t) => (
-            <button
-              key={t.id}
-              onClick={() => setTab(t.id)}
-              className={cx('shrink-0 px-3 py-1.5 rounded-lg text-[13px] font-semibold', tab === t.id ? 'bg-brix-600' : 'bg-white/10')}
-            >
-              {t.icon} {t.label}
-            </button>
-          ))}
+        <header className="sticky top-0 z-20 bg-white/90 backdrop-blur border-b border-slate-200">
+          <div className="px-6 py-3 flex items-center gap-3">
+            <span className="text-[10px] font-bold uppercase tracking-widest bg-ink-950 text-white rounded-full px-2.5 py-1">Platform</span>
+            <span className="text-sm font-bold text-slate-900">{TABS.find((t) => t.id === tab)?.label}</span>
+            {viewingName && (
+              <span className="ml-2 inline-flex items-center gap-2 text-xs font-bold bg-amber-100 text-amber-800 rounded-full pl-3 pr-1.5 py-1">
+                Viewing as {viewingName}
+                <button
+                  onClick={() => setViewingWorkspace(null)}
+                  className="bg-white/70 hover:bg-white rounded-full px-2 py-0.5 font-bold"
+                  title="Exit view-as"
+                >
+                  Exit ✕
+                </button>
+              </span>
+            )}
+            <div className="ml-auto flex items-center gap-2">
+              <span className="text-xs text-slate-400 hidden sm:block">effective workspace: <span className="font-mono font-bold text-slate-600">{effectiveWorkspaceId(session)}</span></span>
+              <Button variant="secondary" size="sm" onClick={openPalette}>⌘K Search</Button>
+            </div>
+          </div>
         </header>
-        <main className="max-w-5xl mx-auto px-4 sm:px-8 py-8">
-          {tab === 'overview' && <OverviewTab go={setTab} />}
-          {tab === 'content' && <ContentTab readOnly={readOnly} />}
-          {tab === 'properties' && <PropertiesTab refresh={refresh} />}
-          {tab === 'branding' && <BrandingTab readOnly={readOnly} />}
-          {tab === 'ratings' && <RatingsTab />}
-          {tab === 'departments' && <DepartmentsTab readOnly={readOnly} />}
-          {tab === 'keys' && <ApiKeysTab refresh={refresh} />}
-          {tab === 'integrations' && <IntegrationsTab readOnly={readOnly} />}
-          {tab === 'webhooks' && <WebhooksTab refresh={refresh} />}
-          {tab === 'team' && <TeamTab refresh={refresh} readOnly={readOnly} />}
+
+        <main className="p-6 max-w-7xl mx-auto">
+          {tab === 'overview' && <OverviewTab jumpTo={jumpTo} />}
+          {tab === 'clients' && <ClientsTab highlightId={highlightId} nonce={nonce} />}
+          {tab === 'properties' && <PropertiesTab highlightId={highlightId} nonce={nonce} />}
+          {tab === 'plans' && <PlansTab highlightId={highlightId} nonce={nonce} />}
+          {tab === 'content' && <ContentTab />}
+          {tab === 'system' && <SystemTab />}
           {tab === 'audit' && <AuditTab />}
-          {tab === 'install' && <InstallTab />}
+          {tab === 'settings' && <SettingsTab />}
         </main>
       </div>
+
+      <AdminCommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        items={items}
+        loading={itemsLoading}
+        onJump={(t, id) => { setPaletteOpen(false); jumpTo(t, id); }}
+      />
+      <ShortcutsHelpModal open={helpOpen} onClose={() => setHelpOpen(false)} />
     </div>
+  );
+}
+
+export default function Admin() {
+  return (
+    <ToastProvider>
+      <AdminInner />
+    </ToastProvider>
   );
 }

@@ -12,17 +12,13 @@ export interface ShortcutDef {
 
 export const ADMIN_SHORTCUTS: ShortcutDef[] = [
   { keys: 'g then o', label: 'Overview' },
+  { keys: 'g then c', label: 'Clients' },
   { keys: 'g then p', label: 'Properties' },
-  { keys: 'g then b', label: 'Branding' },
-  { keys: 'g then r', label: 'Ratings' },
-  { keys: 'g then d', label: 'Departments' },
-  { keys: 'g then k', label: 'API keys' },
-  { keys: 'g then i', label: 'Integrations' },
-  { keys: 'g then w', label: 'Webhooks' },
-  { keys: 'g then t', label: 'Team' },
+  { keys: 'g then b', label: 'Plans & billing' },
+  { keys: 'g then n', label: 'Content' },
+  { keys: 'g then s', label: 'System' },
   { keys: 'g then a', label: 'Audit log' },
-  { keys: 'g then R', label: 'Reports' },
-  { keys: 'g then n', label: 'Install' },
+  { keys: 'g then e', label: 'Settings' },
   { keys: '/', label: 'Focus admin search' },
   { keys: '⌘/Ctrl + K', label: 'Admin search (jump to any entity)' },
   { keys: '?', label: 'This help' },
@@ -79,11 +75,10 @@ export function useAdminShortcuts(handlers: {
       if (pendingG) {
         const k = e.key.toLowerCase();
         const map: Record<string, string> = {
-          o: 'overview', p: 'properties', b: 'branding', r: 'ratings', d: 'departments',
-          k: 'keys', i: 'integrations', w: 'webhooks', t: 'team', a: 'audit',
-          R: 'reports', n: 'install',
+          o: 'overview', c: 'clients', p: 'properties', b: 'plans',
+          n: 'content', s: 'system', a: 'audit', e: 'settings',
         };
-        const tab = e.shiftKey && e.key === 'R' ? 'reports' : map[k];
+        const tab = map[k];
         if (tab) {
           e.preventDefault();
           h.onGo(tab);

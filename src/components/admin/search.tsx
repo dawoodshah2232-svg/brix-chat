@@ -9,8 +9,8 @@ import { cx } from '../../lib/utils';
 import type { BrixApi, ApiTicket, ApiContact, ApiCanned } from '../../lib/api';
 
 export type AdminTabId =
-  | 'overview' | 'content' | 'properties' | 'branding' | 'ratings' | 'departments'
-  | 'keys' | 'integrations' | 'webhooks' | 'team' | 'audit' | 'install' | 'reports';
+  | 'overview' | 'clients' | 'properties' | 'plans' | 'content'
+  | 'system' | 'audit' | 'settings';
 
 export interface SearchItem {
   kind: string;
