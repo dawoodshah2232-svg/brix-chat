@@ -23,13 +23,42 @@ import type {
   TeamRole,
   WidgetConfig,
 } from '../lib/api';
-import { Badge, Button, Card, EmptyState, Input, Label, Modal, Select, Toggle, useConfirm } from '../components/ui';
+import { Badge, Button, Card, EmptyState, Input, Label, Modal, Select, StatCard, Textarea, Toggle, useConfirm } from '../components/ui';
 import { cx } from '../lib/utils';
+import {
+  asP2,
+  fmtTs,
+} from '../lib/contentSeed';
+import type {
+  ApiBlogPost2,
+  ApiHelpArticle2,
+  ApiContactMessage2,
+  ApiStatusEntry2,
+  ApiMember2,
+  ApiRating2,
+  RatingsSummary2,
+  ApiDepartment2,
+  DepartmentInput2,
+  RoutingMode,
+  OfflineBehavior,
+  DayHours,
+  ApiCategory2,
+  CategoryKind,
+  CategoryInput2,
+  PropertySettings2,
+  BlogSeed,
+  HelpSeed,
+} from '../lib/contentSeed';
 
-type Tab = 'properties' | 'keys' | 'webhooks' | 'team' | 'audit' | 'install';
+type Tab = 'overview' | 'content' | 'properties' | 'branding' | 'ratings' | 'departments' | 'keys' | 'webhooks' | 'team' | 'audit' | 'install';
 
 const TABS: Array<{ id: Tab; label: string; icon: string }> = [
+  { id: 'overview', label: 'Overview', icon: '📊' },
+  { id: 'content', label: 'Content', icon: '📝' },
   { id: 'properties', label: 'Properties', icon: '🌐' },
+  { id: 'branding', label: 'Branding', icon: '🎨' },
+  { id: 'ratings', label: 'Ratings', icon: '⭐' },
+  { id: 'departments', label: 'Departments', icon: '🏢' },
   { id: 'keys', label: 'API keys', icon: '🔑' },
   { id: 'webhooks', label: 'Webhooks', icon: '🪝' },
   { id: 'team', label: 'Team', icon: '👥' },
@@ -102,6 +131,93 @@ function Notice({ children }: { children: React.ReactNode }) {
 
 function errMsg(e: unknown): string {
   return e instanceof ApiError ? e.message : 'Something went wrong.';
+}
+
+// ---------------------------------------------------------------------------
+// Phase-2 admin additions (Worker B): overview, content, branding, ratings,
+// departments + routing, categories, member profiles.
+// Data flows through the phase-2 api surface in src/lib/api.ts, reached via
+// the asP2() adapter in src/lib/contentSeed.ts (tolerant of bare-array or
+// paginated list shapes).
+// ---------------------------------------------------------------------------
+
+function SectionTitle({ title, sub }: { title: string; sub?: string }) {
+  return (
+    <div className="mb-5">
+      <h2 className="font-display font-bold text-xl">{title}</h2>
+      {sub && <p className="text-sm text-slate-500 mt-0.5">{sub}</p>}
+    </div>
+  );
+}
+
+/** Accept both bare-array and paginated { items } list shapes. */
+function itemsOf<T>(data: { items: T[] } | T[] | null | undefined): T[] {
+  if (!data) return [];
+  return Array.isArray(data) ? data : (data.items ?? []);
+}
+
+/** True when the phase-2 endpoint isn't implemented by the runtime yet. */
+function missingP2(e: unknown): boolean {
+  return e instanceof ApiError && (e.code === 'not_implemented' || e.status === 501);
+}
+
+function useP2() {
+  const api = useApi();
+  return useMemo(() => asP2(api), [api]);
+}
+
+// ---- Category source (api.categories.*) ------------------------------------
+
+interface CatSource {
+  live: boolean;
+  list(scope: CategoryKind): Promise<ApiCategory2[]>;
+  create(scope: CategoryKind, name: string, color: string): Promise<ApiCategory2>;
+  update(id: string, patch: Partial<CategoryInput2>): Promise<ApiCategory2>;
+  remove(id: string): Promise<void>;
+}
+
+function useCatSource(propId: string): CatSource {
+  const p2 = useP2();
+  return useMemo<CatSource>(() => {
+    if (typeof (p2 as unknown as { categories?: unknown }).categories === 'undefined') {
+      const dead = async (): Promise<never> => { throw new ApiError('not_implemented', 'Categories API is not available yet.', 501); };
+      return { live: false, list: dead, create: dead, update: dead, remove: dead };
+    }
+    return {
+      live: true,
+      list: async (scope) => itemsOf((await p2.categories.list(scope, propId || undefined)).data),
+      create: async (scope, name, color) => (await p2.categories.create(scope, propId, name, color)).data,
+      update: async (id, patch) => (await p2.categories.update(id, patch)).data,
+      remove: async (id) => { await p2.categories.delete(id); },
+    };
+  }, [p2, propId]);
+}
+
+// ---- Department source (api.departments.*) ----------------------------------
+
+interface DeptSource {
+  live: boolean;
+  list(): Promise<ApiDepartment2[]>;
+  create(input: DepartmentInput2): Promise<ApiDepartment2>;
+  update(id: string, patch: Partial<DepartmentInput2>): Promise<ApiDepartment2>;
+  remove(id: string): Promise<void>;
+}
+
+function useDeptSource(propId: string): DeptSource {
+  const p2 = useP2();
+  return useMemo<DeptSource>(() => {
+    if (typeof (p2 as unknown as { departments?: unknown }).departments === 'undefined') {
+      const dead = async (): Promise<never> => { throw new ApiError('not_implemented', 'Departments API is not available yet.', 501); };
+      return { live: false, list: dead, create: dead, update: dead, remove: dead };
+    }
+    return {
+      live: true,
+      list: async () => (await p2.departments.list(propId)).data,
+      create: async (input) => (await p2.departments.create(propId, input)).data,
+      update: async (id, patch) => (await p2.departments.update(id, patch)).data,
+      remove: async (id) => { await p2.departments.delete(id); },
+    };
+  }, [p2, propId]);
 }
 
 // ---------------------------------------------------------------------------
@@ -724,7 +840,7 @@ const ROLE_HINTS: Record<TeamRole, string> = {
   viewer: 'Read-only access.',
 };
 
-function TeamTab({ refresh }: { refresh: () => void }) {
+function TeamTab({ refresh, readOnly }: { refresh: () => void; readOnly: boolean }) {
   const api = useApi();
   const { session } = useStore();
   const { confirm, dialog } = useConfirm();
@@ -848,6 +964,7 @@ function TeamTab({ refresh }: { refresh: () => void }) {
           </Card>
         ))}
       </div>
+      <MemberProfiles readOnly={readOnly} />
     </div>
   );
 }
@@ -1062,14 +1179,1585 @@ function InstallTab() {
 }
 
 // ---------------------------------------------------------------------------
+// Overview — metric cards + setup checklist (spec T1.11)
+// ---------------------------------------------------------------------------
+
+function OverviewTab({ go }: { go: (t: Tab) => void }) {
+  const api = useApi();
+  const p2 = useP2();
+  const [stats, setStats] = useState({ props: 0, members: 0, openTickets: 0, posts: 0, articles: 0, unreadContact: 0 });
+  const [csat, setCsat] = useState<number | null>(null);
+  const [nps, setNps] = useState<number | null>(null);
+  const [branded, setBranded] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const [{ data: props }, { data: members }, tickets, { data: posts }, { data: articles }, { data: cm }] = await Promise.all([
+          api.properties.list(),
+          p2.members.list(),
+          api.tickets.list({ status: 'open' }).catch(() => ({ data: { items: [] as unknown[] } })),
+          p2.blog.list(false).catch(() => ({ data: [] as unknown[] })),
+          p2.helpDocs.list().catch(() => ({ data: [] as unknown[] })),
+          p2.contactMessages.list().catch(() => ({ data: [] as ApiContactMessage2[] })),
+        ]);
+        const propList = itemsOf(props);
+        setStats({
+          props: propList.length,
+          members: itemsOf(members).length,
+          openTickets: itemsOf(tickets.data).length,
+          posts: itemsOf(posts).length,
+          articles: itemsOf(articles).length,
+          unreadContact: itemsOf(cm).filter((m: ApiContactMessage2) => !m.read).length,
+        });
+        const first = propList[0];
+        if (first) {
+          try {
+            const { data: s } = await p2.ratings.summary(first.id, 30);
+            setCsat(s.csat_avg);
+            setNps(s.nps_score);
+          } catch { /* ratings optional */ }
+          try {
+            const { data: ps } = await p2.propertySettings.get(first.id);
+            setBranded(!!(ps.logo_data_url || (ps.brand_name && ps.brand_name !== 'Brix Chat')));
+          } catch { /* branding optional */ }
+        }
+      } catch { /* overview is best-effort */ }
+    })();
+  }, [api, p2]);
+
+  const checklist: Array<{ done: boolean; label: string; hint: string; tab: Tab }> = [
+    { done: stats.props > 0, label: 'Property created', hint: 'A website connected to Brix Chat.', tab: 'properties' },
+    { done: branded, label: 'Branding set', hint: 'Logo and brand name replace Brix Chat defaults.', tab: 'branding' },
+    { done: stats.members > 1, label: 'Team invited', hint: 'More than one member in the workspace.', tab: 'team' },
+    { done: stats.articles > 0, label: 'Help center stocked', hint: 'At least one help article published.', tab: 'content' },
+    { done: csat !== null, label: 'First rating received', hint: 'A visitor completed the chat survey.', tab: 'ratings' },
+  ];
+  const doneCount = checklist.filter((c) => c.done).length;
+
+  return (
+    <div>
+      <SectionTitle title="Overview" sub="Workspace health at a glance." />
+      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <StatCard label="Properties" value={String(stats.props)} icon="🌐" tone="indigo" />
+        <StatCard label="Team members" value={String(stats.members)} icon="👥" tone="cyan" />
+        <StatCard label="Open tickets" value={String(stats.openTickets)} icon="🎫" tone="amber" />
+        <StatCard label="CSAT (30d)" value={csat !== null ? `${csat.toFixed(1)} / 5` : '—'} icon="⭐" tone="green" />
+        <StatCard label="NPS (30d)" value={nps !== null ? String(Math.round(nps)) : '—'} icon="📊" tone="indigo" />
+        <StatCard label="Blog posts" value={String(stats.posts)} icon="✍️" tone="cyan" />
+        <StatCard label="Help articles" value={String(stats.articles)} icon="📖" tone="green" />
+        <StatCard label="Unread contact mail" value={String(stats.unreadContact)} icon="✉️" tone="rose" />
+      </div>
+
+      <Card className="p-5">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="font-bold text-slate-900">Setup checklist</h3>
+          <span className="text-xs font-bold text-slate-500">{doneCount} of {checklist.length} done</span>
+        </div>
+        <div className="h-2 rounded-full bg-slate-100 overflow-hidden mb-5">
+          <div className="h-full rounded-full bg-gradient-to-r from-brix-500 to-cyan-400 transition-all" style={{ width: `${(doneCount / checklist.length) * 100}%` }} />
+        </div>
+        <div className="space-y-2.5">
+          {checklist.map((c) => (
+            <button key={c.label} onClick={() => go(c.tab)} className="w-full flex items-center gap-3 rounded-xl border border-slate-100 px-4 py-3 hover:border-brix-200 hover:bg-brix-50/50 text-left transition">
+              <span className={cx('w-6 h-6 rounded-full grid place-items-center text-sm font-bold shrink-0', c.done ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-400')}>
+                {c.done ? '✓' : '·'}
+              </span>
+              <span className="flex-1">
+                <span className="block text-sm font-bold text-slate-800">{c.label}</span>
+                <span className="block text-xs text-slate-400">{c.hint}</span>
+              </span>
+              {!c.done && <span className="text-xs font-bold text-brix-600">Set up →</span>}
+            </button>
+          ))}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Content — blog posts, help articles (+ KB categories), contact inbox, status
+// ---------------------------------------------------------------------------
+
+const emptyPost: BlogSeed = { slug: '', title: '', excerpt: '', body: '', tags: [], author: 'Brix Team', published: false, reading_mins: 3 };
+const emptyHelp: HelpSeed = { slug: '', title: '', body: '', category: 'General', order: 0 };
+
+function BlogManager({ readOnly }: { readOnly: boolean }) {
+  const p2 = useP2();
+  const { confirm, dialog } = useConfirm();
+  const [posts, setPosts] = useState<ApiBlogPost2[]>([]);
+  const [editing, setEditing] = useState<(BlogSeed & { id?: string }) | null>(null);
+  const [error, setError] = useState('');
+
+  const load = async () => {
+    try {
+      const { data } = await p2.blog.list(false);
+      setPosts(itemsOf(data));
+    } catch (e) { setError(errMsg(e)); }
+  };
+  useEffect(() => { void load(); }, []);
+
+  const save = async () => {
+    if (!editing || !editing.title.trim() || !editing.slug.trim()) return;
+    try {
+      if (editing.id) await p2.blog.update(editing.id, editing);
+      else await p2.blog.create(editing);
+      setEditing(null);
+      await load();
+    } catch (e) { setError(errMsg(e)); }
+  };
+
+  const remove = (p: ApiBlogPost2) => {
+    confirm({
+      title: 'Delete post?', body: `"${p.title}" will be removed from /blog.`,
+      action: async () => { await p2.blog.delete(p.id); await load(); },
+    });
+  };
+
+  return (
+    <div className="mb-10">
+      {dialog}
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="font-bold text-slate-900">Blog posts <span className="text-xs font-semibold text-slate-400">/blog</span></h3>
+        {!readOnly && <Button size="sm" onClick={() => setEditing({ ...emptyPost })}>+ New post</Button>}
+      </div>
+      {error && <p className="text-sm text-rose-600 mb-3">{error}</p>}
+      {posts.length === 0 ? (
+        <EmptyState icon="✍️" title="No posts yet" hint="Write the first post for /blog." />
+      ) : (
+        <div className="space-y-3">
+          {posts.map((p) => (
+            <Card key={p.id} className="p-4">
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-bold text-slate-900">{p.title}</span>
+                    <Badge tone={p.published ? 'green' : 'amber'}>{p.published ? 'Published' : 'Draft'}</Badge>
+                  </div>
+                  <div className="text-xs text-slate-400 mt-1">/blog/{p.slug} · {p.reading_mins} min read</div>
+                </div>
+                {!readOnly && (
+                  <div className="flex gap-2">
+                    <Button variant="ghost" size="sm" onClick={() => setEditing({ ...p, tags: [...p.tags] })}>Edit</Button>
+                    <Button variant="ghost" size="sm" onClick={() => remove(p)} className="text-rose-600">Delete</Button>
+                  </div>
+                )}
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+      <Modal open={editing !== null} onClose={() => setEditing(null)} title={editing?.id ? 'Edit post' : 'New post'} wide>
+        {editing && (
+          <div className="space-y-4">
+            <div className="grid sm:grid-cols-2 gap-4">
+              <div><Label>Title</Label><Input value={editing.title} onChange={(e) => setEditing({ ...editing, title: e.target.value })} /></div>
+              <div><Label>Slug</Label><Input value={editing.slug} onChange={(e) => setEditing({ ...editing, slug: e.target.value.toLowerCase().replace(/[^a-z0-9]+/g, '-') })} className="font-mono" /></div>
+            </div>
+            <div><Label>Excerpt</Label><Textarea value={editing.excerpt} onChange={(e) => setEditing({ ...editing, excerpt: e.target.value })} rows={2} /></div>
+            <div><Label>Body (plain text / markdown)</Label><Textarea value={editing.body} onChange={(e) => setEditing({ ...editing, body: e.target.value })} rows={8} className="font-mono text-[13px]" /></div>
+            <div className="grid sm:grid-cols-3 gap-4">
+              <div><Label>Author</Label><Input value={editing.author} onChange={(e) => setEditing({ ...editing, author: e.target.value })} /></div>
+              <div><Label>Tags (comma separated)</Label><Input value={editing.tags.join(', ')} onChange={(e) => setEditing({ ...editing, tags: e.target.value.split(',').map((t) => t.trim()).filter(Boolean) })} /></div>
+              <div><Label>Reading time (min)</Label><Input type="number" min={1} value={editing.reading_mins} onChange={(e) => setEditing({ ...editing, reading_mins: Number(e.target.value) || 3 })} /></div>
+            </div>
+            <div className="flex items-center justify-between">
+              <Toggle checked={editing.published} onChange={(v) => setEditing({ ...editing, published: v })} label="Published" />
+              <Button onClick={save} disabled={!editing.title.trim() || !editing.slug.trim()}>Save post</Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+    </div>
+  );
+}
+
+function HelpManager({ readOnly }: { readOnly: boolean }) {
+  const p2 = useP2();
+  const api = useApi();
+  const [propId, setPropId] = useState('');
+  const catSrc = useCatSource(propId);
+  const { confirm, dialog } = useConfirm();
+  const [articles, setArticles] = useState<ApiHelpArticle2[]>([]);
+  const [kbCats, setKbCats] = useState<ApiCategory2[]>([]);
+  const [editing, setEditing] = useState<(HelpSeed & { id?: string }) | null>(null);
+  const [error, setError] = useState('');
+
+  const load = async () => {
+    try {
+      const { data: pr } = await api.properties.list();
+      setPropId(pr[0]?.id ?? '');
+      const { data } = await p2.helpDocs.list();
+      setArticles(itemsOf(data).sort((a, b) => a.order - b.order));
+    } catch (e) { setError(errMsg(e)); }
+  };
+  useEffect(() => { void load(); }, []);
+
+  useEffect(() => {
+    if (!propId || !catSrc.live) return;
+    catSrc.list('kb').then(setKbCats).catch(() => setKbCats([]));
+  }, [propId, catSrc]);
+
+  const save = async () => {
+    if (!editing || !editing.title.trim() || !editing.slug.trim()) return;
+    try {
+      if (editing.id) await p2.helpDocs.update(editing.id, editing);
+      else await p2.helpDocs.create(editing);
+      setEditing(null);
+      await load();
+    } catch (e) { setError(errMsg(e)); }
+  };
+
+  const remove = (a: ApiHelpArticle2) => {
+    confirm({
+      title: 'Delete article?', body: `"${a.title}" will be removed from /help.`,
+      action: async () => { await p2.helpDocs.delete(a.id); await load(); },
+    });
+  };
+
+  const catNames = [...new Set(articles.map((a) => a.category))];
+
+  return (
+    <div className="mb-10">
+      {dialog}
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="font-bold text-slate-900">Help articles <span className="text-xs font-semibold text-slate-400">/help</span></h3>
+        {!readOnly && <Button size="sm" onClick={() => setEditing({ ...emptyHelp })}>+ New article</Button>}
+      </div>
+      <p className="text-sm text-slate-500 mb-4">{articles.length} articles · {catNames.length} categories</p>
+      {error && <p className="text-sm text-rose-600 mb-3">{error}</p>}
+      {articles.length === 0 ? (
+        <EmptyState icon="📖" title="No articles yet" hint="Seed articles appear automatically on the help page, or create one here." />
+      ) : (
+        <div className="space-y-3">
+          {articles.map((a) => (
+            <Card key={a.id} className="p-4">
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-bold text-slate-900">{a.title}</span>
+                    <Badge tone="indigo">{a.category}</Badge>
+                    {a.category_id && kbCats.find((c) => c.id === a.category_id) && (
+                      <Badge tone="cyan">{kbCats.find((c) => c.id === a.category_id)!.name}</Badge>
+                    )}
+                    <span className="text-xs text-slate-400">order {a.order}</span>
+                  </div>
+                  <div className="text-xs text-slate-400 mt-1">/help/{a.slug}</div>
+                </div>
+                {!readOnly && (
+                  <div className="flex gap-2">
+                    <Button variant="ghost" size="sm" onClick={() => setEditing({ ...a })}>Edit</Button>
+                    <Button variant="ghost" size="sm" onClick={() => remove(a)} className="text-rose-600">Delete</Button>
+                  </div>
+                )}
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+      <Modal open={editing !== null} onClose={() => setEditing(null)} title={editing?.id ? 'Edit article' : 'New article'} wide>
+        {editing && (
+          <div className="space-y-4">
+            <div className="grid sm:grid-cols-2 gap-4">
+              <div><Label>Title</Label><Input value={editing.title} onChange={(e) => setEditing({ ...editing, title: e.target.value })} /></div>
+              <div><Label>Slug</Label><Input value={editing.slug} onChange={(e) => setEditing({ ...editing, slug: e.target.value.toLowerCase().replace(/[^a-z0-9]+/g, '-') })} className="font-mono" /></div>
+            </div>
+            <div className="grid sm:grid-cols-2 gap-4">
+              <div>
+                <Label>Category label</Label>
+                <Input value={editing.category} onChange={(e) => setEditing({ ...editing, category: e.target.value })} list="help-cat-names" />
+                <datalist id="help-cat-names">{catNames.map((c) => <option key={c} value={c} />)}</datalist>
+              </div>
+              <div>
+                <Label>KB category</Label>
+                <Select
+                  value={editing.category_id ?? ''}
+                  onChange={(e) => {
+                    const id = e.target.value;
+                    const found = kbCats.find((c) => c.id === id);
+                    setEditing({ ...editing, category_id: id || undefined, category: found ? found.name : editing.category });
+                  }}
+                >
+                  <option value="">— none —</option>
+                  {kbCats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </Select>
+                <p className="text-xs text-slate-400 mt-1">Links this article to a help-center category (managed below).</p>
+              </div>
+            </div>
+            <div><Label>Body</Label><Textarea value={editing.body} onChange={(e) => setEditing({ ...editing, body: e.target.value })} rows={8} className="font-mono text-[13px]" /></div>
+            <div className="flex items-center justify-between">
+              <div className="w-32"><Label>Sort order</Label><Input type="number" value={editing.order} onChange={(e) => setEditing({ ...editing, order: Number(e.target.value) || 0 })} /></div>
+              <Button onClick={save} disabled={!editing.title.trim() || !editing.slug.trim()}>Save article</Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+    </div>
+  );
+}
+
+function ContactInbox({ readOnly }: { readOnly: boolean }) {
+  const p2 = useP2();
+  const [msgs, setMsgs] = useState<ApiContactMessage2[]>([]);
+  const [error, setError] = useState('');
+
+  const load = async () => {
+    try {
+      const { data } = await p2.contactMessages.list();
+      setMsgs(itemsOf(data));
+    } catch (e) { setError(errMsg(e)); }
+  };
+  useEffect(() => { void load(); }, []);
+
+  const markRead = async (m: ApiContactMessage2) => {
+    try {
+      await p2.contactMessages.markRead(m.id);
+      await load();
+    } catch (e) { setError(errMsg(e)); }
+  };
+
+  const unread = msgs.filter((m) => !m.read).length;
+
+  return (
+    <div className="mb-10">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="font-bold text-slate-900">Contact inbox {unread > 0 && <Badge tone="rose">{unread} unread</Badge>}</h3>
+      </div>
+      {error && <p className="text-sm text-rose-600 mb-3">{error}</p>}
+      {msgs.length === 0 ? (
+        <EmptyState icon="✉️" title="No messages" hint="Submissions from /contact land here." />
+      ) : (
+        <div className="space-y-3">
+          {msgs.map((m) => (
+            <Card key={m.id} className={cx('p-4', !m.read && 'border-brix-200 bg-brix-50/40')}>
+              <div className="flex flex-wrap items-start gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-bold text-slate-900">{m.name}</span>
+                    <span className="text-xs text-slate-400">{m.email}</span>
+                    {!m.read && <Badge tone="rose">new</Badge>}
+                  </div>
+                  <div className="text-xs text-slate-500 mt-0.5 font-semibold">{m.subject} · {fmtTs(m.created_at)}</div>
+                  <p className="text-sm text-slate-600 mt-2 whitespace-pre-wrap">{m.message}</p>
+                </div>
+                {!readOnly && !m.read && (
+                  <Button variant="ghost" size="sm" onClick={() => void markRead(m)}>Mark read</Button>
+                )}
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StatusManager({ readOnly }: { readOnly: boolean }) {
+  const p2 = useP2();
+  const { confirm, dialog } = useConfirm();
+  const [entries, setEntries] = useState<ApiStatusEntry2[]>([]);
+  const [title, setTitle] = useState('');
+  const [detail, setDetail] = useState('');
+  const [state, setState] = useState<ApiStatusEntry2['state']>('operational');
+  const [error, setError] = useState('');
+
+  const load = async () => {
+    try {
+      const { data } = await p2.statusEntries.list();
+      setEntries(itemsOf(data));
+    } catch (e) { setError(errMsg(e)); }
+  };
+  useEffect(() => { void load(); }, []);
+
+  const add = async () => {
+    if (!title.trim()) return;
+    try {
+      await p2.statusEntries.create({ title: title.trim(), detail: detail.trim(), state });
+      setTitle(''); setDetail('');
+      await load();
+    } catch (e) { setError(errMsg(e)); }
+  };
+
+  const remove = (e: ApiStatusEntry2) => {
+    confirm({
+      title: 'Delete status entry?', body: `"${e.title}" will be removed from /status.`,
+      action: async () => { await p2.statusEntries.delete(e.id); await load(); },
+    });
+  };
+
+  const tone = (s: ApiStatusEntry2['state']) => (s === 'operational' ? 'green' : s === 'degraded' ? 'amber' : 'rose') as 'green' | 'amber' | 'rose';
+
+  return (
+    <div>
+      {dialog}
+      <h3 className="font-bold text-slate-900 mb-4">Status page <span className="text-xs font-semibold text-slate-400">/status</span></h3>
+      {error && <p className="text-sm text-rose-600 mb-3">{error}</p>}
+      {!readOnly && (
+        <Card className="p-5 mb-5">
+          <div className="grid sm:grid-cols-[1fr_180px] gap-3 mb-3">
+            <div><Label>Title</Label><Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Scheduled maintenance" /></div>
+            <div>
+              <Label>State</Label>
+              <Select value={state} onChange={(e) => setState(e.target.value as ApiStatusEntry2['state'])}>
+                <option value="operational">Operational</option>
+                <option value="degraded">Degraded</option>
+                <option value="incident">Incident</option>
+              </Select>
+            </div>
+          </div>
+          <div className="mb-3"><Label>Detail</Label><Textarea value={detail} onChange={(e) => setDetail(e.target.value)} rows={2} /></div>
+          <Button size="sm" onClick={() => void add()} disabled={!title.trim()}>Publish entry</Button>
+        </Card>
+      )}
+      <div className="space-y-3">
+        {entries.length === 0 && <EmptyState icon="🟢" title="No entries" hint="The status page shows all-operational by default." />}
+        {entries.map((e) => (
+          <Card key={e.id} className="p-4">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Badge tone={tone(e.state)}>{e.state}</Badge>
+                  <span className="font-bold text-slate-900">{e.title}</span>
+                </div>
+                {e.detail && <p className="text-sm text-slate-500 mt-1">{e.detail}</p>}
+                <div className="text-xs text-slate-400 mt-1">{fmtTs(e.created_at)}</div>
+              </div>
+              {!readOnly && <Button variant="ghost" size="sm" onClick={() => remove(e)} className="text-rose-600">Delete</Button>}
+            </div>
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ContentTab({ readOnly }: { readOnly: boolean }) {
+  return (
+    <div>
+      <SectionTitle title="Content" sub="Everything the public site shows: blog, help center, contact inbox, status page." />
+      <Notice>
+        <span><strong>Marketing content.</strong> Posts and articles you publish here appear on <span className="font-mono">/blog</span> and <span className="font-mono">/help</span> immediately. Seed content fills empty lists automatically on first visit.</span>
+      </Notice>
+      <BlogManager readOnly={readOnly} />
+      <HelpManager readOnly={readOnly} />
+      <ContactInbox readOnly={readOnly} />
+      <StatusManager readOnly={readOnly} />
+      <CategoriesManager readOnly={readOnly} />
+    </div>
+  );
+}
+
+const CAT_GROUPS: Array<{ scope: CategoryKind; label: string; hint: string }> = [
+  { scope: 'kb', label: 'Help center categories', hint: 'Organize /help and /kb articles.' },
+  { scope: 'canned', label: 'Canned-response categories', hint: 'Group saved replies in the agent panel.' },
+  { scope: 'tickets', label: 'Ticket categories', hint: 'Classify support tickets.' },
+];
+
+function CategoriesManager({ readOnly }: { readOnly: boolean }) {
+  const api = useApi();
+  const { confirm, dialog } = useConfirm();
+  const [props, setProps] = useState<ApiProperty[]>([]);
+  const [propId, setPropId] = useState('');
+  const cats = useCatSource(propId);
+  const [byScope, setByScope] = useState<Record<CategoryKind, ApiCategory2[]>>({ kb: [], canned: [], tickets: [] });
+  const [name, setName] = useState<Record<CategoryKind, string>>({ kb: '', canned: '', tickets: '' });
+  const [color, setColor] = useState<Record<CategoryKind, string>>({ kb: '#4f46e5', canned: '#0ea5e9', tickets: '#f59e0b' });
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await api.properties.list();
+        setProps(data);
+        setPropId((p) => p || data[0]?.id || '');
+      } catch (e) { setError(errMsg(e)); }
+    })();
+  }, [api]);
+
+  const load = async () => {
+    if (!propId || !cats.live) return;
+    try {
+      const [kb, canned, tickets] = await Promise.all([
+        cats.list('kb'), cats.list('canned'), cats.list('tickets'),
+      ]);
+      setByScope({ kb, canned, tickets });
+    } catch (e) {
+      if (!missingP2(e)) setError(errMsg(e));
+    }
+  };
+  useEffect(() => { void load(); }, [propId, cats.live]);
+
+  const add = async (scope: CategoryKind) => {
+    const n = name[scope].trim();
+    if (!n || !propId) return;
+    try {
+      await cats.create(scope, n, color[scope]);
+      setName((s) => ({ ...s, [scope]: '' }));
+      await load();
+    } catch (e) { setError(errMsg(e)); }
+  };
+
+  const remove = (c: ApiCategory2) => {
+    confirm({
+      title: 'Delete category?',
+      body: `"${c.name}" will be removed. Items using it keep their content but lose the label.`,
+      action: async () => { await cats.remove(c.id); await load(); },
+    });
+  };
+
+  return (
+    <div className="mt-8">
+      {dialog}
+      <SectionTitle title="Categories" sub="Labels for help articles, canned replies, and tickets. Assign them from each item's editor." />
+      {!cats.live ? (
+        <EmptyState icon="🏷️" title="Categories API not available yet" hint="api.categories.* lands with the phase-2 data API. This section renders automatically once it does." />
+      ) : (
+        <>
+          <Card className="p-5 mb-4">
+            <div className="max-w-sm">
+              <Label>Property</Label>
+              <Select value={propId} onChange={(e) => setPropId(e.target.value)}>
+                {props.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </Select>
+            </div>
+          </Card>
+          {error && <p className="text-sm text-rose-600 mb-4">{error}</p>}
+          <div className="grid lg:grid-cols-3 gap-4">
+            {CAT_GROUPS.map((g) => (
+              <Card key={g.scope} className="p-5">
+                <h3 className="font-bold text-slate-900">{g.label}</h3>
+                <p className="text-xs text-slate-500 mb-4">{g.hint}</p>
+                <div className="space-y-2 mb-4">
+                  {byScope[g.scope].length === 0 && <p className="text-xs text-slate-400">No categories yet.</p>}
+                  {byScope[g.scope].map((c) => (
+                    <div key={c.id} className="flex items-center gap-2.5 rounded-xl border border-slate-100 bg-slate-50/60 px-3 py-2">
+                      <span className="w-3.5 h-3.5 rounded-full shrink-0" style={{ background: c.color }} />
+                      <span className="text-sm font-semibold text-slate-700 flex-1 truncate">{c.name}</span>
+                      {!readOnly && (
+                        <button onClick={() => remove(c)} className="text-xs text-rose-500 hover:text-rose-700 font-semibold">Delete</button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                {!readOnly && (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      value={color[g.scope]}
+                      onChange={(e) => setColor((s) => ({ ...s, [g.scope]: e.target.value }))}
+                      className="w-9 h-9 rounded-lg border border-slate-200 p-1 bg-white shrink-0"
+                      aria-label="Category color"
+                    />
+                    <Input
+                      value={name[g.scope]}
+                      onChange={(e) => setName((s) => ({ ...s, [g.scope]: e.target.value }))}
+                      placeholder="New category name"
+                      onKeyDown={(e) => { if (e.key === 'Enter') void add(g.scope); }}
+                    />
+                    <Button size="sm" onClick={() => void add(g.scope)} disabled={!name[g.scope].trim()}>Add</Button>
+                  </div>
+                )}
+              </Card>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Branding — white-label controls per property (logo, name, colors, domain)
+// ---------------------------------------------------------------------------
+
+const PALETTES: Array<{ name: string; color: string; accent: string }> = [
+  { name: 'Ocean', color: '#4f46e5', accent: '#0d9488' },
+  { name: 'Forest', color: '#059669', accent: '#84cc16' },
+  { name: 'Sunset', color: '#ea580c', accent: '#f59e0b' },
+  { name: 'Royal', color: '#7c3aed', accent: '#ec4899' },
+  { name: 'Slate', color: '#334155', accent: '#0ea5e9' },
+  { name: 'Blush', color: '#e11d48', accent: '#f472b6' },
+];
+
+function BrandingTab({ readOnly }: { readOnly: boolean }) {
+  const api = useApi();
+  const p2 = useP2();
+  const [props, setProps] = useState<ApiProperty[]>([]);
+  const [propId, setPropId] = useState('');
+  const [s, setS] = useState<PropertySettings2 | null>(null);
+  const [error, setError] = useState('');
+  const [saved, setSaved] = useState(false);
+  const [logoError, setLogoError] = useState('');
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await api.properties.list();
+        setProps(data);
+        setPropId((p) => p || data[0]?.id || '');
+      } catch (e) { setError(errMsg(e)); }
+    })();
+  }, [api]);
+
+  useEffect(() => {
+    if (!propId) return;
+    (async () => {
+      try {
+        const { data } = await p2.propertySettings.get(propId);
+        setS(data);
+        setSaved(false);
+      } catch (e) { setError(errMsg(e)); }
+    })();
+  }, [propId, p2]);
+
+  const patch = (k: keyof PropertySettings2, v: string) => {
+    setS((prev) => (prev ? { ...prev, [k]: v } : prev));
+    setSaved(false);
+  };
+
+  const save = async () => {
+    if (!s || !propId) return;
+    try {
+      await p2.propertySettings.patch(propId, {
+        logo_data_url: s.logo_data_url, brand_name: s.brand_name, tagline: s.tagline,
+        accent_color: s.accent_color, custom_domain: s.custom_domain,
+        custom_subdomain: (s.custom_subdomain || '').trim().toLowerCase(),
+        widget_color: s.widget_color,
+      });
+      setSaved(true);
+    } catch (e) { setError(errMsg(e)); }
+  };
+
+  const onLogo = (f: File | undefined) => {
+    setLogoError('');
+    if (!f) return;
+    if (f.size > 500 * 1024) { setLogoError('Logo must be under 500 KB.'); return; }
+    const r = new FileReader();
+    r.onload = () => patch('logo_data_url', String(r.result ?? ''));
+    r.readAsDataURL(f);
+  };
+
+  const prop = props.find((p) => p.id === propId);
+
+  return (
+    <div>
+      <SectionTitle title="Branding" sub="White-label each property: logo, name, colors, and domain." />
+      <Notice>
+        <span><strong>White-label.</strong> Branding applies to the widget and the property help center (<span className="font-mono">/kb/:key</span>) today. Path routing works now; subdomain mapping activates with the backend phase.</span>
+      </Notice>
+      {error && <p className="text-sm text-rose-600 mb-4">{error}</p>}
+
+      <Card className="p-5 mb-5">
+        <div className="max-w-sm">
+          <Label>Property</Label>
+          <Select value={propId} onChange={(e) => setPropId(e.target.value)}>
+            {props.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </Select>
+        </div>
+      </Card>
+
+      {!s ? (
+        <EmptyState icon="🎨" title="Loading branding…" hint="Fetching property settings." />
+      ) : (
+        <div className="grid lg:grid-cols-2 gap-5">
+          <div className="space-y-5">
+            <Card className="p-5">
+              <h3 className="font-bold text-slate-900 mb-4">Logo & name</h3>
+              <div className="flex items-center gap-4 mb-4">
+                <div className="w-16 h-16 rounded-2xl bg-slate-100 border border-slate-200 grid place-items-center overflow-hidden shrink-0">
+                  {s.logo_data_url ? (
+                    <img src={s.logo_data_url} alt="Brand logo" className="w-full h-full object-contain" />
+                  ) : (
+                    <span className="text-2xl font-black text-slate-300">{(s.brand_name || prop?.name || 'B').charAt(0)}</span>
+                  )}
+                </div>
+                {!readOnly && (
+                  <div>
+                    <label className="inline-block px-3.5 py-2 rounded-xl bg-slate-900 text-white text-sm font-semibold cursor-pointer hover:bg-slate-700">
+                      Upload logo
+                      <input type="file" accept="image/*" className="hidden" onChange={(e) => onLogo(e.target.files?.[0])} />
+                    </label>
+                    {s.logo_data_url && (
+                      <button onClick={() => patch('logo_data_url', '')} className="ml-2 text-xs font-semibold text-rose-600 hover:underline">Remove</button>
+                    )}
+                    <p className="text-xs text-slate-400 mt-1.5">PNG/SVG, under 500 KB. Stored in this browser.</p>
+                    {logoError && <p className="text-xs text-rose-600 mt-1">{logoError}</p>}
+                  </div>
+                )}
+              </div>
+              <div className="grid sm:grid-cols-2 gap-4">
+                <div><Label>Brand name</Label><Input value={s.brand_name} onChange={(e) => patch('brand_name', e.target.value)} placeholder={prop?.name} disabled={readOnly} /></div>
+                <div><Label>Tagline</Label><Input value={s.tagline} onChange={(e) => patch('tagline', e.target.value)} placeholder="Chat with us — we reply fast." disabled={readOnly} /></div>
+              </div>
+            </Card>
+
+            <Card className="p-5">
+              <h3 className="font-bold text-slate-900 mb-4">Colors</h3>
+              <div className="flex flex-wrap gap-2 mb-4">
+                {PALETTES.map((p) => (
+                  <button
+                    key={p.name}
+                    disabled={readOnly}
+                    onClick={() => { patch('widget_color', p.color); patch('accent_color', p.accent); }}
+                    className={cx('flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-bold', s.widget_color === p.color ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 text-slate-600 hover:border-slate-300')}
+                    title={`${p.name}: ${p.color} / ${p.accent}`}
+                  >
+                    <span className="flex -space-x-1">
+                      <span className="w-4 h-4 rounded-full border border-white" style={{ background: p.color }} />
+                      <span className="w-4 h-4 rounded-full border border-white" style={{ background: p.accent }} />
+                    </span>
+                    {p.name}
+                  </button>
+                ))}
+              </div>
+              <div className="grid sm:grid-cols-2 gap-4">
+                <div>
+                  <Label>Primary color</Label>
+                  <div className="flex items-center gap-2">
+                    <input type="color" value={s.widget_color} onChange={(e) => patch('widget_color', e.target.value)} disabled={readOnly} className="w-10 h-10 rounded-lg border border-slate-200 p-1 bg-white" />
+                    <Input value={s.widget_color} onChange={(e) => patch('widget_color', e.target.value)} disabled={readOnly} className="font-mono" />
+                  </div>
+                </div>
+                <div>
+                  <Label>Accent color</Label>
+                  <div className="flex items-center gap-2">
+                    <input type="color" value={s.accent_color || '#0d9488'} onChange={(e) => patch('accent_color', e.target.value)} disabled={readOnly} className="w-10 h-10 rounded-lg border border-slate-200 p-1 bg-white" />
+                    <Input value={s.accent_color || ''} onChange={(e) => patch('accent_color', e.target.value)} disabled={readOnly} className="font-mono" />
+                  </div>
+                </div>
+              </div>
+            </Card>
+
+            <Card className="p-5">
+              <h3 className="font-bold text-slate-900 mb-1">Domain</h3>
+              <p className="text-xs text-slate-500 mb-4">Custom domains arrive with the backend phase.</p>
+              <div className="mb-4">
+                <Label>Subdomain</Label>
+                <div className="flex items-center gap-2">
+                  <Input value={s.custom_subdomain || ''} onChange={(e) => patch('custom_subdomain', e.target.value.replace(/[^a-z0-9-]/gi, ''))} placeholder="acme" disabled={readOnly} className="font-mono" />
+                  <span className="text-sm text-slate-400 font-mono shrink-0">.brixchat.com</span>
+                </div>
+                {(s.custom_subdomain || '').trim() && (
+                  <p className="text-xs text-slate-400 mt-1.5">Preview: <span className="font-mono text-slate-600">{(s.custom_subdomain || '').trim().toLowerCase()}.brixchat.com</span> — mapping activates with the backend phase.</p>
+                )}
+              </div>
+              <div>
+                <Label>Custom domain</Label>
+                <Input value={s.custom_domain || ''} disabled placeholder="support.acme.com" />
+              </div>
+              {!readOnly && (
+                <div className="mt-5 flex items-center gap-3">
+                  <Button onClick={() => void save()}>Save branding</Button>
+                  {saved && <span className="text-sm font-semibold text-emerald-600">✓ Saved</span>}
+                </div>
+              )}
+            </Card>
+          </div>
+
+          <div>
+            <Card className="p-5 lg:sticky lg:top-6">
+              <h3 className="font-bold text-slate-900 mb-1">Live preview</h3>
+              <p className="text-xs text-slate-500 mb-4">How the widget bubble looks with this branding.</p>
+              <div className="rounded-2xl bg-slate-100 p-8 grid place-items-center">
+                <div className="w-full max-w-[240px] rounded-2xl bg-white shadow-xl overflow-hidden">
+                  <div className="px-4 py-3 flex items-center gap-2.5" style={{ background: s.widget_color }}>
+                    {s.logo_data_url ? (
+                      <img src={s.logo_data_url} alt="" className="w-9 h-9 rounded-xl bg-white object-contain p-0.5" />
+                    ) : (
+                      <span className="w-9 h-9 rounded-xl bg-white/20 grid place-items-center text-white font-black">{(s.brand_name || prop?.name || 'B').charAt(0)}</span>
+                    )}
+                    <div className="min-w-0">
+                      <div className="text-white font-bold text-sm truncate">{s.brand_name || prop?.name || 'Brand'}</div>
+                      <div className="text-white/70 text-xs truncate">{s.tagline || 'We reply fast.'}</div>
+                    </div>
+                  </div>
+                  <div className="p-4 space-y-2">
+                    <div className="rounded-xl rounded-tl-sm bg-slate-100 px-3 py-2 text-xs text-slate-700 w-fit">Hi there! 👋 How can we help?</div>
+                    <div className="rounded-xl rounded-tr-sm px-3 py-2 text-xs text-white w-fit ml-auto" style={{ background: s.accent_color || s.widget_color }}>I need help with my order</div>
+                  </div>
+                </div>
+              </div>
+            </Card>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RatingsTab() {
+  const api = useApi();
+  const p2 = useP2();
+  const [props, setProps] = useState<ApiProperty[]>([]);
+  const [propId, setPropId] = useState('');
+  const [summary, setSummary] = useState<RatingsSummary2 | null>(null);
+  const [ratings, setRatings] = useState<ApiRating2[]>([]);
+  const [members, setMembers] = useState<ApiMember2[]>([]);
+  const [days, setDays] = useState(30);
+  const [missing, setMissing] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await api.properties.list();
+        setProps(data);
+        setPropId((p) => p || data[0]?.id || '');
+        const { data: m } = await p2.members.list();
+        setMembers(itemsOf(m));
+      } catch (e) { setError(errMsg(e)); }
+    })();
+  }, [api, p2]);
+
+  const load = async () => {
+    if (!propId) return;
+    try {
+      const { data: s } = await p2.ratings.summary(propId, days);
+      setSummary(s);
+      const { data: l } = await p2.ratings.list({ property_id: propId, limit: 100 });
+      setRatings(itemsOf(l));
+      setMissing(false);
+    } catch (e) {
+      if (missingP2(e)) setMissing(true);
+      else setError(errMsg(e));
+    }
+  };
+  useEffect(() => { void load(); }, [propId, days]);
+
+  if (missing) {
+    return (
+      <div>
+        <SectionTitle title="Ratings" sub="Customer satisfaction (CSAT) and NPS from post-chat surveys." />
+        <EmptyState icon="⭐" title="Ratings API not available yet" hint="api.ratings.* lands with the phase-2 data API. This dashboard renders automatically once it does." />
+      </div>
+    );
+  }
+
+  const csat = summary?.csat_avg ?? null;
+  const nps = summary?.nps_score ?? null;
+  const maxTrend = Math.max(1, ...((summary?.trend ?? []).map((t) => t.count)));
+  const memberName = (id: string | null) =>
+    members.find((m) => m.id === id)?.display_name ?? 'Unassigned';
+
+  const isLow = (r: ApiRating2) => (r.kind === 'csat' ? r.score <= 2 : r.score <= 6);
+  const low = ratings.filter(isLow);
+  const commented = ratings.filter((r) => r.comment.trim());
+
+  const byAgent = (() => {
+    const map = new Map<string, { name: string; count: number; csatSum: number; csatN: number }>();
+    for (const r of ratings) {
+      const key = r.agent_id ?? 'unassigned';
+      const e = map.get(key) ?? { name: memberName(r.agent_id), count: 0, csatSum: 0, csatN: 0 };
+      e.count += 1;
+      if (r.kind === 'csat') { e.csatSum += r.score; e.csatN += 1; }
+      map.set(key, e);
+    }
+    return [...map.values()].sort((a, b) => b.count - a.count);
+  })();
+
+  const totalNps = (summary?.promoters ?? 0) + (summary?.passives ?? 0) + (summary?.detractors ?? 0);
+
+  return (
+    <div>
+      <SectionTitle title="Ratings" sub="Customer satisfaction (CSAT) and NPS from the widget's two-step survey." />
+      <Notice>
+        <span><strong>Local mode.</strong> Ratings are collected by the widget survey (CSAT 1–5, then NPS 0–10) and stored in this browser until the backend phase. Low ratings also raise a notification.</span>
+      </Notice>
+      {error && <p className="text-sm text-rose-600 mb-4">{error}</p>}
+
+      <div className="flex flex-wrap items-center gap-3 mb-5">
+        <div className="flex items-center gap-2">
+          <Label>Property</Label>
+          <Select value={propId} onChange={(e) => setPropId(e.target.value)} className="w-48">
+            {props.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </Select>
+        </div>
+        <div className="flex items-center gap-2">
+          <Label>Window</Label>
+          <Select value={String(days)} onChange={(e) => setDays(Number(e.target.value))} className="w-32">
+            <option value="7">7 days</option>
+            <option value="30">30 days</option>
+            <option value="90">90 days</option>
+          </Select>
+        </div>
+      </div>
+
+      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <StatCard label="CSAT average" value={csat !== null ? `${csat.toFixed(1)} / 5` : '—'} delta={`${summary?.csat_count ?? 0} responses`} icon="⭐" tone="green" />
+        <StatCard label="NPS" value={nps !== null ? String(Math.round(nps)) : '—'} delta={`${summary?.nps_count ?? 0} responses`} icon="📊" tone="indigo" />
+        <StatCard label="Responses" value={String(ratings.length)} delta={`last ${days} days`} icon="💬" tone="cyan" />
+        <StatCard label="Needs attention" value={String(low.length)} delta="CSAT ≤ 2 or NPS ≤ 6" icon="⚠️" tone="rose" />
+      </div>
+
+      <div className="grid lg:grid-cols-2 gap-6 mb-6">
+        <Card className="p-5">
+          <h3 className="font-bold text-slate-900 mb-1">CSAT trend</h3>
+          <p className="text-xs text-slate-500 mb-4">Average satisfaction per day.</p>
+          {(summary?.trend.length ?? 0) === 0 ? (
+            <p className="text-sm text-slate-400">No ratings in this window yet.</p>
+          ) : (
+            <div className="flex items-end gap-1.5 h-36">
+              {summary!.trend.map((t) => (
+                <div key={t.day} className="flex-1 flex flex-col items-center gap-1" title={`${t.day}: CSAT ${t.csat_avg !== null ? t.csat_avg.toFixed(1) : '—'} · NPS ${t.nps_avg !== null ? t.nps_avg.toFixed(0) : '—'} (${t.count})`}>
+                  <div
+                    className="w-full rounded-t-md bg-gradient-to-t from-brix-600 to-cyan-400 min-h-[4px]"
+                    style={{ height: `${(t.count / maxTrend) * 100}%`, opacity: t.csat_avg !== null && t.csat_avg < 3 ? 0.45 : 1 }}
+                  />
+                  <span className="text-[10px] text-slate-400 font-mono">{t.day.slice(5)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+        <Card className="p-5">
+          <h3 className="font-bold text-slate-900 mb-1">NPS gauge</h3>
+          <p className="text-xs text-slate-500 mb-4">Promoters (9–10) minus detractors (0–6). −100 to +100.</p>
+          {nps === null ? (
+            <p className="text-sm text-slate-400">No NPS responses yet.</p>
+          ) : (
+            <div>
+              <div className="relative h-4 rounded-full bg-gradient-to-r from-rose-500 via-amber-400 to-emerald-500">
+                <div
+                  className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-1 h-7 bg-slate-900 rounded-full"
+                  style={{ left: `${((nps + 100) / 200) * 100}%` }}
+                />
+              </div>
+              <div className="flex justify-between text-[11px] text-slate-400 font-mono mt-1.5">
+                <span>−100</span><span className="text-slate-900 font-bold text-sm">{Math.round(nps)}</span><span>+100</span>
+              </div>
+              {totalNps > 0 && (
+                <div className="flex h-2.5 rounded-full overflow-hidden mt-4">
+                  <div className="bg-emerald-500" style={{ width: `${(summary!.promoters / totalNps) * 100}%` }} title={`Promoters: ${summary!.promoters}`} />
+                  <div className="bg-amber-400" style={{ width: `${(summary!.passives / totalNps) * 100}%` }} title={`Passives: ${summary!.passives}`} />
+                  <div className="bg-rose-500" style={{ width: `${(summary!.detractors / totalNps) * 100}%` }} title={`Detractors: ${summary!.detractors}`} />
+                </div>
+              )}
+              <div className="flex gap-4 text-xs text-slate-500 mt-2">
+                <span><span className="font-bold text-emerald-600">{summary?.promoters ?? 0}</span> promoters</span>
+                <span><span className="font-bold text-amber-600">{summary?.passives ?? 0}</span> passives</span>
+                <span><span className="font-bold text-rose-600">{summary?.detractors ?? 0}</span> detractors</span>
+              </div>
+              <p className="text-xs text-slate-500 mt-3">
+                {nps >= 50 ? 'Excellent — advocates far outweigh critics.' : nps >= 0 ? 'Healthy — more promoters than detractors.' : 'At risk — detractors outweigh promoters. Check the alerts below.'}
+              </p>
+            </div>
+          )}
+        </Card>
+      </div>
+
+      {low.length > 0 && (
+        <Card className="p-5 mb-6 border-rose-200 bg-rose-50/50">
+          <h3 className="font-bold text-rose-900 mb-3">⚠️ Low-rating alerts</h3>
+          <div className="space-y-2.5">
+            {low.slice(0, 8).map((r) => (
+              <div key={r.id} className="flex flex-wrap items-center gap-2 text-sm">
+                <Badge tone="rose">{r.kind === 'csat' ? `CSAT ${r.score}/5` : `NPS ${r.score}/10`}</Badge>
+                <span className="text-slate-700">{memberName(r.agent_id)}</span>
+                <span className="text-slate-400 text-xs">{fmtTs(r.created_at)}</span>
+                {r.comment.trim() && <span className="text-slate-600 italic w-full">“{r.comment}”</span>}
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      <div className="grid lg:grid-cols-2 gap-6">
+        <Card className="p-5">
+          <h3 className="font-bold text-slate-900 mb-4">Per-agent ratings</h3>
+          {byAgent.length === 0 ? (
+            <p className="text-sm text-slate-400">No agent ratings yet.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-xs uppercase tracking-wider text-slate-400 border-b border-slate-100">
+                    <th className="py-2 pr-4 font-semibold">Agent</th>
+                    <th className="py-2 pr-4 font-semibold">Responses</th>
+                    <th className="py-2 font-semibold">CSAT avg</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {byAgent.map((a) => (
+                    <tr key={a.name} className="border-b border-slate-50 last:border-0">
+                      <td className="py-2.5 pr-4 font-semibold text-slate-800">{a.name}</td>
+                      <td className="py-2.5 pr-4 text-slate-500">{a.count}</td>
+                      <td className="py-2.5">
+                        <span className={cx('font-bold', a.csatN > 0 && a.csatSum / a.csatN < 3 ? 'text-rose-600' : 'text-slate-800')}>
+                          {a.csatN > 0 ? (a.csatSum / a.csatN).toFixed(1) : '—'}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+        <Card className="p-5">
+          <h3 className="font-bold text-slate-900 mb-4">Recent comments</h3>
+          {commented.length === 0 ? (
+            <p className="text-sm text-slate-400">No written feedback yet.</p>
+          ) : (
+            <div className="space-y-3 max-h-80 overflow-y-auto slim-scroll">
+              {commented.slice(0, 12).map((r) => (
+                <div key={r.id} className="rounded-xl bg-slate-50 border border-slate-100 px-3.5 py-3">
+                  <p className="text-sm text-slate-700 italic">“{r.comment}”</p>
+                  <div className="flex items-center gap-2 mt-2 text-xs text-slate-400">
+                    <Badge tone={isLow(r) ? 'rose' : 'green'}>{r.kind === 'csat' ? `CSAT ${r.score}` : `NPS ${r.score}`}</Badge>
+                    <span>{memberName(r.agent_id)}</span>
+                    <span>·</span>
+                    <span>{fmtTs(r.created_at)}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Departments + routing (api.departments.*, api.routing.routeChat)
+// ---------------------------------------------------------------------------
+
+const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+const ROUTING_MODES: Array<{ id: RoutingMode; name: string; blurb: string }> = [
+  { id: 'round-robin', name: 'Round robin', blurb: 'Chats are dealt out to agents one after another, in rotation — everyone gets a fair share.' },
+  { id: 'least-busy', name: 'Least busy', blurb: 'Each new chat goes to the agent with the fewest open chats right now.' },
+  { id: 'first-available', name: 'First available', blurb: 'The chat goes to whichever agent picks it up first — fastest response wins.' },
+];
+
+const OFFLINE_BEHAVIORS: Array<{ id: OfflineBehavior; name: string; blurb: string }> = [
+  { id: 'ticket', name: 'Create a ticket', blurb: 'The visitor\'s message becomes a support ticket for the team.' },
+  { id: 'message', name: 'Take a message', blurb: 'The visitor leaves a message; the team follows up later.' },
+  { id: 'hide', name: 'Hide the widget', blurb: 'Visitors can\'t start a chat outside business hours.' },
+];
+
+function DayHoursEditor({ value, onChange }: { value: DayHours[]; onChange: (v: DayHours[]) => void }) {
+  const set = (day: number, k: keyof DayHours, v: string | boolean) => {
+    onChange(value.map((r) => (r.day === day ? { ...r, [k]: v } : r)));
+  };
+  return (
+    <div className="space-y-1.5">
+      {DAYS.map((name, day) => {
+        const row = value.find((r) => r.day === day) ?? { day, open: '09:00', close: '18:00', closed: false };
+        return (
+          <div key={day} className="flex items-center gap-3 rounded-xl border border-slate-100 px-3 py-2">
+            <span className="w-10 text-sm font-bold text-slate-700">{name}</span>
+            <Toggle checked={!row.closed} onChange={(v: boolean) => set(day, 'closed', !v)} label={row.closed ? 'Closed' : 'Open'} />
+            {!row.closed && (
+              <>
+                <Input type="time" value={row.open} onChange={(e) => set(day, 'open', e.target.value)} className="w-28" />
+                <span className="text-slate-400 text-sm">–</span>
+                <Input type="time" value={row.close} onChange={(e) => set(day, 'close', e.target.value)} className="w-28" />
+              </>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+const emptyDept: DepartmentInput2 & { useHours: boolean; hours: DayHours[] } = {
+  name: '', description: '', agent_ids: [], routing_mode: 'round-robin',
+  hours_override: null, offline_behavior: 'message',
+  useHours: false,
+  hours: DAYS.map((_, day) => ({ day, open: '09:00', close: '18:00', closed: day === 0 || day === 6 })),
+};
+
+function DepartmentsTab({ readOnly }: { readOnly: boolean }) {
+  const api = useApi();
+  const p2 = useP2();
+  const { confirm, dialog } = useConfirm();
+  const [props, setProps] = useState<ApiProperty[]>([]);
+  const [propId, setPropId] = useState('');
+  const depts = useDeptSource(propId);
+  const [items, setItems] = useState<ApiDepartment2[]>([]);
+  const [members, setMembers] = useState<ApiMember2[]>([]);
+  const [defaults, setDefaults] = useState<Record<string, string>>({});
+  const [editing, setEditing] = useState<(typeof emptyDept & { id?: string }) | null>(null);
+  const [simResult, setSimResult] = useState<Record<string, string>>({});
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await api.properties.list();
+        setProps(data);
+        setPropId((p) => p || data[0]?.id || '');
+        const { data: m } = await p2.members.list();
+        setMembers(itemsOf(m));
+        const d: Record<string, string> = {};
+        for (const pr of data) {
+          try {
+            const { data: s } = await p2.propertySettings.get(pr.id);
+            d[pr.id] = (s as PropertySettings2).default_department_id ?? '';
+          } catch { /* keep empty */ }
+        }
+        setDefaults(d);
+      } catch (e) {
+        if (!missingP2(e)) setError(errMsg(e));
+      }
+    })();
+  }, [api, p2]);
+
+  const loadDepts = async (pid: string) => {
+    if (!pid || !depts.live) return;
+    try {
+      setItems(await depts.list());
+    } catch (e) {
+      if (!missingP2(e)) setError(errMsg(e));
+      setItems([]);
+    }
+  };
+  useEffect(() => { void loadDepts(propId); }, [propId, depts.live]);
+
+  /** Runtime hours (empty open/close = closed) -> editor hours (closed flag). */
+  const toEditorHours = (h: ApiDepartment2['hours_override']): DayHours[] =>
+    DAYS.map((_, day) => {
+      const row = h?.find((x) => x.day === day);
+      const closed = !row || !row.open || !row.close;
+      return { day, open: row?.open || '09:00', close: row?.close || '18:00', closed };
+    });
+  /** Editor hours -> runtime hours (closed days get empty open/close). */
+  const toRuntimeHours = (h: DayHours[]) =>
+    h.map((x) => ({ day: x.day, open: x.closed ? '' : x.open, close: x.closed ? '' : x.close }));
+
+  const save = async () => {
+    if (!editing || !editing.name.trim() || !propId) return;
+    setBusy(true); setError('');
+    try {
+      const input: DepartmentInput2 = {
+        name: editing.name.trim(),
+        description: (editing.description ?? '').trim(),
+        agent_ids: editing.agent_ids ?? [],
+        routing_mode: editing.routing_mode ?? 'round-robin',
+        hours_override: editing.useHours ? toRuntimeHours(editing.hours) : null,
+        offline_behavior: editing.offline_behavior ?? 'message',
+      };
+      if (editing.id) await depts.update(editing.id, input);
+      else await depts.create(input);
+      setEditing(null);
+      await loadDepts(propId);
+    } catch (e) { setError(errMsg(e)); }
+    finally { setBusy(false); }
+  };
+
+  const remove = (d: ApiDepartment2) => {
+    confirm({
+      title: 'Delete department?',
+      body: `"${d.name}" will be removed. Chats will fall back to the property default routing.`,
+      action: async () => { await depts.remove(d.id); await loadDepts(propId); },
+    });
+  };
+
+  const setDefault = async (pid: string, deptId: string) => {
+    try {
+      await p2.propertySettings.patch(pid, { default_department_id: deptId } as Partial<PropertySettings2>);
+      setDefaults((p) => ({ ...p, [pid]: deptId }));
+    } catch (e) { setError(errMsg(e)); }
+  };
+
+  const simulate = async (d: ApiDepartment2) => {
+    try {
+      const { data: r } = await p2.routing.routeChat(propId, d.id);
+      const agent = members.find((m) => m.id === r.agent_id);
+      setSimResult((s) => ({
+        ...s,
+        [d.id]: r.agent_id ? `→ ${agent?.display_name ?? 'an agent'} (${modeName(d.routing_mode)})` : '→ no agent available right now',
+      }));
+    } catch (e) { setError(errMsg(e)); }
+  };
+
+  const toggleAgent = (id: string) => {
+    if (!editing) return;
+    const cur = editing.agent_ids ?? [];
+    setEditing({ ...editing, agent_ids: cur.includes(id) ? cur.filter((a) => a !== id) : [...cur, id] });
+  };
+
+  const modeName = (id: RoutingMode) => ROUTING_MODES.find((m) => m.id === id)?.name ?? id;
+  const offlineName = (id: OfflineBehavior) => OFFLINE_BEHAVIORS.find((m) => m.id === id)?.name ?? id;
+
+  return (
+    <div>
+      {dialog}
+      <SectionTitle title="Departments" sub="Organize agents into departments, each with its own routing, hours, and offline behavior." />
+      {!depts.live ? (
+        <EmptyState icon="🏢" title="Departments API not available yet" hint="api.departments.* lands with the phase-2 data API. This tab renders automatically once it does." />
+      ) : (
+        <>
+          <Card className="p-5 mb-6">
+            <div className="grid sm:grid-cols-2 gap-4">
+              <div>
+                <Label>Property</Label>
+                <Select value={propId} onChange={(e) => setPropId(e.target.value)}>
+                  {props.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </Select>
+              </div>
+            </div>
+          </Card>
+
+          {error && <p className="text-sm text-rose-600 mb-4">{error}</p>}
+
+          <Card className="p-5 mb-6">
+            <h3 className="font-bold text-slate-900 mb-1">Routing rules</h3>
+            <p className="text-xs text-slate-500 mb-4">
+              When a chat starts, it is routed to the property's default department. The <em>routing mode</em> (round robin, least busy, first available) lives on each department below. Routing is simulated locally — live skill-based routing arrives with the backend phase.
+            </p>
+            <div className="grid sm:grid-cols-2 gap-4">
+              {props.map((p) => (
+                <div key={p.id}>
+                  <Label>{p.name} — default department</Label>
+                  <Select value={defaults[p.id] ?? ''} onChange={(e) => void setDefault(p.id, e.target.value)} disabled={readOnly}>
+                    <option value="">None (unassigned pool)</option>
+                    {items.filter((d) => d.property_id === p.id).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                  </Select>
+                </div>
+              ))}
+              {props.length === 0 && <p className="text-sm text-slate-400">No properties yet.</p>}
+            </div>
+          </Card>
+
+          <div className="flex items-center justify-between mb-4">
+            <p className="text-sm text-slate-500">{items.length} departments</p>
+            {!readOnly && propId && <Button size="sm" onClick={() => setEditing({ ...emptyDept, hours: emptyDept.hours.map((h) => ({ ...h })) })}>+ New department</Button>}
+          </div>
+
+          {items.length === 0 ? (
+            <EmptyState icon="🏢" title="No departments yet" hint={readOnly ? '' : 'Create departments like Sales and Support, assign agents, and choose how chats are routed.'} />
+          ) : (
+            <div className="grid md:grid-cols-2 gap-4">
+              {items.map((d) => {
+                const agents = members.filter((m) => d.agent_ids.includes(m.id));
+                return (
+                  <Card key={d.id} className="p-5">
+                    <div className="flex items-start justify-between gap-3 mb-2">
+                      <div>
+                        <div className="font-bold text-slate-900 text-lg">{d.name}</div>
+                        {d.description && <p className="text-sm text-slate-500 mt-0.5">{d.description}</p>}
+                      </div>
+                      {!readOnly && (
+                        <div className="flex gap-1.5 shrink-0">
+                          <Button variant="ghost" size="sm" onClick={() => setEditing({
+                            id: d.id, name: d.name, description: d.description,
+                            agent_ids: d.agent_ids, routing_mode: d.routing_mode,
+                            offline_behavior: d.offline_behavior,
+                            useHours: d.hours_override !== null,
+                            hours: toEditorHours(d.hours_override),
+                          })}>Edit</Button>
+                          <Button variant="ghost" size="sm" onClick={() => remove(d)} className="text-rose-600">Delete</Button>
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-2 mb-3">
+                      <Badge tone="indigo">{modeName(d.routing_mode)}</Badge>
+                      <Badge tone="slate">{offlineName(d.offline_behavior)} when offline</Badge>
+                      {d.hours_override && <Badge tone="amber">Custom hours</Badge>}
+                    </div>
+                    <div className="flex items-center gap-2 flex-wrap mb-3">
+                      {agents.length === 0 ? (
+                        <span className="text-xs text-slate-400">No agents assigned</span>
+                      ) : agents.map((a) => (
+                        <span key={a.id} className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-700 bg-slate-100 rounded-full pl-1 pr-2.5 py-1">
+                          <span className="w-5 h-5 rounded-full grid place-items-center text-white text-[9px] font-extrabold" style={{ background: a.color || '#4f46e5' }}>
+                            {a.initials || a.display_name.slice(0, 2).toUpperCase()}
+                          </span>
+                          {a.display_name}
+                        </span>
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button variant="ghost" size="sm" onClick={() => void simulate(d)}>Simulate route</Button>
+                      {simResult[d.id] && <span className="text-xs text-slate-500">{simResult[d.id]}</span>}
+                    </div>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+
+          <Modal open={editing !== null} onClose={() => setEditing(null)} title={editing?.id ? 'Edit department' : 'New department'} wide>
+            {editing && (
+              <div className="space-y-5">
+                <div className="grid sm:grid-cols-2 gap-4">
+                  <div><Label>Name</Label><Input value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} placeholder="e.g. Sales" /></div>
+                  <div><Label>Description</Label><Input value={editing.description} onChange={(e) => setEditing({ ...editing, description: e.target.value })} placeholder="What this team handles" /></div>
+                </div>
+                <div>
+                  <Label>Agents in this department</Label>
+                  {members.length === 0 ? (
+                    <p className="text-sm text-slate-400">No team members yet — invite them from the Team tab first.</p>
+                  ) : (
+                    <div className="grid sm:grid-cols-2 gap-2">
+                      {members.map((m) => (
+                        <label key={m.id} className="flex items-center gap-2.5 rounded-xl border border-slate-200 px-3 py-2 text-sm cursor-pointer hover:border-slate-300">
+                          <input type="checkbox" checked={(editing.agent_ids ?? []).includes(m.id)} onChange={() => toggleAgent(m.id)} className="w-4 h-4 accent-indigo-600" />
+                          <span className="w-6 h-6 rounded-full grid place-items-center text-white text-[9px] font-extrabold shrink-0" style={{ background: m.color || '#4f46e5' }}>
+                            {m.initials || m.display_name.slice(0, 2).toUpperCase()}
+                          </span>
+                          <span className="font-semibold text-slate-700">{m.display_name}</span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div>
+                  <Label>Routing mode</Label>
+                  <div className="grid sm:grid-cols-3 gap-2.5">
+                    {ROUTING_MODES.map((m) => (
+                      <button
+                        key={m.id}
+                        onClick={() => setEditing({ ...editing, routing_mode: m.id })}
+                        className={cx(
+                          'rounded-xl border p-3.5 text-left transition',
+                          editing.routing_mode === m.id ? 'border-indigo-500 bg-indigo-50/60 ring-1 ring-indigo-500' : 'border-slate-200 hover:border-slate-300',
+                        )}
+                      >
+                        <div className="font-bold text-sm text-slate-900 mb-1">{m.name}</div>
+                        <div className="text-xs text-slate-500 leading-relaxed">{m.blurb}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <div className="flex items-center gap-2.5 mb-3">
+                    <Toggle checked={editing.useHours} onChange={(v: boolean) => setEditing({ ...editing, useHours: v })} />
+                    <span className="text-sm font-semibold text-slate-700">Custom business hours for this department</span>
+                  </div>
+                  {editing.useHours ? (
+                    <DayHoursEditor value={editing.hours} onChange={(h) => setEditing({ ...editing, hours: h })} />
+                  ) : (
+                    <p className="text-xs text-slate-400">Inherits the property's business hours.</p>
+                  )}
+                </div>
+                <div>
+                  <Label>When the department is offline</Label>
+                  <div className="grid sm:grid-cols-3 gap-2.5">
+                    {OFFLINE_BEHAVIORS.map((b) => (
+                      <button
+                        key={b.id}
+                        onClick={() => setEditing({ ...editing, offline_behavior: b.id })}
+                        className={cx(
+                          'rounded-xl border p-3.5 text-left transition',
+                          editing.offline_behavior === b.id ? 'border-indigo-500 bg-indigo-50/60 ring-1 ring-indigo-500' : 'border-slate-200 hover:border-slate-300',
+                        )}
+                      >
+                        <div className="font-bold text-sm text-slate-900 mb-1">{b.name}</div>
+                        <div className="text-xs text-slate-500 leading-relaxed">{b.blurb}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {error && <p className="text-sm text-rose-600">{error}</p>}
+                <div className="flex justify-end gap-2">
+                  <Button variant="ghost" onClick={() => setEditing(null)}>Cancel</Button>
+                  <Button onClick={save} disabled={busy || !editing.name.trim()}>{busy ? 'Saving…' : 'Save department'}</Button>
+                </div>
+              </div>
+            )}
+          </Modal>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Member profiles — extended team profiles: job title, photo, departments
+// (api.members.*). Shown across the dashboard and the widget.
+// ---------------------------------------------------------------------------
+
+const AVATAR_COLORS = ['#4f46e5', '#0891b2', '#059669', '#f59e0b', '#8b5cf6', '#e11d48', '#334155'];
+
+function MemberProfileModal({ member, onClose, onSaved }: { member: ApiMember2; onClose: () => void; onSaved: () => void }) {
+  const p2 = useP2();
+  const api = useApi();
+  const [propId, setPropId] = useState('');
+  const deptSrc = useDeptSource(propId);
+  const [departments, setDepartments] = useState<ApiDepartment2[]>([]);
+  const [name, setName] = useState(member.display_name);
+  const [jobTitle, setJobTitle] = useState(member.job_title ?? '');
+  const [color, setColor] = useState(member.color);
+  const [avatar, setAvatar] = useState<string | null>(member.avatar_data_url ?? null);
+  const [deptIds, setDeptIds] = useState<string[]>(member.department_ids ?? []);
+  const [role, setRole] = useState(member.role);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [imgError, setImgError] = useState('');
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await api.properties.list();
+        setPropId(data[0]?.id ?? '');
+      } catch { /* departments stay empty */ }
+    })();
+  }, [api]);
+
+  useEffect(() => {
+    if (!propId || !deptSrc.live) return;
+    deptSrc.list().then(setDepartments).catch(() => setDepartments([]));
+  }, [propId, deptSrc]);
+
+  const toggleDept = (id: string) => {
+    setDeptIds((prev) => (prev.includes(id) ? prev.filter((d) => d !== id) : [...prev, id]));
+  };
+
+  const onFile = (f: File | undefined) => {
+    setImgError('');
+    if (!f) return;
+    if (f.size > 300 * 1024) { setImgError('Photo must be under 300 KB.'); return; }
+    const r = new FileReader();
+    r.onload = () => setAvatar(String(r.result ?? ''));
+    r.readAsDataURL(f);
+  };
+
+  const save = async () => {
+    if (!name.trim()) { setError('Display name is required.'); return; }
+    setBusy(true);
+    setError('');
+    try {
+      await p2.members.update(member.id, {
+        display_name: name.trim(), job_title: jobTitle.trim(), color,
+        avatar_data_url: avatar, department_ids: deptIds, role,
+      });
+      onSaved();
+      onClose();
+    } catch (e) { setError(errMsg(e)); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <Modal open onClose={onClose} title={`Profile — ${member.display_name}`} wide>
+      <div className="space-y-5">
+        {error && <p className="text-sm text-rose-600">{error}</p>}
+        <div className="flex items-center gap-4">
+          <div className="w-16 h-16 rounded-2xl grid place-items-center text-white text-xl font-black overflow-hidden shrink-0" style={{ background: color }}>
+            {avatar ? <img src={avatar} alt="" className="w-full h-full object-cover" /> : member.initials}
+          </div>
+          {!avatar ? (
+            <div>
+              <div className="flex gap-1.5 mb-2">
+                {AVATAR_COLORS.map((c) => (
+                  <button key={c} onClick={() => setColor(c)} className={cx('w-7 h-7 rounded-full border-2', color === c ? 'border-slate-900' : 'border-transparent')} style={{ background: c }} aria-label={`Color ${c}`} />
+                ))}
+              </div>
+              <label className="inline-block px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-xs font-bold text-slate-700 cursor-pointer">
+                Upload photo
+                <input type="file" accept="image/*" className="hidden" onChange={(e) => onFile(e.target.files?.[0])} />
+              </label>
+              {imgError && <p className="text-xs text-rose-600 mt-1">{imgError}</p>}
+            </div>
+          ) : (
+            <button onClick={() => setAvatar(null)} className="text-xs font-semibold text-rose-600 hover:underline">Remove photo</button>
+          )}
+        </div>
+        <div className="grid sm:grid-cols-2 gap-4">
+          <div><Label>Display name</Label><Input value={name} onChange={(e) => setName(e.target.value)} /></div>
+          <div><Label>Job title</Label><Input value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} placeholder="e.g. Support lead" /></div>
+        </div>
+        <div>
+          <Label>Role</Label>
+          <Select value={role} onChange={(e) => setRole(e.target.value)} className="max-w-xs">
+            {(Object.keys(ROLE_LABELS) as TeamRole[]).map((r) => (
+              <option key={r} value={r}>{ROLE_LABELS[r]}</option>
+            ))}
+          </Select>
+        </div>
+        <div>
+          <Label>Departments</Label>
+          {departments.length === 0 ? (
+            <p className="text-xs text-slate-400">No departments yet — create them under Departments first.</p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {departments.map((d) => (
+                <button
+                  key={d.id}
+                  onClick={() => toggleDept(d.id)}
+                  className={cx('rounded-full border px-3.5 py-1.5 text-xs font-bold transition', deptIds.includes(d.id) ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 text-slate-600 hover:border-slate-300')}
+                >
+                  {deptIds.includes(d.id) ? '✓ ' : ''}{d.name}
+                </button>
+              ))}
+            </div>
+          )}
+          <p className="text-xs text-slate-400 mt-1.5">Department membership drives chat routing and the Ratings per-agent table.</p>
+        </div>
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button onClick={() => void save()} disabled={busy || !name.trim()}>{busy ? 'Saving…' : 'Save profile'}</Button>
+        </div>
+        <p className="text-xs text-slate-400">Job title, photo, and department memberships are stored on the member record and shown across the dashboard and widget.</p>
+      </div>
+    </Modal>
+  );
+}
+
+function MemberProfiles({ readOnly }: { readOnly: boolean }) {
+  const p2 = useP2();
+  const [members, setMembers] = useState<ApiMember2[]>([]);
+  const [editing, setEditing] = useState<ApiMember2 | null>(null);
+  const [error, setError] = useState('');
+
+  const load = async () => {
+    try {
+      const { data } = await p2.members.list();
+      setMembers(itemsOf(data));
+    } catch (e) { setError(errMsg(e)); }
+  };
+  useEffect(() => { void load(); }, []);
+
+  return (
+    <div className="mt-10">
+      <h3 className="font-bold text-slate-900 text-lg mb-1">Member profiles</h3>
+      <p className="text-sm text-slate-500 mb-5">Job titles, photos, and department memberships — shown across the dashboard and the widget.</p>
+      {error && <p className="text-sm text-rose-600 mb-3">{error}</p>}
+      {members.length === 0 ? (
+        <EmptyState icon="👤" title="No members" hint="Members are created through the invite flow or login." />
+      ) : (
+        <div className="grid sm:grid-cols-2 gap-3">
+          {members.map((m) => (
+            <Card key={m.id} className="p-4">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-xl grid place-items-center text-white font-black overflow-hidden shrink-0" style={{ background: m.color }}>
+                  {m.avatar_data_url ? <img src={m.avatar_data_url} alt="" className="w-full h-full object-cover" /> : m.initials}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="font-bold text-slate-900 truncate">{m.display_name}</div>
+                  <div className="text-xs text-slate-400 truncate">{m.job_title || ROLE_LABELS[m.role as TeamRole] || m.role}{(m.department_ids?.length ?? 0) > 0 && ` · ${m.department_ids!.length} dept${m.department_ids!.length === 1 ? '' : 's'}`}</div>
+                </div>
+                {!readOnly && (
+                  <Button variant="ghost" size="sm" onClick={() => setEditing(m)}>Edit profile</Button>
+                )}
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+      {editing && (
+        <MemberProfileModal member={editing} onClose={() => setEditing(null)} onSaved={() => void load()} />
+      )}
+    </div>
+  );
+}
+
+
+// ---------------------------------------------------------------------------
 // Admin shell
 // ---------------------------------------------------------------------------
 
 export default function Admin() {
   const { session, logout } = useStore();
-  const [tab, setTab] = useState<Tab>('properties');
+  const [tab, setTab] = useState<Tab>('overview');
   const [tick, setTick] = useState(0);
   const refresh = () => setTick((t) => t + 1);
+  const readOnly = session?.role !== 'admin';
 
   return (
     <div className="min-h-screen bg-slate-50 flex" key={tick}>
@@ -1119,10 +2807,15 @@ export default function Admin() {
           ))}
         </header>
         <main className="max-w-5xl mx-auto px-4 sm:px-8 py-8">
+          {tab === 'overview' && <OverviewTab go={setTab} />}
+          {tab === 'content' && <ContentTab readOnly={readOnly} />}
           {tab === 'properties' && <PropertiesTab refresh={refresh} />}
+          {tab === 'branding' && <BrandingTab readOnly={readOnly} />}
+          {tab === 'ratings' && <RatingsTab />}
+          {tab === 'departments' && <DepartmentsTab readOnly={readOnly} />}
           {tab === 'keys' && <ApiKeysTab refresh={refresh} />}
           {tab === 'webhooks' && <WebhooksTab refresh={refresh} />}
-          {tab === 'team' && <TeamTab refresh={refresh} />}
+          {tab === 'team' && <TeamTab refresh={refresh} readOnly={readOnly} />}
           {tab === 'audit' && <AuditTab />}
           {tab === 'install' && <InstallTab />}
         </main>
