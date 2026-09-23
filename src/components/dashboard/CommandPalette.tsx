@@ -22,6 +22,7 @@ import {
   PaletteIcon,
   PlusIcon,
   StarIcon,
+  SparkleIcon,
   TagIcon,
   TeamIcon,
   TerminalIcon,
@@ -64,6 +65,7 @@ const PAGES: Array<{ to: string; label: string; section: string; icon: ReactNode
   { to: '/app/contacts', label: 'Contacts', section: 'Grow', icon: <ContactsIcon />, keywords: 'contacts crm customers' },
   { to: '/app/quality', label: 'Quality scorecards', section: 'Grow', icon: <StarIcon />, keywords: 'quality scorecards qa rubric agents' },
   { to: '/app/triggers', label: 'Triggers', section: 'Automate', icon: <TriggerIcon />, keywords: 'triggers automation workflows rules proactive' },
+  { to: '/app/flows', label: 'Chatbot flows', section: 'Automate', icon: <SparkleIcon />, keywords: 'flows chatbot builder bot flow nodes handoff' },
   { to: '/app/properties', label: 'Properties', section: 'Workspace', icon: <GlobeIcon />, keywords: 'properties websites domains public key' },
   { to: '/app/branding', label: 'Branding', section: 'Workspace', icon: <PaletteIcon />, keywords: 'branding logo colors theme widget appearance' },
   { to: '/app/install', label: 'Install', section: 'Workspace', icon: <CodeIcon />, keywords: 'install embed snippet widget javascript api' },
@@ -167,6 +169,14 @@ export function CommandPalette({
         section: 'Actions',
         keywords: 'new trigger rule automation workflow',
         run: () => navigate('/app/triggers?new=1'),
+      },
+      {
+        id: 'act-flow',
+        label: 'New chatbot flow',
+        icon: <PlusIcon />,
+        section: 'Actions',
+        keywords: 'new flow chatbot builder',
+        run: () => navigate('/app/flows?new=1'),
       },
       {
         id: 'act-contact',
@@ -313,14 +323,14 @@ export function CommandPalette({
       <div className="absolute inset-0 bg-ink-950/60 backdrop-blur-sm" onClick={onClose} />
       <div className="relative w-full max-w-xl bg-white rounded-2xl shadow-2xl overflow-hidden animate-fade-up">
         <div className="flex items-center gap-3 px-4 py-3.5 border-b border-slate-100">
-          <CommandIcon className="w-5 h-5 text-slate-400" />
+          <CommandIcon className="w-5 h-5 text-slate-500" />
           <input
             ref={inputRef}
             value={q}
             onChange={(e) => setQ(e.target.value)}
             onKeyDown={onKey}
             placeholder="Type a page, action, or visitor name…"
-            className="flex-1 text-[15px] outline-none placeholder:text-slate-400 text-slate-900"
+            className="flex-1 text-[15px] outline-none placeholder:text-slate-500 text-slate-900"
           />
           <kbd className="px-1.5 py-0.5 rounded-md bg-slate-100 border border-slate-200 font-mono text-[11px] font-bold text-slate-500">
             esc
@@ -328,14 +338,14 @@ export function CommandPalette({
         </div>
         <div ref={listRef} className="max-h-[50vh] overflow-y-auto slim-scroll p-2">
           {items.length === 0 && (
-            <div className="px-4 py-8 text-center text-sm text-slate-400">
+            <div className="px-4 py-8 text-center text-sm text-slate-500">
               No matches for “{q.trim()}”. Try a page name or action.
             </div>
           )}
           {items.map((item, idx) => {
             const head =
               item.section !== lastSection ? (
-                <div className="px-3 pt-2.5 pb-1 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">
+                <div className="px-3 pt-2.5 pb-1 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">
                   {item.section}
                 </div>
               ) : null;
@@ -365,7 +375,7 @@ export function CommandPalette({
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="block text-sm font-semibold text-slate-900 truncate">{item.label}</span>
-                    {item.hint && <span className="block text-xs text-slate-400 truncate">{item.hint}</span>}
+                    {item.hint && <span className="block text-xs text-slate-500 truncate">{item.hint}</span>}
                   </span>
                   {cursor === idx && <span className="text-xs text-slate-300 font-mono">⏎</span>}
                 </button>
@@ -373,7 +383,7 @@ export function CommandPalette({
             );
           })}
         </div>
-        <div className="px-4 py-2.5 border-t border-slate-100 flex items-center gap-4 text-[11px] text-slate-400">
+        <div className="px-4 py-2.5 border-t border-slate-100 flex items-center gap-4 text-[11px] text-slate-500">
           <span>
             <kbd className="font-mono font-bold">↑↓</kbd> navigate
           </span>
