@@ -6,6 +6,7 @@ import { Link } from 'react-router-dom';
 import { botReply } from '../lib/bot';
 import { cx } from '../lib/utils';
 import { Button } from '../components/ui';
+import { Seo, jsonLdOrganization, jsonLdWebSite } from '../lib/seo';
 
 // ---------------------------------------------------------------- live demo
 
@@ -225,6 +226,12 @@ function SectionHeading({ eyebrow, title, sub, dark = false }: { eyebrow: string
 export default function Landing() {
   return (
     <main>
+      <Seo
+        title="Brix Chat — Live Chat Widget, AI Copilot & Helpdesk for Modern Teams"
+        description="Brix Chat is the modern live-chat platform: an embeddable website widget, a real-time agent dashboard, AI reply copilot, smart triggers, ticketing and analytics — free core, no per-agent fees."
+        path="/"
+        jsonLd={[jsonLdOrganization(), jsonLdWebSite()]}
+      />
       {/* hero */}
       <section className="relative overflow-hidden bg-ink-950">
         <div className="absolute inset-0 pointer-events-none" aria-hidden>

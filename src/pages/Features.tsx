@@ -1,7 +1,8 @@
 // Brix Chat — features deep-dive page.
 
-import { Link } from 'react-router-dom';
 import { cx } from '../lib/utils';
+import { Seo, jsonLdSoftwareApp, jsonLdBreadcrumb } from '../lib/seo';
+import { CtaBand } from '../components/marketing';
 
 interface Group {
   icon: string;
@@ -38,6 +39,7 @@ const GROUPS: Group[] = [
       'Canned responses with shortcuts, links, files and chainable mini-flows',
       'Ticketing from missed chats, offline forms and support email with email-thread sync',
       'Hosted knowledge base with drafts, categories, slugs, translations and custom domains',
+      'White-labelled help center per property — your logo, brand name, and colors at /kb/:propertyKey, with just a tiny “Powered by Brix Chat” note',
       'Contact records with journey view, custom attributes and notes',
       'Unlimited agents, unlimited websites, unlimited history — on the free core',
     ],
@@ -84,9 +86,28 @@ const GROUPS: Group[] = [
   },
 ];
 
+const CHECKLIST: Array<{ label: string; brix: string; typical: string }> = [
+  { label: 'Agents on the free plan', brix: 'Unlimited', typical: 'Capped, then per-seat fees' },
+  { label: 'Websites on the free plan', brix: 'Unlimited', typical: 'Capped or per-site add-ons' },
+  { label: 'Ticketing', brix: 'Included in the core', typical: 'Often a separate paid product' },
+  { label: 'Knowledge base', brix: 'Included in the core', typical: 'Included, sometimes gated by tier' },
+  { label: 'Proactive triggers', brix: 'Included in the core', typical: 'Included, sometimes gated by tier' },
+  { label: 'Chat history', brix: 'Unlimited, exportable', typical: 'Retention caps on lower tiers' },
+  { label: 'AI copilot allowance', brix: 'Starter allowance free', typical: 'Paid from the first resolution' },
+  { label: 'API + webhooks', brix: 'Included in the core', typical: 'Included, sometimes gated by tier' },
+  { label: 'Unanswered-question log', brix: 'Included in the core', typical: 'Rare below enterprise tiers' },
+  { label: 'Data retention controls', brix: 'Included in the core', typical: 'Manual or enterprise-only' },
+];
+
 export default function Features() {
   return (
     <main>
+      <Seo
+        title="Features — Brix Chat"
+        description="Everything in Brix Chat: chat widget, agent dashboard, AI copilot and automation, analytics, ticketing, knowledge base — free core, honest add-ons."
+        path="/features"
+        jsonLd={[jsonLdSoftwareApp(), jsonLdBreadcrumb([{ name: 'Home', path: '/' }, { name: 'Features', path: '/features' }])]}
+      />
       <section className="bg-ink-950 relative overflow-hidden">
         <div className="absolute inset-0 pointer-events-none" aria-hidden>
           <div className="absolute -top-32 right-0 w-[480px] h-[480px] rounded-full bg-brix-600/25 blur-[140px]" />
@@ -127,22 +148,41 @@ export default function Features() {
         ))}
       </div>
 
-      <section className="bg-ink-950">
-        <div className="mx-auto max-w-3xl px-4 sm:px-6 py-20 text-center">
-          <h2 className="font-display text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
-            Ready to try it all for free?
-          </h2>
-          <p className="mt-4 text-slate-400">No card. No trial timer. Just your new chat platform.</p>
-          <div className="mt-8 flex flex-col sm:flex-row justify-center gap-3">
-            <Link to="/signup" className="px-8 py-3.5 font-semibold text-white rounded-xl bg-gradient-to-r from-brix-600 to-aqua-500 hover:opacity-90 transition">
-              Start free
-            </Link>
-            <Link to="/pricing" className="px-8 py-3.5 font-semibold text-white rounded-xl border border-white/20 hover:bg-white/10 transition">
-              See add-on pricing
-            </Link>
-          </div>
+      {/* comparison-style checklist (original wording, generic market view) */}
+      <section className="mx-auto max-w-5xl px-4 sm:px-6 pb-4" aria-label="How Brix Chat compares">
+        <h2 className="font-display text-2xl sm:text-3xl font-extrabold text-slate-900 text-center mb-3">
+          What "included" actually means here
+        </h2>
+        <p className="text-center text-slate-500 max-w-2xl mx-auto mb-8">
+          A plain comparison of what ships in the free core versus what typical chat suites reserve for paid tiers.
+        </p>
+        <div className="overflow-x-auto rounded-3xl border border-slate-200">
+          <table className="w-full text-sm min-w-[560px]">
+            <thead>
+              <tr className="bg-ink-950 text-left">
+                <th className="font-semibold text-slate-300 px-6 py-4">Capability</th>
+                <th className="font-semibold text-white px-4 py-4">Brix Chat core</th>
+                <th className="font-semibold text-slate-400 px-4 py-4">Typical alternatives</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {CHECKLIST.map((r) => (
+                <tr key={r.label} className="hover:bg-slate-50/60">
+                  <td className="px-6 py-3.5 text-slate-700 font-medium">{r.label}</td>
+                  <td className="px-4 py-3.5 text-emerald-700 font-semibold">{r.brix}</td>
+                  <td className="px-4 py-3.5 text-slate-400">{r.typical}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
+        <p className="mt-4 text-xs text-slate-400 text-center max-w-2xl mx-auto">
+          General market observation, not a claim about any specific vendor — plans change, and the details above
+          describe Brix Chat's own packaging.
+        </p>
       </section>
+
+      <CtaBand title="Ready to try it all for free?" sub="No card. No trial timer. Just your new chat platform." />
     </main>
   );
 }

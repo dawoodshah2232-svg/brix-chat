@@ -1,6 +1,7 @@
-// Brix Chat — marketing site chrome: header, footer, layout.
+// Brix Chat — marketing site chrome: header, footer, layout, shared page bits.
 
 import { useState } from 'react';
+import type { ReactNode } from 'react';
 import { Link, Outlet } from 'react-router-dom';
 import Logo from './Logo';
 import { cx } from '../lib/utils';
@@ -8,6 +9,8 @@ import { cx } from '../lib/utils';
 const NAV = [
   { to: '/features', label: 'Features' },
   { to: '/pricing', label: 'Pricing' },
+  { to: '/blog', label: 'Blog' },
+  { to: '/help', label: 'Help' },
 ];
 
 export function MarketingHeader() {
@@ -86,25 +89,30 @@ const COLS: Array<{ title: string; links: Array<{ label: string; to: string }> }
       { label: 'Features', to: '/features' },
       { label: 'Pricing', to: '/pricing' },
       { label: 'Live demo', to: '/widget' },
-      { label: 'AI copilot', to: '/features' },
+      { label: 'Security', to: '/security' },
+      { label: 'Status', to: '/status' },
+    ],
+  },
+  {
+    title: 'Resources',
+    links: [
+      { label: 'Blog', to: '/blog' },
+      { label: 'Help center', to: '/help' },
+      { label: 'Sitemap', to: '/sitemap' },
     ],
   },
   {
     title: 'Company',
     links: [
-      { label: 'About', to: '#' },
-      { label: 'Blog', to: '#' },
-      { label: 'Careers', to: '#' },
-      { label: 'Contact', to: '#' },
+      { label: 'About', to: '/about' },
+      { label: 'Contact', to: '/contact' },
     ],
   },
   {
     title: 'Legal',
     links: [
-      { label: 'Privacy', to: '#' },
-      { label: 'Terms', to: '#' },
-      { label: 'Security', to: '#' },
-      { label: 'Data processing', to: '#' },
+      { label: 'Privacy', to: '/privacy' },
+      { label: 'Terms', to: '/terms' },
     ],
   },
 ];
@@ -113,17 +121,17 @@ export function MarketingFooter() {
   return (
     <footer className="bg-ink-950 border-t border-white/10">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 py-14">
-        <div className="grid gap-10 md:grid-cols-[1.4fr_1fr_1fr_1fr]">
+        <div className="grid gap-10 md:grid-cols-[1.4fr_1fr_1fr_1fr_1fr]">
           <div>
             <Logo dark />
             <p className="mt-4 text-sm text-slate-400 max-w-xs leading-relaxed">
               Live chat that feels like it was designed this decade — free at its core, with AI that actually helps your
               team.
             </p>
-            <div className="mt-4 inline-flex items-center gap-2 text-xs font-medium text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 rounded-full px-3 py-1.5">
+            <Link to="/status" className="mt-4 inline-flex items-center gap-2 text-xs font-medium text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 rounded-full px-3 py-1.5 hover:bg-emerald-500/20 transition">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" aria-hidden />
               All systems operational
-            </div>
+            </Link>
           </div>
           {COLS.map((c) => (
             <nav key={c.title} aria-label={c.title}>
@@ -158,5 +166,45 @@ export function MarketingLayout() {
       </div>
       <MarketingFooter />
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Shared marketing page bits
+// ---------------------------------------------------------------------------
+
+export function PageHero({ kicker, title, sub }: { kicker: string; title: ReactNode; sub?: string }) {
+  return (
+    <section className="bg-ink-950 relative overflow-hidden">
+      <div className="absolute inset-0 pointer-events-none" aria-hidden>
+        <div className="absolute -top-32 right-0 w-[480px] h-[480px] rounded-full bg-brix-600/25 blur-[140px]" />
+      </div>
+      <div className="relative mx-auto max-w-7xl px-4 sm:px-6 py-16 sm:py-24">
+        <div className="text-xs font-bold uppercase tracking-widest text-aqua-400">{kicker}</div>
+        <h1 className="mt-3 font-display text-4xl sm:text-5xl font-extrabold tracking-tight text-white max-w-3xl">
+          {title}
+        </h1>
+        {sub && <p className="mt-4 text-lg text-slate-400 max-w-2xl">{sub}</p>}
+      </div>
+    </section>
+  );
+}
+
+export function CtaBand({ title = 'Ready to answer faster?', sub = 'No card. No trial timer. Just your new chat platform.' }: { title?: string; sub?: string }) {
+  return (
+    <section className="bg-ink-950">
+      <div className="mx-auto max-w-3xl px-4 sm:px-6 py-20 text-center">
+        <h2 className="font-display text-3xl sm:text-4xl font-extrabold text-white tracking-tight">{title}</h2>
+        <p className="mt-4 text-slate-400">{sub}</p>
+        <div className="mt-8 flex flex-col sm:flex-row justify-center gap-3">
+          <Link to="/signup" className="px-8 py-3.5 font-semibold text-white rounded-xl bg-gradient-to-r from-brix-600 to-aqua-500 hover:opacity-90 transition">
+            Start free
+          </Link>
+          <Link to="/pricing" className="px-8 py-3.5 font-semibold text-white rounded-xl border border-white/20 hover:bg-white/10 transition">
+            See pricing
+          </Link>
+        </div>
+      </div>
+    </section>
   );
 }

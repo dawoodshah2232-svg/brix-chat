@@ -1,0 +1,46 @@
+# Brix Chat
+
+> Brix Chat is a live-chat platform for websites: an embeddable chat widget, a real-time agent dashboard, and an AI reply copilot. Free core plan, unlimited agents, no per-seat fees on core.
+
+## What it does
+
+- Website chat widget: one script tag, customizable color/position/launcher, multilingual.
+- Agent dashboard: shared inbox, visitor list, contacts/CRM-lite, canned responses, internal notes, tags, assignment, priorities.
+- AI copilot: draft replies, thread summaries, translation; rule-based locally, pluggable providers (OpenAI/Anthropic) for the backend phase.
+- Automation: multi-step plays (macros), goal tracking with revenue attribution, visual trigger/workflow builder, proactive chat campaigns.
+- Support ops: tickets with SLA, knowledge base, help center, status page, contact inbox.
+- Integrations: 10-provider registry (WhatsApp, Twilio, Resend, Slack, Shopify, WordPress, Zapier, Google Calendar, OpenAI, Anthropic); provider keys are local-only until the backend phase.
+- Developer surface: scoped API keys, signed webhooks with delivery log + test fire, JS widget API (identify/track/open/prefill), JSON export/import.
+
+## Key pages
+
+- Home: https://brixchat.com/
+- Features: https://brixchat.com/features
+- Pricing: https://brixchat.com/pricing
+- Blog: https://brixchat.com/blog
+- Help center: https://brixchat.com/help
+- About: https://brixchat.com/about
+- Contact: https://brixchat.com/contact
+- Security: https://brixchat.com/security
+- Status: https://brixchat.com/status
+- Privacy: https://brixchat.com/privacy
+- Terms: https://brixchat.com/terms
+- HTML sitemap: https://brixchat.com/sitemap
+
+## Feature list
+
+Live chat widget, real-time agent inbox, visitor monitoring, contacts, canned responses with variables, internal notes, tags, assignment, priorities, departments, business hours, pre-chat and offline forms, blocked visitors, triggers/workflows, campaigns, plays (multi-step macros), goals and funnel analytics, tickets with SLA, knowledge base, AI copilot (drafts/summaries/translate), integrations, unanswered-question queue, API keys, webhooks, audit log, data export/import, session and passcode policies, status page.
+
+## API and webhooks
+
+- REST-shaped local API: conversations, visitors, contacts, tickets, campaigns, plays, goals, blog, help docs, contact messages, status entries, members, property settings, copilot/security/data settings, integrations, unanswered questions, audit search, data export/import/reset.
+- Webhook events include: message.created, conversation.*, ticket.created, ticket.sla_breached, campaign.sent, goal.completed, contact.created, widget.rating, and more. Payloads are HMAC-signed (X-Brix-Signature); the admin console shows a delivery log and can test-fire the exact signed payload.
+- Docs: https://brixchat.com/help/api-keys, https://brixchat.com/help/webhooks
+
+## What Brix Chat is not
+
+- Not a fully autonomous AI agent: the copilot drafts and assists, humans stay in charge of replies.
+- Not a hosted backend yet: the current build runs fully in the browser (localStorage); API keys and webhooks are configured locally and go live with the backend phase.
+- Not a CRM replacement: contacts are lightweight visitor profiles, not a full sales pipeline.
+- Not a review platform: we publish no customer reviews or ratings of our own product.
+- Not a guarantee of rankings, traffic, or support outcomes; it is tooling, and results depend on the team using it.

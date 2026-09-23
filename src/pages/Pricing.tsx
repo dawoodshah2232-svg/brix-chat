@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { cx } from '../lib/utils';
+import { Seo, jsonLdFaq, jsonLdSoftwareApp, jsonLdBreadcrumb } from '../lib/seo';
 
 const ADDONS = [
   {
@@ -44,14 +45,17 @@ const ROWS: Array<{ label: string; free: string; whitelabel: string; ai: string;
 
 const PRICING_FAQ = [
   {
+    id: 'what-free-includes',
     q: 'What does “free forever” actually include?',
     a: 'Everything in the comparison table’s Free column: unlimited agents, sites and history, the full widget, dashboard, triggers, campaigns, knowledge base, ticketing and analytics. Add-ons are strictly optional.',
   },
   {
+    id: 'add-remove-addons',
     q: 'Can I add or remove add-ons anytime?',
     a: 'Yes. Add-ons are month-to-month, per account (not per site). Remove one and you keep it until the end of the billing period — the free core keeps working either way.',
   },
   {
+    id: 'ai-packs-work',
     q: 'How do AI packs work?',
     a: 'The free core ships with a starter allowance of AI resolutions each month — enough for most small teams. When you outgrow it, packs scale with your volume instead of your headcount, so adding agents never raises the bill.',
   },
@@ -61,6 +65,16 @@ export default function Pricing() {
   const [open, setOpen] = useState<number | null>(0);
   return (
     <main>
+      <Seo
+        title="Pricing — Brix Chat"
+        description="Brix Chat pricing: a free core with unlimited agents, sites and history — plus honest flat add-ons: white-label, AI packs, voice + video."
+        path="/pricing"
+        jsonLd={[
+          jsonLdSoftwareApp(),
+          jsonLdFaq(PRICING_FAQ.map((f) => ({ q: f.q, a: f.a }))),
+          jsonLdBreadcrumb([{ name: 'Home', path: '/' }, { name: 'Pricing', path: '/pricing' }]),
+        ]}
+      />
       <section className="bg-ink-950 relative overflow-hidden">
         <div className="absolute inset-0 pointer-events-none" aria-hidden>
           <div className="absolute -top-32 left-1/4 w-[480px] h-[480px] rounded-full bg-aqua-500/15 blur-[140px]" />
@@ -148,12 +162,12 @@ export default function Pricing() {
       </section>
 
       {/* faq */}
-      <section className="bg-slate-50 py-20">
+      <section id="faq" className="bg-slate-50 py-20" aria-label="Pricing questions">
         <div className="mx-auto max-w-3xl px-4 sm:px-6">
           <h2 className="font-display text-2xl sm:text-3xl font-extrabold text-slate-900 text-center mb-8">Pricing questions</h2>
           <div className="divide-y divide-slate-200 border-y border-slate-200">
             {PRICING_FAQ.map((f, i) => (
-              <div key={f.q}>
+              <div key={f.q} id={f.id} className="scroll-mt-24">
                 <button
                   onClick={() => setOpen(open === i ? null : i)}
                   className="w-full flex items-center justify-between gap-4 py-5 text-left"
