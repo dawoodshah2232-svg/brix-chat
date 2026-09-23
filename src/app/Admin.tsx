@@ -23,6 +23,10 @@ import type {
   TeamRole,
   WidgetConfig,
   ApiIntegration,
+  ApiConversation,
+  ApiTicket,
+  ApiContact,
+  ApiCanned,
 } from '../lib/api';
 import { Badge, Button, Card, EmptyState, Input, Label, Modal, Select, StatCard, Textarea, Toggle, useConfirm } from '../components/ui';
 import { cx } from '../lib/utils';
@@ -52,8 +56,18 @@ import type {
   BlogSeed,
   HelpSeed,
 } from '../lib/contentSeed';
+// Phase-4 admin elevation kit (all local, no new deps).
+import { ToastProvider, useToast } from '../components/admin/toast';
+import { Sparkline, LineChart, BarChart, Donut, ProgressRing } from '../components/admin/charts';
+import { SavedFilterBar } from '../components/admin/savedFilters';
+import { useAdminShortcuts, ShortcutsHelpModal } from '../components/admin/shortcuts';
+import { ImportModal, exportCSV, exportJSON } from '../components/admin/importExport';
+import { AdminCommandPalette, collectAdminSearchItems } from '../components/admin/search';
+import type { SearchItem, AdminTabId } from '../components/admin/search';
+import { ScheduledReportsPanel } from '../components/admin/reports';
+import { BrandPreviewPanel } from '../components/admin/brandPreview';
 
-type Tab = 'overview' | 'content' | 'properties' | 'branding' | 'ratings' | 'departments' | 'keys' | 'integrations' | 'webhooks' | 'team' | 'audit' | 'install';
+type Tab = 'overview' | 'content' | 'properties' | 'branding' | 'ratings' | 'departments' | 'keys' | 'integrations' | 'webhooks' | 'team' | 'audit' | 'reports' | 'install';
 
 const TABS: Array<{ id: Tab; label: string; icon: string }> = [
   { id: 'overview', label: 'Overview', icon: '📊' },
@@ -67,6 +81,7 @@ const TABS: Array<{ id: Tab; label: string; icon: string }> = [
   { id: 'webhooks', label: 'Webhooks', icon: '🪝' },
   { id: 'team', label: 'Team', icon: '👥' },
   { id: 'audit', label: 'Audit log', icon: '📜' },
+  { id: 'reports', label: 'Reports', icon: '📈' },
   { id: 'install', label: 'Install', icon: '🧩' },
 ];
 
@@ -168,6 +183,57 @@ function missingP2(e: unknown): boolean {
 function useP2() {
   const api = useApi();
   return useMemo(() => asP2(api), [api]);
+}
+
+/** Flash-highlight a row when the command palette jumps to it. Returns the
+ *  currently-flashing row id (or null). Rows opt in via id={`row-${id}`}. */
+function useRowFlash(highlightId: string | undefined, nonce: number): string | null {
+  const [flash, setFlash] = useState<string | null>(null);
+  useEffect(() => {
+    if (!highlightId) return;
+    setFlash(highlightId);
+    const t1 = setTimeout(() => {
+      document.getElementById(`row-${highlightId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 120);
+    const t2 = setTimeout(() => setFlash(null), 4000);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, [highlightId, nonce]);
+  return flash;
+}
+
+const FLASH_CLS = 'ring-2 ring-brix-400 shadow-lg shadow-brix-100';
+
+/** Stat card with a mini sparkline trend. */
+function MetricCard({ label, value, icon, spark, sparkColor, sub }: {
+  label: string; value: string; icon: string; spark?: number[]; sparkColor?: string; sub?: string;
+}) {
+  return (
+    <Card className="p-4">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="text-[11px] font-bold uppercase tracking-widest text-slate-400">{label}</div>
+          <div className="text-2xl font-black text-slate-900 mt-1 flex items-center gap-2">
+            <span className="text-lg">{icon}</span>{value}
+          </div>
+          {sub && <div className="text-[11px] text-slate-400 mt-0.5">{sub}</div>}
+        </div>
+        {spark && spark.length > 0 && <Sparkline values={spark} color={sparkColor} className="mt-1 shrink-0" />}
+      </div>
+    </Card>
+  );
+}
+
+/** Checkbox for bulk selection rows. */
+function RowCheck({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
+  return (
+    <input
+      type="checkbox"
+      checked={checked}
+      onChange={(e) => onChange(e.target.checked)}
+      aria-label={label}
+      className="w-4 h-4 rounded accent-brix-600 shrink-0 cursor-pointer"
+    />
+  );
 }
 
 // ---- Category source (api.categories.*) ------------------------------------
@@ -1377,101 +1443,364 @@ function InstallTab() {
 // Overview — metric cards + setup checklist (spec T1.11)
 // ---------------------------------------------------------------------------
 
-function OverviewTab({ go }: { go: (t: Tab) => void }) {
+// ---------------------------------------------------------------------------
+// Overview — setup health center + live operations monitor (P4-14).
+// ---------------------------------------------------------------------------
+
+function dayKey(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+function lastNDayKeys(n: number): string[] {
+  const out: string[] = [];
+  for (let i = n - 1; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    out.push(dayKey(d));
+  }
+  return out;
+}
+
+function fmtWait(ms: number): string {
+  const m = Math.floor(ms / 60000);
+  if (m < 1) return '<1m';
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m`;
+}
+
+/** P4-14 — Live operations monitor. Auto-refreshes every 5s and on window
+ *  focus; honest label: local mode, no server push. */
+function LiveOpsPanel() {
   const api = useApi();
   const p2 = useP2();
-  const [stats, setStats] = useState({ props: 0, members: 0, openTickets: 0, posts: 0, articles: 0, unreadContact: 0 });
+  const [members, setMembers] = useState<ApiMember2[]>([]);
+  const [convs, setConvs] = useState<ApiConversation[]>([]);
+  const [events, setEvents] = useState<AuditEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = async () => {
+    try {
+      const [mRes, cRes, aRes] = await Promise.all([
+        p2.members.list().catch(() => ({ data: { items: [] as ApiMember2[] } })),
+        api.conversations.list({ limit: 200 }).catch(() => ({ data: { items: [] as ApiConversation[] } })),
+        api.auditLog.list({ limit: 8 }).catch(() => ({ data: { items: [] as AuditEntry[] } })),
+      ]);
+      setMembers(itemsOf(mRes.data));
+      setConvs(itemsOf(cRes.data));
+      setEvents(itemsOf(aRes.data));
+    } catch { /* best-effort */ }
+    finally { setLoading(false); }
+  };
+
+  useEffect(() => {
+    void load();
+    const t = setInterval(load, 5000);
+    const onFocus = () => void load();
+    window.addEventListener('focus', onFocus);
+    return () => { clearInterval(t); window.removeEventListener('focus', onFocus); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const open = convs.filter((c) => c.status === 'open');
+  const unassigned = open.filter((c) => !c.agent_id);
+  const longest = unassigned.reduce((mx, c) => Math.max(mx, Date.now() - new Date(c.created_at).getTime()), 0);
+  const groups = {
+    online: members.filter((m) => m.status === 'online'),
+    away: members.filter((m) => m.status === 'away'),
+    offline: members.filter((m) => m.status !== 'online' && m.status !== 'away'),
+  };
+  const chatsFor = (name: string) => open.filter((c) => c.agent_name === name).length;
+  const dot = (s: string) => (s === 'online' ? 'bg-emerald-500' : s === 'away' ? 'bg-amber-400' : 'bg-slate-300');
+
+  const pulse = (
+    <span className="relative flex h-2.5 w-2.5">
+      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
+    </span>
+  );
+
+  return (
+    <Card className="p-5 mb-6">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+        <h3 className="font-bold text-slate-900 flex items-center gap-2">{pulse} Live operations</h3>
+        <span className="text-[11px] font-semibold text-slate-400">updates as you work — local mode, no server push</span>
+      </div>
+      <p className="text-xs text-slate-400 mb-4">Refreshing every 5 seconds from this browser's data.</p>
+
+      {loading ? (
+        <p className="text-sm text-slate-400 py-4">Loading live state…</p>
+      ) : (
+        <div className="grid lg:grid-cols-3 gap-5">
+          <div>
+            <div className="text-[11px] font-black uppercase tracking-widest text-slate-400 mb-2">Queue</div>
+            <div className="flex gap-4 mb-4">
+              <div>
+                <div className="text-3xl font-black text-slate-900">{unassigned.length}</div>
+                <div className="text-[11px] text-slate-400 font-semibold">unassigned chats</div>
+              </div>
+              <div>
+                <div className="text-3xl font-black text-slate-900">{open.length}</div>
+                <div className="text-[11px] text-slate-400 font-semibold">open total</div>
+              </div>
+              <div>
+                <div className={cx('text-3xl font-black', unassigned.length > 0 && longest > 5 * 60000 ? 'text-rose-600' : 'text-slate-900')}>
+                  {unassigned.length > 0 ? fmtWait(longest) : '—'}
+                </div>
+                <div className="text-[11px] text-slate-400 font-semibold">longest wait</div>
+              </div>
+            </div>
+            {unassigned.length > 0 && (
+              <div className="space-y-1.5 max-h-32 overflow-auto slim-scroll">
+                {unassigned.slice(0, 5).map((c) => (
+                  <div key={c.id} className="text-xs text-slate-600 flex justify-between gap-2 rounded-lg bg-slate-50 px-2.5 py-1.5">
+                    <span className="font-semibold truncate">{c.visitor_name || 'Visitor'}</span>
+                    <span className="font-mono text-slate-400 shrink-0">waiting {fmtWait(Date.now() - new Date(c.created_at).getTime())}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div>
+            <div className="text-[11px] font-black uppercase tracking-widest text-slate-400 mb-2">Team presence</div>
+            {(['online', 'away', 'offline'] as const).map((g) => (
+              <div key={g} className="mb-2.5">
+                <div className="text-[11px] font-bold text-slate-400 capitalize mb-1">{g} ({groups[g].length})</div>
+                {groups[g].length === 0 ? (
+                  <p className="text-[11px] text-slate-300">—</p>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5">
+                    {groups[g].map((m) => (
+                      <span key={m.id} className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 pl-2 pr-2.5 py-1 text-xs font-semibold text-slate-700" title={`${chatsFor(m.display_name)} open chats`}>
+                        <span className={cx('w-2 h-2 rounded-full', dot(m.status))} />
+                        {m.display_name}
+                        <span className="font-mono text-slate-400">{chatsFor(m.display_name)}</span>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          <div>
+            <div className="text-[11px] font-black uppercase tracking-widest text-slate-400 mb-2">Recent events</div>
+            {events.length === 0 ? (
+              <p className="text-xs text-slate-400">No admin activity yet.</p>
+            ) : (
+              <ul className="space-y-1.5 max-h-44 overflow-auto slim-scroll">
+                {events.map((e) => (
+                  <li key={e.id} className="text-xs text-slate-600 rounded-lg bg-slate-50 px-2.5 py-1.5">
+                    <span className="font-bold text-slate-800">{e.actor}</span>{' '}
+                    <span className="font-mono text-[11px]">{e.action}</span>
+                    <span className="block text-[10px] text-slate-400">{fmtDate(e.created_at)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function OverviewTab({ jumpTo }: { jumpTo: (t: Tab, id?: string) => void }) {
+  const api = useApi();
+  const p2 = useP2();
+  const [stats, setStats] = useState({ props: 0, members: 0, openTickets: 0, posts: 0, articles: 0, unreadContact: 0, depts: 0 });
   const [csat, setCsat] = useState<number | null>(null);
   const [nps, setNps] = useState<number | null>(null);
   const [branded, setBranded] = useState(false);
+  const [convSpark, setConvSpark] = useState<number[]>([]);
+  const [convLabels, setConvLabels] = useState<string[]>([]);
+  const [ticketSpark, setTicketSpark] = useState<number[]>([]);
+  const [csatSpark, setCsatSpark] = useState<number[]>([]);
+  const [failingHooks, setFailingHooks] = useState<ApiWebhook[]>([]);
+  const [idleKeys, setIdleKeys] = useState(0);
+  const [ticketSplit, setTicketSplit] = useState<Array<{ label: string; value: number }>>([]);
 
   useEffect(() => {
     (async () => {
       try {
-        const [{ data: props }, { data: members }, tickets, { data: posts }, { data: articles }, { data: cm }] = await Promise.all([
+        const [{ data: props }, { data: members }, ticketsRes, { data: posts }, { data: articles }, { data: cm }, convRes, hookRes, keyRes] = await Promise.all([
           api.properties.list(),
           p2.members.list(),
-          api.tickets.list({ status: 'open' }).catch(() => ({ data: { items: [] as unknown[] } })),
+          api.tickets.list({ limit: 200 }).catch(() => ({ data: { items: [] as ApiTicket[] } })),
           p2.blog.list(false).catch(() => ({ data: [] as unknown[] })),
           p2.helpDocs.list().catch(() => ({ data: [] as unknown[] })),
           p2.contactMessages.list().catch(() => ({ data: [] as ApiContactMessage2[] })),
+          api.conversations.list({ limit: 200 }).catch(() => ({ data: { items: [] as ApiConversation[] } })),
+          api.webhooks.list().catch(() => ({ data: [] as ApiWebhook[] })),
+          api.apiKeys.list().catch(() => ({ data: [] as Array<{ usage_count: number; revoked: boolean }> })),
         ]);
         const propList = itemsOf(props);
+        const tickets = itemsOf(ticketsRes.data);
+        const convs = itemsOf(convRes.data);
         setStats({
           props: propList.length,
           members: itemsOf(members).length,
-          openTickets: itemsOf(tickets.data).length,
+          openTickets: tickets.filter((t) => t.status !== 'resolved').length,
           posts: itemsOf(posts).length,
           articles: itemsOf(articles).length,
           unreadContact: itemsOf(cm).filter((m: ApiContactMessage2) => !m.read).length,
+          depts: 0,
         });
+        setTicketSplit(['new', 'open', 'resolved'].map((s) => ({ label: s, value: tickets.filter((t) => t.status === s).length })));
+
+        // 14-day buckets.
+        const days = lastNDayKeys(14);
+        setConvLabels(days.map((d) => d.slice(5)));
+        setConvSpark(days.map((d) => convs.filter((c) => dayKey(new Date(c.created_at)) === d).length));
+        setTicketSpark(days.map((d) => tickets.filter((t) => dayKey(new Date(t.created_at)) === d).length));
+
+        // Ratings (first property, 30d).
         const first = propList[0];
         if (first) {
           try {
             const { data: s } = await p2.ratings.summary(first.id, 30);
             setCsat(s.csat_avg);
             setNps(s.nps_score);
+            const trend = (s.trend ?? []) as Array<{ day: string; csat_avg: number | null }>;
+            const byDay = new Map(trend.map((t) => [t.day, t.csat_avg]));
+            setCsatSpark(days.map((d) => byDay.get(d) ?? 0));
           } catch { /* ratings optional */ }
           try {
             const { data: ps } = await p2.propertySettings.get(first.id);
             setBranded(!!(ps.logo_data_url || (ps.brand_name && ps.brand_name !== 'Brix Chat')));
           } catch { /* branding optional */ }
+          try {
+            const hasDepts = typeof (p2 as unknown as { departments?: unknown }).departments !== 'undefined';
+            if (hasDepts) {
+              const { data: deps } = await (p2 as unknown as { departments: { list: (pid: string) => Promise<{ data: unknown[] }> } }).departments.list(first.id);
+              setStats((s0) => ({ ...s0, depts: (deps as unknown[]).length }));
+            }
+          } catch { /* departments optional */ }
         }
+
+        setFailingHooks(hookRes.data.filter((w) => w.consecutive_failures > 0));
+        setIdleKeys(keyRes.data.filter((k) => k.usage_count === 0 && !k.revoked).length);
       } catch { /* overview is best-effort */ }
     })();
-  }, [api, p2]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const checklist: Array<{ done: boolean; label: string; hint: string; tab: Tab }> = [
     { done: stats.props > 0, label: 'Property created', hint: 'A website connected to Brix Chat.', tab: 'properties' },
     { done: branded, label: 'Branding set', hint: 'Logo and brand name replace Brix Chat defaults.', tab: 'branding' },
+    { done: stats.depts > 0, label: 'Departments set up', hint: 'Route chats to the right team.', tab: 'departments' },
     { done: stats.members > 1, label: 'Team invited', hint: 'More than one member in the workspace.', tab: 'team' },
     { done: stats.articles > 0, label: 'Help center stocked', hint: 'At least one help article published.', tab: 'content' },
     { done: csat !== null, label: 'First rating received', hint: 'A visitor completed the chat survey.', tab: 'ratings' },
   ];
   const doneCount = checklist.filter((c) => c.done).length;
+  const pct = Math.round((doneCount / checklist.length) * 100);
+
+  const actions: Array<{ label: string; hint: string; tab: Tab; id?: string; tone: 'rose' | 'amber' }> = [];
+  if (stats.props === 0) actions.push({ label: 'No properties yet', hint: 'Add your first website to install the widget.', tab: 'properties', tone: 'rose' });
+  if (stats.props > 0 && stats.depts === 0) actions.push({ label: 'No departments yet', hint: 'Create one so chats route to the right team.', tab: 'departments', tone: 'amber' });
+  if (failingHooks.length > 0) actions.push({ label: `${failingHooks.length} webhook${failingHooks.length === 1 ? '' : 's'} failing`, hint: 'Consecutive delivery failures — inspect the log.', tab: 'webhooks', id: failingHooks[0].id, tone: 'rose' });
+  if (idleKeys > 0) actions.push({ label: `${idleKeys} API key${idleKeys === 1 ? '' : 's'} never used`, hint: 'Review or revoke idle keys.', tab: 'keys', tone: 'amber' });
+  if (stats.members <= 1) actions.push({ label: 'Team is just you', hint: 'Invite members to share the load.', tab: 'team', tone: 'amber' });
 
   return (
     <div>
-      <SectionTitle title="Overview" sub="Workspace health at a glance." />
+      <SectionTitle title="Setup health" sub="Workspace health at a glance. Deep-links jump straight to the fix." />
+
+      <LiveOpsPanel />
+
       <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <StatCard label="Properties" value={String(stats.props)} icon="🌐" tone="indigo" />
-        <StatCard label="Team members" value={String(stats.members)} icon="👥" tone="cyan" />
-        <StatCard label="Open tickets" value={String(stats.openTickets)} icon="🎫" tone="amber" />
-        <StatCard label="CSAT (30d)" value={csat !== null ? `${csat.toFixed(1)} / 5` : '—'} icon="⭐" tone="green" />
-        <StatCard label="NPS (30d)" value={nps !== null ? String(Math.round(nps)) : '—'} icon="📊" tone="indigo" />
-        <StatCard label="Blog posts" value={String(stats.posts)} icon="✍️" tone="cyan" />
-        <StatCard label="Help articles" value={String(stats.articles)} icon="📖" tone="green" />
-        <StatCard label="Unread contact mail" value={String(stats.unreadContact)} icon="✉️" tone="rose" />
+        <MetricCard label="Chats · 14d" value={String(convSpark.reduce((a, b) => a + b, 0))} icon="💬" spark={convSpark} sparkColor="#e11d48" sub="conversations started" />
+        <MetricCard label="Open tickets" value={String(stats.openTickets)} icon="🎫" spark={ticketSpark} sparkColor="#f59e0b" sub="not resolved" />
+        <MetricCard label="CSAT · 30d" value={csat !== null ? `${csat.toFixed(1)} / 5` : '—'} icon="⭐" spark={csatSpark} sparkColor="#10b981" sub="daily average" />
+        <MetricCard label="NPS · 30d" value={nps !== null ? String(Math.round(nps)) : '—'} icon="📊" sub={`${stats.unreadContact} unread contact mail`} />
       </div>
 
-      <Card className="p-5">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="font-bold text-slate-900">Setup checklist</h3>
-          <span className="text-xs font-bold text-slate-500">{doneCount} of {checklist.length} done</span>
-        </div>
-        <div className="h-2 rounded-full bg-slate-100 overflow-hidden mb-5">
-          <div className="h-full rounded-full bg-gradient-to-r from-brix-500 to-cyan-400 transition-all" style={{ width: `${(doneCount / checklist.length) * 100}%` }} />
-        </div>
-        <div className="space-y-2.5">
-          {checklist.map((c) => (
-            <button key={c.label} onClick={() => go(c.tab)} className="w-full flex items-center gap-3 rounded-xl border border-slate-100 px-4 py-3 hover:border-brix-200 hover:bg-brix-50/50 text-left transition">
-              <span className={cx('w-6 h-6 rounded-full grid place-items-center text-sm font-bold shrink-0', c.done ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-400')}>
-                {c.done ? '✓' : '·'}
-              </span>
-              <span className="flex-1">
-                <span className="block text-sm font-bold text-slate-800">{c.label}</span>
-                <span className="block text-xs text-slate-400">{c.hint}</span>
-              </span>
-              {!c.done && <span className="text-xs font-bold text-brix-600">Set up →</span>}
-            </button>
-          ))}
-        </div>
-      </Card>
+      <div className="grid lg:grid-cols-5 gap-5 mb-6">
+        <Card className="p-5 lg:col-span-3">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-bold text-slate-900">Setup checklist</h3>
+            <span className="text-xs font-bold text-slate-500">{doneCount} of {checklist.length} done</span>
+          </div>
+          <div className="flex items-center gap-5 mb-5">
+            <ProgressRing pct={pct} />
+            <div className="h-2.5 flex-1 rounded-full bg-slate-100 overflow-hidden">
+              <div className="h-full rounded-full bg-gradient-to-r from-brix-500 to-cyan-400 transition-all" style={{ width: `${pct}%` }} />
+            </div>
+          </div>
+          <div className="space-y-2.5">
+            {checklist.map((c) => (
+              <button key={c.label} onClick={() => jumpTo(c.tab)} className="w-full flex items-center gap-3 rounded-xl border border-slate-100 px-4 py-3 hover:border-brix-200 hover:bg-brix-50/50 text-left transition">
+                <span className={cx('w-6 h-6 rounded-full grid place-items-center text-sm font-bold shrink-0', c.done ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-400')}>
+                  {c.done ? '✓' : '·'}
+                </span>
+                <span className="flex-1">
+                  <span className="block text-sm font-bold text-slate-800">{c.label}</span>
+                  <span className="block text-xs text-slate-400">{c.hint}</span>
+                </span>
+                {!c.done && <span className="text-xs font-bold text-brix-600">Set up →</span>}
+              </button>
+            ))}
+          </div>
+        </Card>
+
+        <Card className="p-5 lg:col-span-2">
+          <h3 className="font-bold text-slate-900 mb-1">Needs attention</h3>
+          <p className="text-xs text-slate-500 mb-4">Actionable items — click to jump to the fix.</p>
+          {actions.length === 0 ? (
+            <div className="rounded-2xl bg-emerald-50 border border-emerald-200 px-4 py-6 text-center">
+              <div className="text-2xl mb-1">✅</div>
+              <p className="text-sm font-bold text-emerald-900">All clear</p>
+              <p className="text-xs text-emerald-700 mt-1">Nothing needs your attention right now.</p>
+            </div>
+          ) : (
+            <div className="space-y-2.5">
+              {actions.map((a) => (
+                <button
+                  key={a.label}
+                  onClick={() => jumpTo(a.tab, a.id)}
+                  className={cx(
+                    'w-full flex items-center gap-3 rounded-xl border px-4 py-3 text-left transition',
+                    a.tone === 'rose' ? 'border-rose-200 bg-rose-50/60 hover:border-rose-300' : 'border-amber-200 bg-amber-50/60 hover:border-amber-300',
+                  )}
+                >
+                  <span className="text-lg">{a.tone === 'rose' ? '🚨' : '⚠️'}</span>
+                  <span className="flex-1">
+                    <span className="block text-sm font-bold text-slate-800">{a.label}</span>
+                    <span className="block text-xs text-slate-500">{a.hint}</span>
+                  </span>
+                  <span className="text-xs font-bold text-brix-600 shrink-0">Fix →</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </Card>
+      </div>
+
+      <div className="grid lg:grid-cols-2 gap-5">
+        <Card className="p-5">
+          <h3 className="font-bold text-slate-900 mb-1">Conversations · last 14 days</h3>
+          <p className="text-xs text-slate-500 mb-4">Chats started per day.</p>
+          <BarChart data={convLabels.map((l, i) => ({ label: l, value: convSpark[i] ?? 0 }))} height={170} />
+        </Card>
+        <Card className="p-5">
+          <h3 className="font-bold text-slate-900 mb-1">Tickets by status</h3>
+          <p className="text-xs text-slate-500 mb-4">Current ticket pipeline.</p>
+          <Donut
+            segments={[
+              { label: 'New', value: ticketSplit.find((t) => t.label === 'new')?.value ?? 0, color: '#22d3ee' },
+              { label: 'Open', value: ticketSplit.find((t) => t.label === 'open')?.value ?? 0, color: '#f59e0b' },
+              { label: 'Resolved', value: ticketSplit.find((t) => t.label === 'resolved')?.value ?? 0, color: '#10b981' },
+            ]}
+            centerValue={String(ticketSplit.reduce((a, t) => a + t.value, 0))}
+            centerLabel="tickets"
+          />
+        </Card>
+      </div>
     </div>
   );
 }
-
-// ---------------------------------------------------------------------------
 // Content — blog posts, help articles (+ KB categories), contact inbox, status
 // ---------------------------------------------------------------------------
 

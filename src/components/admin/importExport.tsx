@@ -3,7 +3,7 @@
 // and download helpers. No dependencies.
 
 import { useState } from 'react';
-import { Button, Input, Label, Modal } from '../ui';
+import { Button, Label, Modal } from '../ui';
 import { cx } from '../../lib/utils';
 
 /** Parse CSV text into rows (arrays of strings). Handles quoted fields. */
@@ -89,7 +89,7 @@ export interface ImportRowError {
  * Generic import modal: file picker → parse CSV or JSON → validate rows →
  * show row-level errors → import the valid ones.
  */
-export function ImportModal<T>({
+export function ImportModal({
   open,
   onClose,
   title,

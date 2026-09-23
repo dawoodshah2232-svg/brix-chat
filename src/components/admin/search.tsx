@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Modal, Badge } from '../ui';
 import { cx } from '../../lib/utils';
-import type { BrixApi } from '../../lib/api';
+import type { BrixApi, ApiTicket, ApiContact, ApiCanned } from '../../lib/api';
 
 export type AdminTabId =
   | 'overview' | 'content' | 'properties' | 'branding' | 'ratings' | 'departments'
@@ -57,14 +57,14 @@ export async function collectAdminSearchItems(api: BrixApi, p2: any): Promise<Se
   for (const c of ok(results[4], [])) {
     push({ kind: 'Canned', id: c.id, title: c.title, subtitle: c.shortcut || c.body.slice(0, 60), tab: 'content' });
   }
-  for (const t of arr(ok(results[5], { items: [] }))) {
+  for (const t of arr(ok(results[5], { items: [] as ApiTicket[] }))) {
     push({ kind: 'Ticket', id: t.id, title: t.subject, subtitle: `${t.status} · ${t.priority}`, tab: 'team' });
   }
-  for (const c of arr(ok(results[6], { items: [] }))) {
+  for (const c of arr(ok(results[6], { items: [] as ApiContact[] }))) {
     push({ kind: 'Contact', id: c.id, title: c.name || c.email, subtitle: c.email || c.phone || '', tab: 'content' });
   }
-  for (const a of arr(ok(results[7], []))) {
-    push({ kind: 'Article', id: (a as any).id, title: (a as any).title, subtitle: (a as any).category ?? '', tab: 'content' });
+  for (const a of arr(ok(results[7], [] as Array<{ id: string; title: string; category?: string }>))) {
+    push({ kind: 'Article', id: a.id, title: a.title, subtitle: a.category ?? '', tab: 'content' });
   }
   return items;
 }
