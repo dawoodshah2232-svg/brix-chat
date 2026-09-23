@@ -101,6 +101,7 @@ export interface ApiProperty {
   public_key: string;
   widget_config: WidgetConfig;
   secure_mode: boolean;
+  enabled: boolean; // disabled properties are hidden from widgets/checklists (local flag)
   created_at: string;
 }
 
@@ -123,6 +124,7 @@ export interface ApiAgent {
   display_name: string;
   role: TeamRole;
   online: boolean;
+  active: boolean; // deactivated members are locked out and excluded from the team list actions
   passcode: string; // local-only: shown once at invite, stored in this browser
   created_at: string;
   last_login_at: string | null;
@@ -795,15 +797,15 @@ function seedDB(): ApiDB {
   const departments = seedDepartments(propId, members);
   if (members[0]) members[0].department_ids = departments.map((d) => d.id);
   const agents: ApiAgent[] = [
-    { id: uid('ag'), display_name: 'Demo Agent', role: 'admin', online: true, passcode: '3456', created_at: now, last_login_at: now },
-    { id: uid('ag'), display_name: 'Layla Haddad', role: 'agent', online: false, passcode: '220131', created_at: now, last_login_at: null },
+    { id: uid('ag'), display_name: 'Demo Agent', role: 'admin', online: true, active: true, passcode: '3456', created_at: now, last_login_at: now },
+    { id: uid('ag'), display_name: 'Layla Haddad', role: 'agent', online: false, active: true, passcode: '220131', created_at: now, last_login_at: null },
   ];
 
   return {
     properties: [
       {
         id: propId, name: 'Demo Store', domain: 'demo.brixchat.com', public_key: 'bx_demo_7f3a9c1e',
-        widget_config: defaultWidgetConfig(), secure_mode: false, created_at: now,
+        widget_config: defaultWidgetConfig(), secure_mode: false, enabled: true, created_at: now,
       },
     ],
     conversations: convs,
@@ -1018,12 +1020,13 @@ export class BrixApi {
   // ---- properties ---------------------------------------------------------
   properties = {
     list: async (): Promise<Envelope<ApiProperty[]>> => {
-      return { data: this.db().properties };
+      // Normalize legacy localStorage rows (pre-enabled era) to enabled.
+      return { data: this.db().properties.map((p) => ({ ...p, enabled: p.enabled ?? true })) };
     },
     get: async (id: string): Promise<Envelope<ApiProperty>> => {
       const p = this.db().properties.find((x) => x.id === id);
       if (!p) throw this.notFound('Property', id);
-      return { data: p };
+      return { data: { ...p, enabled: p.enabled ?? true } };
     },
     getByPublicKey: async (publicKey: string): Promise<Envelope<ApiProperty>> => {
       const p = this.db().properties.find((x) => x.public_key === publicKey);
@@ -1036,14 +1039,14 @@ export class BrixApi {
       const p: ApiProperty = {
         id: uid('prop'), name: input.name.trim(), domain: (input.domain ?? '').trim(),
         public_key: `bx_${randomHex(9)}`, widget_config: defaultWidgetConfig(),
-        secure_mode: false, created_at: isoNow(),
+        secure_mode: false, enabled: true, created_at: isoNow(),
       };
       db.properties.unshift(p);
       this.logAudit(db, 'property.created', 'property', p.id, { name: p.name });
       this.save(db);
       return { data: p };
     },
-    update: async (id: string, patch: Partial<Pick<ApiProperty, 'name' | 'domain' | 'secure_mode'>>): Promise<Envelope<ApiProperty>> => {
+    update: async (id: string, patch: Partial<Pick<ApiProperty, 'name' | 'domain' | 'secure_mode' | 'enabled'>>): Promise<Envelope<ApiProperty>> => {
       const db = this.db();
       const p = db.properties.find((x) => x.id === id);
       if (!p) throw this.notFound('Property', id);
@@ -1316,7 +1319,8 @@ export class BrixApi {
   // ---- agents / team --------------------------------------------------------
   agents = {
     list: async (): Promise<Envelope<ApiAgent[]>> => {
-      return { data: this.db().agents };
+      // Normalize legacy localStorage rows (pre-active era) to active.
+      return { data: this.db().agents.map((a) => ({ ...a, active: a.active ?? true })) };
     },
     invite: async (input: { display_name: string; role?: TeamRole }): Promise<Envelope<{ agent: ApiAgent; passcode: string }>> => {
       const name = input.display_name.trim();
@@ -1327,7 +1331,7 @@ export class BrixApi {
       }
       const passcode = String(Math.floor(100000 + Math.random() * 900000));
       const a: ApiAgent = {
-        id: uid('ag'), display_name: name, role: input.role ?? 'agent', online: false,
+        id: uid('ag'), display_name: name, role: input.role ?? 'agent', online: false, active: true,
         passcode, created_at: isoNow(), last_login_at: null,
       };
       db.agents.push(a);
@@ -1337,7 +1341,7 @@ export class BrixApi {
       // passcode below is the member's login credential — share it directly.
       return { data: { agent: a, passcode } };
     },
-    update: async (id: string, patch: Partial<Pick<ApiAgent, 'role' | 'online' | 'display_name'>>): Promise<Envelope<ApiAgent>> => {
+    update: async (id: string, patch: Partial<Pick<ApiAgent, 'role' | 'online' | 'display_name' | 'active'>>): Promise<Envelope<ApiAgent>> => {
       const db = this.db();
       const a = db.agents.find((x) => x.id === id);
       if (!a) throw this.notFound('Agent', id);
@@ -2777,6 +2781,7 @@ const mapProperty = (r: Row): ApiProperty => ({
   public_key: r.public_key,
   widget_config: { ...defaultWidgetConfig(), ...((r.widget_config ?? {}) as WidgetConfig) },
   secure_mode: !!r.secure_mode,
+  enabled: r.enabled ?? true,
   created_at: isoOf(r.created_at),
 });
 
@@ -2811,6 +2816,7 @@ const mapAgent = (r: Row): ApiAgent => ({
   display_name: r.display_name,
   role: r.role ?? 'agent',
   online: r.status === 'online',
+  active: r.active ?? true,
   passcode: '',
   created_at: isoOf(r.created_at),
   last_login_at: r.last_login_at ? isoOf(r.last_login_at) : null,
@@ -3348,9 +3354,13 @@ export class SupabaseBrixApi extends BrixApi {
           },
           () => base_properties.create(input),
         ),
-      update: (id: string, patch: Partial<Pick<ApiProperty, 'name' | 'domain' | 'secure_mode'>>) =>
+      update: (id: string, patch: Partial<Pick<ApiProperty, 'name' | 'domain' | 'secure_mode' | 'enabled'>>) =>
         this.guard(
-          async () => ({ data: await this.updWs('properties', id, { ...patch }, mapProperty, 'Property') }),
+          // enabled is a local-only flag for now — no properties.enabled column exists remotely.
+          async () => {
+            const { enabled: _enabled, ...remote } = patch;
+            return { data: await this.updWs('properties', id, { ...remote }, mapProperty, 'Property') };
+          },
           () => base_properties.update(id, patch),
         ),
       regenerateKey: (id: string) =>
