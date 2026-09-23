@@ -1,7 +1,9 @@
 // Brix Chat — Workspace settings.
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../lib/store';
 import type { Settings as SettingsData, TeamMember } from '../lib/types';
+import { getApi } from '../lib/api';
+import type { CopilotSettings, DataSettings, SecuritySettings } from '../lib/api';
 import { copyText } from '../lib/utils';
 import { Avatar, Button, Card, Input, Label, Select, Textarea, Toggle, useConfirm } from '../components/ui';
 
@@ -20,6 +22,248 @@ const BUBBLE_CLASS: Record<SettingsData['widget']['bubble'], string> = {
 
 function SectionTitle({ children }: { children: string }) {
   return <h2 className="text-base font-display font-bold text-slate-900">{children}</h2>;
+}
+
+const COPILOT_TONES = [
+  { value: 'friendly', label: 'Friendly — warm and conversational' },
+  { value: 'professional', label: 'Professional — polished and formal' },
+  { value: 'concise', label: 'Concise — short and to the point' },
+] as const;
+
+const COPILOT_SOURCES = [
+  { key: 'knowledge-base', label: 'Knowledge base articles' },
+  { key: 'canned', label: 'Canned responses' },
+  { key: 'history', label: 'Past conversation history' },
+];
+
+function AdvancedSettings({ workspace, actor }: { workspace: string; actor: string }) {
+  const api = getApi(workspace, actor);
+  const [copilot, setCopilot] = useState<CopilotSettings | null>(null);
+  const [security, setSecurity] = useState<SecuritySettings | null>(null);
+  const [dataCfg, setDataCfg] = useState<DataSettings | null>(null);
+  const [saved, setSaved] = useState('');
+  const [busy, setBusy] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    (async () => {
+      const [c, s, d] = await Promise.all([
+        api.copilotSettings.get(),
+        api.securitySettings.get(),
+        api.dataSettings.get(),
+      ]);
+      setCopilot(c.data);
+      setSecurity(s.data);
+      setDataCfg(d.data);
+    })().catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspace]);
+
+  const flash = (msg: string) => {
+    setSaved(msg);
+    setTimeout(() => setSaved(''), 2500);
+  };
+
+  const patchCopilot = async (p: Partial<CopilotSettings>) => {
+    if (!copilot) return;
+    const next = { ...copilot, ...p };
+    setCopilot(next);
+    await api.copilotSettings.patch(p);
+    flash('Copilot settings saved');
+  };
+
+  const patchSecurity = async (p: Partial<SecuritySettings>) => {
+    if (!security) return;
+    const next = { ...security, ...p };
+    setSecurity(next);
+    await api.securitySettings.patch(p);
+    flash('Security settings saved');
+  };
+
+  const patchData = async (p: Partial<DataSettings>) => {
+    if (!dataCfg) return;
+    const next = { ...dataCfg, ...p };
+    setDataCfg(next);
+    await api.dataSettings.patch(p);
+    flash('Data settings saved');
+  };
+
+  const toggleSource = (key: string) => {
+    if (!copilot) return;
+    const has = copilot.sources.includes(key);
+    patchCopilot({ sources: has ? copilot.sources.filter((x) => x !== key) : [...copilot.sources, key] });
+  };
+
+  const exportAll = async () => {
+    const { data } = await api.dataExport();
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `brixchat-${data.workspace}-${data.exported_at.slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+
+  const importAll = async (file: File) => {
+    setBusy(true);
+    try {
+      const json = JSON.parse(await file.text());
+      await api.dataImport(json);
+      flash('Data imported — reloading');
+      setTimeout(() => window.location.reload(), 800);
+    } catch (e) {
+      flash(e instanceof Error ? e.message : 'Import failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!copilot || !security || !dataCfg) return null;
+
+  return (
+    <>
+      {/* AI Copilot */}
+      <Card className="p-6">
+        <SectionTitle>AI Copilot</SectionTitle>
+        <p className="text-sm text-slate-500 mt-1">How the writing assistant drafts replies, summaries and translations.</p>
+        <div className="grid sm:grid-cols-2 gap-4 mt-4">
+          <div>
+            <Label>Reply tone</Label>
+            <Select value={copilot.tone} onChange={(e) => patchCopilot({ tone: e.target.value as CopilotSettings['tone'] })}>
+              {COPILOT_TONES.map((t) => (
+                <option key={t.value} value={t.value}>{t.label}</option>
+              ))}
+            </Select>
+          </div>
+          <div>
+            <Label>AI provider</Label>
+            <Select value={copilot.provider} onChange={(e) => patchCopilot({ provider: e.target.value as CopilotSettings['provider'] })}>
+              <option value="local">Local drafts (built-in, works now)</option>
+              <option value="openai">OpenAI — key required (backend phase)</option>
+              <option value="anthropic">Anthropic — key required (backend phase)</option>
+            </Select>
+            {copilot.provider !== 'local' && (
+              <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-2">
+                Provider keys activate with the backend phase. Add yours under Admin → AI &amp; integrations when live calls are enabled.
+              </p>
+            )}
+          </div>
+        </div>
+        <div className="divide-y divide-slate-100 mt-3">
+          {[
+            { key: 'autosuggest' as const, label: 'Auto-suggest replies', hint: 'Offer a draft reply as visitors type' },
+            { key: 'summarize' as const, label: 'Thread summaries', hint: 'One-click summary of long conversations' },
+            { key: 'translate' as const, label: 'Auto-translate', hint: 'Translate messages for both sides' },
+          ].map((r) => (
+            <div key={r.key} className="flex items-center justify-between py-3">
+              <div>
+                <div className="text-sm font-semibold text-slate-900">{r.label}</div>
+                <div className="text-xs text-slate-500">{r.hint}</div>
+              </div>
+              <Toggle checked={copilot[r.key]} onChange={(v) => patchCopilot({ [r.key]: v })} label={r.label} />
+            </div>
+          ))}
+        </div>
+        <div className="mt-2">
+          <div className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">Answer sources</div>
+          <div className="flex flex-wrap gap-2">
+            {COPILOT_SOURCES.map((s) => (
+              <button
+                key={s.key}
+                type="button"
+                onClick={() => toggleSource(s.key)}
+                aria-pressed={copilot.sources.includes(s.key)}
+                className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition ${
+                  copilot.sources.includes(s.key)
+                    ? 'bg-brix-600 text-white border-brix-600'
+                    : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                }`}
+              >
+                {copilot.sources.includes(s.key) ? '✓ ' : ''}{s.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </Card>
+
+      {/* Security */}
+      <Card className="p-6">
+        <SectionTitle>Security</SectionTitle>
+        <p className="text-sm text-slate-500 mt-1">Session and passcode policies for this workspace.</p>
+        <div className="grid sm:grid-cols-3 gap-4 mt-4">
+          <div>
+            <Label>Session timeout (minutes)</Label>
+            <Input
+              type="number" min={15} max={4320} value={security.session_timeout_mins}
+              onChange={(e) => patchSecurity({ session_timeout_mins: Math.max(15, Number(e.target.value) || 15) })}
+            />
+          </div>
+          <div>
+            <Label>Minimum passcode length</Label>
+            <Input
+              type="number" min={4} max={32} value={security.passcode_min_len}
+              onChange={(e) => patchSecurity({ passcode_min_len: Math.min(32, Math.max(4, Number(e.target.value) || 4)) })}
+            />
+          </div>
+          <div>
+            <Label>Passcode expiry (days)</Label>
+            <Input
+              type="number" min={0} max={365} value={security.passcode_expiry_days}
+              onChange={(e) => patchSecurity({ passcode_expiry_days: Math.max(0, Number(e.target.value) || 0) })}
+            />
+          </div>
+        </div>
+        <p className="text-xs text-slate-500 mt-3">Set expiry to 0 to never expire passcodes. Changes apply to new logins.</p>
+      </Card>
+
+      {/* Data management */}
+      <Card className="p-6">
+        <SectionTitle>Data management</SectionTitle>
+        <p className="text-sm text-slate-500 mt-1">Everything is stored locally in this browser. Export a backup, restore one, or set retention.</p>
+        <div className="flex flex-wrap gap-3 mt-4">
+          <Button variant="secondary" onClick={exportAll}>⬇ Export all data (JSON)</Button>
+          <Button variant="secondary" onClick={() => fileRef.current?.click()} disabled={busy}>
+            {busy ? 'Importing…' : '⬆ Import backup'}
+          </Button>
+          <input
+            ref={fileRef} type="file" accept="application/json" className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) importAll(f);
+              e.target.value = '';
+            }}
+          />
+        </div>
+        <div className="grid sm:grid-cols-2 gap-4 mt-5">
+          <div>
+            <Label>Keep history for (days)</Label>
+            <Input
+              type="number" min={30} max={3650} value={dataCfg.retention_days}
+              onChange={(e) => patchData({ retention_days: Math.max(30, Number(e.target.value) || 30) })}
+            />
+          </div>
+          <div className="flex items-end pb-1">
+            <Toggle
+              checked={dataCfg.auto_purge}
+              onChange={(v) => patchData({ auto_purge: v })}
+              label="Auto-purge old data"
+            />
+          </div>
+        </div>
+        <p className="text-xs text-slate-500 mt-2">
+          {dataCfg.auto_purge
+            ? `Conversations and tickets older than ${dataCfg.retention_days} days are purged automatically on load.`
+            : 'Auto-purge is off — old records are kept until you delete them.'}
+        </p>
+      </Card>
+
+      {saved && (
+        <div role="status" className="fixed bottom-6 right-6 z-50 rounded-xl bg-slate-900 text-white text-sm font-medium px-4 py-2.5 shadow-lg">
+          ✓ {saved}
+        </div>
+      )}
+    </>
+  );
 }
 
 const NOTIF_EVENTS = [
@@ -344,6 +588,9 @@ export default function Settings() {
           <span className="text-xs text-slate-500">Widget loads from GitHub Pages · key <code className="font-mono bg-slate-100 px-1 rounded">demo</code></span>
         </div>
       </Card>
+
+      {/* Advanced: copilot, security, data */}
+      {store.session && <AdvancedSettings workspace={store.session.workspace} actor={store.session.displayName} />}
 
       {/* Danger zone */}
       <Card className="p-6 border-rose-200">
