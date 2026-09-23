@@ -1,0 +1,21 @@
+@import "tailwindcss";
+
+/* Brix Chat design tokens */
+:root {
+  --brix-ink: #0b1020;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: #0ea5e9;
+  color: #fff;
+}
