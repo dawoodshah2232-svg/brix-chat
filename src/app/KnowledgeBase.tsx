@@ -18,12 +18,41 @@ function blankArticle(): Article {
   };
 }
 
+/** P4-20: article older than this is flagged stale. */
+const STALE_MS = 180 * 86400000;
+const isStale = (a: { updatedAt: number }) => Date.now() - a.updatedAt > STALE_MS;
+
+type DiffLine = { kind: 'same' | 'add' | 'del'; text: string };
+/** Line-based diff (LCS) between the old and new article body. */
+function diffLines(oldText: string, newText: string): DiffLine[] {
+  const a = oldText.split('\n');
+  const b = newText.split('\n');
+  const m = a.length, n = b.length;
+  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = m - 1; i >= 0; i--) {
+    for (let j = n - 1; j >= 0; j--) {
+      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+  const out: DiffLine[] = [];
+  let i = 0, j = 0;
+  while (i < m && j < n) {
+    if (a[i] === b[j]) { out.push({ kind: 'same', text: a[i] }); i++; j++; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) { out.push({ kind: 'del', text: a[i] }); i++; }
+    else { out.push({ kind: 'add', text: b[j] }); j++; }
+  }
+  while (i < m) out.push({ kind: 'del', text: a[i++] });
+  while (j < n) out.push({ kind: 'add', text: b[j++] });
+  return out;
+}
+
 export default function KnowledgeBase() {
   const store = useStore();
   const { session, effectiveWorkspaceId } = store;
   const { confirm, dialog } = useConfirm();
   const [editor, setEditor] = useState<{ article: Article; slugTouched: boolean } | null>(null);
   const [reader, setReader] = useState<Article | null>(null);
+  const [openRev, setOpenRev] = useState<string | null>(null);
   const [section, setSection] = useState<'articles' | 'unanswered'>('articles');
   const [q, setQ] = useState('');
   const [catFilter, setCatFilter] = useState('all');
@@ -207,7 +236,9 @@ export default function KnowledgeBase() {
                       <span className="text-xs font-bold text-emerald-600">👍 {a.helpful ?? 0}</span>{' '}
                       <span className="text-xs font-bold text-rose-500">👎 {a.notHelpful ?? 0}</span>
                     </td>
-                    <td className="px-5 py-3.5 text-slate-500 text-xs whitespace-nowrap">{timeAgo(a.updatedAt)}</td>
+                    <td className="px-5 py-3.5 text-slate-500 text-xs whitespace-nowrap">
+                      {timeAgo(a.updatedAt)}{isStale(a) && <span className="ml-1.5"><Badge tone="amber">stale</Badge></span>}
+                    </td>
                     <td className="px-5 py-3.5">
                       <div className="flex justify-end gap-2">
                         <Button size="sm" variant="secondary" onClick={() => setReader(a)}>Preview</Button>
@@ -253,6 +284,48 @@ export default function KnowledgeBase() {
               </span>
             </div>
             <div><Label>Body</Label><Textarea rows={10} value={editor.article.body} onChange={(e) => set({ body: e.target.value })} placeholder="Write the article… Use blank lines between paragraphs." /></div>
+            {(() => {
+              const revs = (store.data.articleRevisions ?? []).filter((r) => r.articleId === editor.article.id);
+              if (revs.length === 0) return null;
+              return (
+                <div className="rounded-xl border border-slate-200 overflow-hidden">
+                  <div className="px-4 py-2.5 bg-slate-50 text-sm font-bold text-slate-800">🕘 Revision history ({revs.length})</div>
+                  <div className="divide-y divide-slate-100">
+                    {revs.map((r) => (
+                      <div key={r.id} className="px-4 py-2">
+                        <div className="flex items-center gap-2">
+                          <button onClick={() => setOpenRev(openRev === r.id ? null : r.id)}
+                            className="flex-1 text-left text-xs text-slate-600 hover:text-slate-900">
+                            <span className="font-semibold">{timeAgo(r.at)}</span> · {r.by} · {r.status}
+                            {r.title !== editor.article.title && <span className="text-slate-400"> · was “{r.title}”</span>}
+                          </button>
+                          <Button size="sm" variant="secondary" onClick={() => {
+                            set({ title: r.title, body: r.body, category: r.category, status: r.status });
+                            setOpenRev(null);
+                          }}>
+                            ↩ Restore
+                          </Button>
+                        </div>
+                        {openRev === r.id && (
+                          <div className="mt-2 rounded-lg bg-slate-950 text-[12px] font-mono max-h-56 overflow-y-auto slim-scroll p-3">
+                            {diffLines(r.body, editor.article.body).filter((d) => d.kind !== 'same').length === 0 ? (
+                              <div className="text-slate-400">No body changes since this version.</div>
+                            ) : diffLines(r.body, editor.article.body).map((d, i) => (
+                              <div key={i} className={d.kind === 'add' ? 'text-emerald-300' : d.kind === 'del' ? 'text-rose-300' : 'text-slate-500'}>
+                                {d.kind === 'add' ? '+ ' : d.kind === 'del' ? '− ' : '  '}{d.text || '∅'}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="px-4 py-2 bg-slate-50 text-[11px] text-slate-500">
+                    Restore fills the editor — click “Save article” to apply. Saving snapshots the current version first, so restores are reversible.
+                  </div>
+                </div>
+              );
+            })()}
             <div className="flex justify-end gap-2">
               <Button variant="secondary" onClick={() => setEditor(null)}>Cancel</Button>
               <Button onClick={save} disabled={!editor.article.title.trim()}>Save article</Button>
@@ -268,6 +341,7 @@ export default function KnowledgeBase() {
             <div className="flex items-center gap-2 mb-4">
               <Badge tone={reader.status === 'published' ? 'green' : 'amber'}>{reader.status}</Badge>
               <span className="text-xs text-slate-500">{reader.category} · {reader.views.toLocaleString()} views · updated {timeAgo(reader.updatedAt)}</span>
+              {isStale(reader) && <Badge tone="amber" className="ml-2">⚠ stale — review needed</Badge>}
             </div>
             <div className="prose-sm max-w-none space-y-3">
               {reader.body.split(/\n\n+/).map((p, i) => (

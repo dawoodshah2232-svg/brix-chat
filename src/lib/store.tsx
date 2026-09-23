@@ -6,6 +6,7 @@ import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import type {
   Article,
+  ArticleRevision,
   Campaign,
   Canned,
   ChatData,
@@ -496,8 +497,37 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           ),
         };
       });
-    const saveArticle: Store['saveArticle'] = (a) => patchData((d) => ({ ...d, articles: upsert(d.articles, a) }));
-    const deleteArticle: Store['deleteArticle'] = (id) => patchData((d) => ({ ...d, articles: d.articles.filter((a) => a.id !== id) }));
+    // P4-20: snapshot the previous version into revision history (max 25 per article)
+    const saveArticle: Store['saveArticle'] = (a) =>
+      setPersisted((p) => {
+        const ws = effectiveWorkspaceId(p.session);
+        const cur = p.dataByWorkspace[ws] ?? seedDataForWorkspace(ws);
+        const prev = cur.articles.find((x) => x.id === a.id);
+        let revisions = cur.articleRevisions ?? [];
+        if (
+          prev &&
+          (prev.title !== a.title || prev.body !== a.body || prev.category !== a.category || prev.status !== a.status)
+        ) {
+          const snap: ArticleRevision = {
+            id: uid('rev'),
+            articleId: a.id,
+            at: Date.now(),
+            by: p.session?.displayName ?? 'Unknown',
+            title: prev.title,
+            body: prev.body,
+            category: prev.category,
+            status: prev.status,
+          };
+          revisions = [snap, ...revisions.filter((r) => r.articleId === a.id).slice(0, 24), ...revisions.filter((r) => r.articleId !== a.id)];
+        }
+        return { ...p, dataByWorkspace: { ...p.dataByWorkspace, [ws]: { ...cur, articles: upsert(cur.articles, a), articleRevisions: revisions } } };
+      });
+    const deleteArticle: Store['deleteArticle'] = (id) =>
+      patchData((d) => ({
+        ...d,
+        articles: d.articles.filter((a) => a.id !== id),
+        articleRevisions: (d.articleRevisions ?? []).filter((r) => r.articleId !== id),
+      }));
     const saveCanned: Store['saveCanned'] = (c) => patchData((d) => ({ ...d, canned: upsert(d.canned, c) }));
     const deleteCanned: Store['deleteCanned'] = (id) => patchData((d) => ({ ...d, canned: d.canned.filter((c) => c.id !== id) }));
     const trackCannedUsage: Store['trackCannedUsage'] = (id) => patchData((d) => ({

@@ -103,6 +103,18 @@ export interface Article {
   guide_steps?: GuideStep[];
 }
 
+// phase 4 (P4-20) — a snapshot of an article before it was edited.
+export interface ArticleRevision {
+  id: string;
+  articleId: string;
+  at: number;
+  by: string;
+  title: string;
+  body: string;
+  category: string;
+  status: 'draft' | 'published';
+}
+
 // phase 4 (P4-4) — shared contract for guided troubleshooting trees.
 // A guide is an ordered list of steps; each step's options branch to another
 // step by id. A step with no options is terminal (resolution reached).
@@ -244,6 +256,8 @@ export interface ChatData {
   visitors: Visitor[];
   contacts: Contact[];
   articles: Article[];
+  /** P4-20: KB revision history (previous versions of articles). */
+  articleRevisions?: ArticleRevision[];
   canned: Canned[];
   triggers: TriggerRule[];
   campaigns: Campaign[];
