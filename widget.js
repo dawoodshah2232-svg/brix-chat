@@ -40,6 +40,15 @@
  *   BrixChat.onTyping(fn)                     // visitor typing activity (phase 2)
  *   window events: 'brixchat:ready', 'brixchat:satisfaction', ...
  *
+ * Widget → loader events (brixchat:<type>):
+ *   ready | open | close | chatStarted | chatEnded | message | typing |
+ *   prechatSubmitted | offlineSubmitted | satisfaction | ratingSubmitted |
+ *   transcriptRequested | promptShown | promptDismissed | languageChanged |
+ *   status | proactiveTriggers { triggers }  // phase 4 (P4-2): the loader
+ *     installs host-page detectors (page_view / top-edge exit_intent /
+ *     idle N s / scroll %) with frequency caps in localStorage
+ *     (brixchat_trigcap_<id>) + a max-prompts-per-visit guard.
+ *
  * Secure mode: pass visitor.hash = HMAC-SHA256(email, property_secret), generated
  * on your server. The loader forwards it to the widget; server-side verification
  * activates with the backend phase (today the hash is accepted and stored).
@@ -200,7 +209,7 @@
       width: '380px', height: '560px', maxHeight: 'calc(100vh - 120px)',
       maxWidth: 'calc(100vw - 32px)', border: 'none', borderRadius: '18px',
       boxShadow: '0 24px 70px rgba(2,6,23,.35)', display: 'none', background: loaderDark() ? '#020617' : '#fff'
-    }, { id: NS + '-frame', title: t('chatPanel'), role: 'dialog', 'aria-modal': 'false', 'aria-label': t('chatPanel'), tabindex: '-1' });
+    }, { id: NS + '-frame', title: t('chatPanel'), role: 'dialog', 'aria-modal': 'false', 'aria-label': t('chatPanel'), tabindex: '-1', allow: 'microphone' }); // P4-17
     frame.style[side] = '20px';
     frame.src = widgetUrl();
     frame.addEventListener('load', function () {
@@ -322,6 +331,79 @@
     pumpPrompts();
   }
 
+  /* phase 4 (P4-2): proactive triggers — defs arrive via the
+   * 'proactiveTriggers' event; detectors observe the host page. Caps persist
+   * in localStorage as brixchat_trigcap_<id>; max-prompts-per-visit (default
+   * 3) caps chattiness. */
+  var trigClean = [];
+  var trigSess = (function () {
+    try {
+      var s = WIN.sessionStorage.getItem('brixchat_sid_v1');
+      if (!s) { s = 's' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); WIN.sessionStorage.setItem('brixchat_sid_v1', s); }
+      return s;
+    } catch (e) { return 's' + Date.now().toString(36); }
+  })();
+  function trigKey(id) { return 'brixchat_trigcap_' + String(id).slice(0, 64); }
+  function trigToday() {
+    var d = new Date();
+    return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
+  }
+  function trigRead(id) {
+    try { var r = WIN.localStorage.getItem(trigKey(id)); return r ? JSON.parse(r) : null; } catch (e) { return null; }
+  }
+  function trigWrite(id, rec) { try { WIN.localStorage.setItem(trigKey(id), JSON.stringify(rec)); } catch (e) {} }
+  function trigVisits() {
+    try { return parseInt(WIN.sessionStorage.getItem('brixchat_pvisit_v1') || '0', 10) || 0; } catch (e) { return 0; }
+  }
+  function trigFire(tg) {
+    if (state.open || state.chatOngoing) return; // already engaged — never interrupt
+    var cap = tg.frequency_cap || {}, rec = trigRead(tg.id), mode = cap.mode || 'once_session';
+    if (mode === 'once_day' ? (rec && rec.d === trigToday())
+      : mode === 'max_count' ? (rec && (rec.c || 0) >= (cap.max || 1))
+      : (rec && rec.s === trigSess)) return; // cap hit
+    if (trigVisits() >= (tg.max_prompts_per_visit || 3)) return; // global guard
+    rec = rec || { c: 0 };
+    rec.c++; rec.d = trigToday(); rec.s = trigSess;
+    trigWrite(tg.id, rec);
+    try { WIN.sessionStorage.setItem('brixchat_pvisit_v1', String(trigVisits() + 1)); } catch (e) {}
+    queuePrompt({ id: 'trig:' + tg.id, text: tg.text, delay: tg.delay || 0 });
+  }
+  function installProactiveTriggers(list) {
+    trigClean.forEach(function (fn) { try { fn(); } catch (e) {} });
+    trigClean = [];
+    (list || []).forEach(function (tg) {
+      if (!tg || !tg.id || !tg.text) return;
+      var ev = tg.event, acts;
+      if (ev === 'page_view') {
+        var to = setTimeout(function () { trigFire(tg); }, 0);
+        trigClean.push(function () { clearTimeout(to); });
+      } else if (ev === 'exit_intent') {
+        // desktop only: cursor leaves the document through the top edge
+        var fine = false;
+        try { fine = WIN.matchMedia('(pointer: fine)').matches; } catch (e) {}
+        if (!fine) return;
+        var onOut = function (e) { if (!e.relatedTarget && (e.clientY || 0) <= 0) trigFire(tg); };
+        DOC.addEventListener('mouseout', onOut);
+        trigClean.push(function () { DOC.removeEventListener('mouseout', onOut); });
+      } else if (ev === 'idle') {
+        var ms = Math.max(5000, Math.min((tg.idle_secs || 30) * 1000, 3600000)), ito = null;
+        var arm = function () { clearTimeout(ito); ito = setTimeout(function () { trigFire(tg); }, ms); };
+        acts = ['mousemove', 'keydown', 'scroll', 'touchstart', 'mousedown'];
+        acts.forEach(function (n) { DOC.addEventListener(n, arm, { passive: true }); });
+        arm();
+        trigClean.push(function () { clearTimeout(ito); acts.forEach(function (n) { DOC.removeEventListener(n, arm); }); });
+      } else if (ev === 'scroll_depth') {
+        var pct = Math.max(5, Math.min(tg.scroll_pct || 50, 100));
+        var onScroll = function () {
+          var h = DOC.documentElement;
+          if (h.scrollHeight > 0 && ((h.scrollTop || 0) + h.clientHeight) / h.scrollHeight * 100 >= pct) trigFire(tg);
+        };
+        DOC.addEventListener('scroll', onScroll, { passive: true });
+        trigClean.push(function () { DOC.removeEventListener('scroll', onScroll); });
+      }
+    });
+  }
+
   function widgetUrl() {
     var q = 'property=' + encodeURIComponent(cfg.property) +
       '&color=' + encodeURIComponent(cfg.color) +
@@ -371,6 +453,7 @@
     else if (type === 'promptDismissed') { emit('promptDismissed', p); }
     else if (type === 'languageChanged') { emit('languageChanged', p); }
     else if (type === 'status') { state.status = p.status || state.status; emit('statusChange', state.status); }
+    else if (type === 'proactiveTriggers') { installProactiveTriggers(p.triggers); } // P4-2
   });
 
   function setOpen(v) {
