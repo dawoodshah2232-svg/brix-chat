@@ -18,10 +18,7 @@ interface Props {
 
 const EMOJIS = ['😀','😂','👍','👋','🙏','❤️','😊','🎉','✅','❌','⚠️','📌','📎','🔗','💡','🚀','⭐','🔥','💬','📞','📧','🕒','💰','🎯'];
 
-/** Canned-response template variables: {{name}} {{visitor}} {{workspace}} {{department}} */
-function fillVars(body: string, ctx: Record<string, string>): string {
-  return body.replace(/\{\{\s*(name|visitor|workspace|department)\s*\}\}/g, (_, k: string) => ctx[k] ?? '');
-}
+import { fillCannedVars as fillVars } from '../lib/canned';
 
 function VoiceMsg({ sec, mine }: { sec: number; mine: boolean }) {
   const [playing, setPlaying] = useState(false);

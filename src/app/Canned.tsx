@@ -5,6 +5,7 @@ import { useStore } from '../lib/store';
 import type { Canned } from '../lib/types';
 import { uid } from '../lib/utils';
 import { Badge, Button, Card, EmptyState, Input, Label, Modal, Textarea, Toggle, useConfirm } from '../components/ui';
+import { fillCannedVars } from '../lib/canned';
 import { cx } from '../lib/utils';
 
 const VARS = ['{{name}}', '{{visitor}}', '{{workspace}}', '{{department}}'];
@@ -140,6 +141,19 @@ export default function Canned() {
                   </button>
                 ))}
               </div>
+              {editor.body.includes('{{') && (
+                <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50/60 p-3">
+                  <div className="text-[11px] font-bold uppercase tracking-wide text-emerald-700 mb-1">👁 Preview with sample values</div>
+                  <p className="text-sm text-slate-700 whitespace-pre-wrap">
+                    {fillCannedVars(editor.body, {
+                      name: me || 'Ava',
+                      visitor: 'Layla Haddad',
+                      workspace: session?.workspaceId ?? 'workspace',
+                      department: data.settings.departments[0] ?? 'Support',
+                    })}
+                  </p>
+                </div>
+              )}
             </div>
             <div className="flex items-center justify-between rounded-xl border border-slate-200 px-4 py-3">
               <div>
