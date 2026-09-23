@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
 import { useStore } from '../lib/store';
 import type { Tone } from '../lib/bot';
-import { suggestReplies, summarizeThread, rewriteTone } from '../lib/bot';
+import { summarizeThread, rewriteTone } from '../lib/bot';
+import { suggestReplies, type SuggestionSource } from '../lib/suggest';
 import { Badge, Button, Card, EmptyState, Label, Textarea } from '../components/ui';
 
 const TONES: Array<{ id: Tone; label: string; icon: string }> = [
@@ -10,8 +11,15 @@ const TONES: Array<{ id: Tone; label: string; icon: string }> = [
   { id: 'concise', label: 'Concise', icon: '✂️' },
 ];
 
+const SOURCE_BADGE: Record<SuggestionSource, string> = {
+  kb: '📚 Help center',
+  canned: '⚡ Canned',
+  followup: '💬 Follow-up',
+  tone: '🎨 Draft',
+};
+
 export default function Copilot({ convId, onInsert }: { convId: string; onInsert: (text: string) => void }) {
-  const { getConversation } = useStore();
+  const { getConversation, data } = useStore();
   const [section, setSection] = useState<'replies' | 'summary' | 'tone' | null>('replies');
   const [draft, setDraft] = useState('');
   const [rewritten, setRewritten] = useState('');
@@ -23,8 +31,17 @@ export default function Copilot({ convId, onInsert }: { convId: string; onInsert
   }, [conv]);
 
   const suggestions = useMemo(
-    () => (conv && lastVisitorText ? suggestReplies(lastVisitorText, conv.visitor) : []),
-    [conv, lastVisitorText],
+    () =>
+      conv && lastVisitorText
+        ? suggestReplies({
+            visitorName: conv.visitor,
+            department: conv.department,
+            messages: conv.messages,
+            canned: data.canned,
+            articles: data.articles,
+          })
+        : [],
+    [conv, lastVisitorText, data.canned, data.articles],
   );
   const summary = useMemo(
     () => (conv ? summarizeThread(conv.messages, conv.visitor) : ''),
@@ -66,10 +83,11 @@ export default function Copilot({ convId, onInsert }: { convId: string; onInsert
         {section === 'replies' && (
           <div className="space-y-2 animate-fade-up">
             {suggestions.length === 0 && <div className="text-xs text-slate-400">No visitor message yet to reply to.</div>}
-            {suggestions.map((s, i) => (
-              <Card key={i} className="p-3 cursor-pointer hover:border-brix-300 hover:shadow-md transition group" >
-                <div onClick={() => onInsert(s)}>
-                  <div className="text-[13px] text-slate-800 leading-relaxed">{s}</div>
+            {suggestions.map((sg) => (
+              <Card key={sg.id} className="p-3 cursor-pointer hover:border-brix-300 hover:shadow-md transition group" >
+                <div onClick={() => onInsert(sg.text)}>
+                  <div className="text-[11px] font-bold text-slate-400 mb-1">{SOURCE_BADGE[sg.source]} · {sg.label}</div>
+                  <div className="text-[13px] text-slate-800 leading-relaxed">{sg.text}</div>
                   <div className="text-[11px] font-bold text-brix-600 mt-1.5 opacity-0 group-hover:opacity-100 transition">Click to insert →</div>
                 </div>
               </Card>

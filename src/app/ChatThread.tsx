@@ -8,6 +8,7 @@ import { Avatar, Badge, Button, EmptyState, Input, Label, Select, Tabs, Textarea
 import { cx, fmtDuration, timeAgo } from '../lib/utils';
 import { botReply, OPENERS } from '../lib/bot';
 import { SentimentPill, QualityBadge } from '../components/dashboard/Sentiment';
+import { suggestReplies } from '../lib/suggest';
 
 interface Props {
   convId: string;
@@ -478,6 +479,30 @@ export default function ChatThread({ convId, input, setInput }: Props) {
                   {plays.length === 0 && <div className="px-2.5 py-3 text-sm text-slate-500">No plays yet — create one in Settings.</div>}
                 </div>
               )}
+              {(() => {
+                const sg = suggestReplies({
+                  visitorName: conv.visitor,
+                  department: conv.department,
+                  messages: conv.messages,
+                  canned: data.canned,
+                  articles: data.articles,
+                }).slice(0, 3);
+                if (sg.length === 0 || input.trim()) return null;
+                return (
+                  <div className="flex gap-2 overflow-x-auto pb-2 slim-scroll" title="Suggested replies — simulated drafts">
+                    {sg.map((g) => (
+                      <button
+                        key={g.id}
+                        onClick={() => setInput(g.text)}
+                        className="shrink-0 max-w-64 truncate text-left text-xs bg-violet-50 hover:bg-violet-100 border border-violet-200 text-violet-900 rounded-full px-3 py-1.5 transition"
+                        title={g.text}
+                      >
+                        ✨ {g.text.length > 60 ? g.text.slice(0, 60) + '…' : g.text}
+                      </button>
+                    ))}
+                  </div>
+                );
+              })()}
               <div className="flex items-end gap-2" ref={composerRef}>
                 <div className="flex gap-1 pb-1">
                   <button onClick={() => { setShowEmoji((v) => !v); setShowCanned(false); setShowPlays(false); }} className={cx('w-9 h-9 grid place-items-center rounded-xl text-lg hover:bg-slate-100', showEmoji && 'bg-slate-100')} title="Emoji">😊</button>
