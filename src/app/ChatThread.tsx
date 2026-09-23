@@ -9,6 +9,11 @@ import { cx, fmtDuration, timeAgo } from '../lib/utils';
 import { botReply, botConfidence, OPENERS, DEFAULT_BOT_THRESHOLD, DEFAULT_HANDOFF_TIMEOUT_MINS } from '../lib/bot';
 import { SentimentPill, QualityBadge } from '../components/dashboard/Sentiment';
 import { suggestReplies } from '../lib/suggest';
+import DispositionModal from '../components/dashboard/DispositionModal';
+import { ReminderButton } from '../components/dashboard/Reminders';
+import { TranslateControl, TranslatedText } from '../components/dashboard/TranslateControl';
+import TranscriptExport from '../components/dashboard/TranscriptExport';
+import { useDisposition } from '../lib/conversations';
 
 interface Props {
   convId: string;
@@ -88,13 +93,13 @@ function MsgBubble({ m }: { m: ChatMessage }) {
         {m.from === 'ai' && (
           <div className="text-[10px] font-bold uppercase tracking-wide text-violet-200 mb-1">🤖 Brix AI</div>
         )}
-        {m.kind === 'text' && <div className="whitespace-pre-wrap">{m.text}</div>}
+        {m.kind === 'text' && <div className="whitespace-pre-wrap"><TranslatedText text={m.text} /></div>}
         {m.kind === 'file' && (
           <div className="flex items-center gap-2">
             <span className="text-lg">📎</span>
             <div>
               <div className="font-semibold text-[13px]">{m.fileName ?? 'Attachment'}</div>
-              <div className={cx('text-[11px]', mine ? 'text-white/70' : 'text-slate-400')}>{m.fileSize ?? ''}</div>
+              <div className={cx('text-[11px]', mine ? 'text-white/70' : 'text-slate-500')}>{m.fileSize ?? ''}</div>
             </div>
           </div>
         )}
@@ -109,7 +114,7 @@ function MsgBubble({ m }: { m: ChatMessage }) {
             <span className={cx('text-xs font-bold', mine ? 'text-white/80' : 'text-slate-500')}>{m.rating}/5</span>
           </div>
         )}
-        <div className={cx('text-[10px] mt-1 font-medium', mine ? 'text-white/60 text-right' : 'text-slate-400')}>
+        <div className={cx('text-[10px] mt-1 font-medium', mine ? 'text-white/60 text-right' : 'text-slate-500')}>
           {new Date(m.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
           {m.name && mine && ` · ${m.name}`}
         </div>
@@ -138,6 +143,8 @@ export default function ChatThread({ convId, input, setInput }: Props) {
   const [noteText, setNoteText] = useState('');
   const [tagText, setTagText] = useState('');
   const [busy, setBusy] = useState(false);
+  const [dispOpen, setDispOpen] = useState(false);
+  const [disposition] = useDisposition(effectiveWorkspaceId(), convId);
 
   const timers = useRef<number[]>([]);
   const openerFired = useRef<Set<string>>(new Set());
@@ -320,7 +327,11 @@ export default function ChatThread({ convId, input, setInput }: Props) {
     }, 1000 + Math.random() * 1200);
   };
 
-  const handleResolve = () => {
+  // Wrap-up disposition is collected first; resolve only after the agent picks one.
+  const handleResolve = () => setDispOpen(true);
+
+  const finishResolve = () => {
+    setDispOpen(false);
     resolveConversation(convId);
     later(() => {
       const rating = Math.random() < 0.7 ? 5 : 4;
@@ -385,6 +396,11 @@ export default function ChatThread({ convId, input, setInput }: Props) {
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="font-display font-bold text-slate-900">{conv.visitor}</span>
                 <Badge tone={statusTone[conv.status]}>{conv.status}</Badge>
+                {disposition && (
+                  <span title={`Closed by ${disposition.by} — wrap-up note: ${disposition.note || 'none'}`}>
+                    <Badge tone="indigo">✓ {disposition.code}</Badge>
+                  </span>
+                )}
                 <SentimentPill texts={visitorTexts} />
                 <QualityBadge conv={conv} />
                 {conv.rating && <Badge tone="amber">⭐ {conv.rating}/5</Badge>}
@@ -394,6 +410,9 @@ export default function ChatThread({ convId, input, setInput }: Props) {
               </div>
             </div>
             <div className="ml-auto flex items-center gap-2 flex-wrap justify-end">
+              <TranslateControl />
+              <ReminderButton workspace={effectiveWorkspaceId()} conversationId={convId} visitor={conv.visitor} />
+              <TranscriptExport conv={conv} />
               <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-500" title="AI handles this chat">
                 🤖
                 <Toggle checked={conv.aiHandled} onChange={(v) => updateConversation(convId, { aiHandled: v })} label="AI handles chat" />
@@ -415,11 +434,11 @@ export default function ChatThread({ convId, input, setInput }: Props) {
                   <Button size="sm" variant="secondary" onClick={handleResolve}>✓ Resolve</Button>
                   <Button size="sm" variant="secondary" onClick={createTicket}>🎫 Ticket</Button>
                   <button onClick={logUnanswered} title="Log as unanswered question"
-                    className="w-8 h-8 grid place-items-center rounded-lg text-slate-400 hover:bg-amber-50 hover:text-amber-600 transition">
+                    className="w-8 h-8 grid place-items-center rounded-lg text-slate-500 hover:bg-amber-50 hover:text-amber-600 transition">
                     ❓
                   </button>
                   <button onClick={() => updateConversation(convId, { status: 'spam', live: false })} title="Mark as spam"
-                    className="w-8 h-8 grid place-items-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition">
+                    className="w-8 h-8 grid place-items-center rounded-lg text-slate-500 hover:bg-rose-50 hover:text-rose-600 transition">
                     🚫
                   </button>
                 </>
@@ -477,26 +496,26 @@ export default function ChatThread({ convId, input, setInput }: Props) {
               )}
               {showCanned && (
                 <div className="absolute bottom-14 left-0 z-30 w-80 max-h-64 overflow-y-auto slim-scroll bg-white border border-slate-200 rounded-2xl shadow-2xl p-2 animate-fade-up">
-                  <div className="px-2 py-1 text-[11px] font-bold uppercase tracking-wide text-slate-400">
+                  <div className="px-2 py-1 text-[11px] font-bold uppercase tracking-wide text-slate-500">
                     {slashActive ? `Canned — matching “${input}”` : 'Canned responses'} <span className="normal-case font-medium">(type / to search)</span>
                   </div>
                   {(slashActive ? slashMatches : myCanned).map((c) => (
                     <button key={c.id} onClick={() => insertCanned(c)}
                       className="w-full text-left px-2.5 py-2 rounded-xl hover:bg-slate-50">
-                      <div className="text-sm font-semibold text-slate-800">⚡ {c.title} <span className="text-slate-400 font-normal text-xs">/{c.shortcut}</span></div>
+                      <div className="text-sm font-semibold text-slate-800">⚡ {c.title} <span className="text-slate-500 font-normal text-xs">/{c.shortcut}</span></div>
                       <div className="text-xs text-slate-500 truncate">{c.body}</div>
                     </button>
                   ))}
                   {slashMatches.length === 0 && slashActive && <div className="px-2.5 py-3 text-sm text-slate-500">No canned responses match.</div>}
                   {myCanned.length === 0 && !slashActive && <div className="px-2.5 py-3 text-sm text-slate-500">No canned responses yet.</div>}
-                  <div className="px-2 py-1.5 text-[11px] text-slate-400 border-t border-slate-100 mt-1">
+                  <div className="px-2 py-1.5 text-[11px] text-slate-500 border-t border-slate-100 mt-1">
                     Variables: <code className="font-mono">{'{{name}} {{visitor}} {{workspace}} {{department}}'}</code>
                   </div>
                 </div>
               )}
               {showPlays && (
                 <div className="absolute bottom-14 left-12 z-30 w-80 max-h-64 overflow-y-auto slim-scroll bg-white border border-slate-200 rounded-2xl shadow-2xl p-2 animate-fade-up">
-                  <div className="px-2 py-1 text-[11px] font-bold uppercase tracking-wide text-slate-400">▶ Run a play</div>
+                  <div className="px-2 py-1 text-[11px] font-bold uppercase tracking-wide text-slate-500">▶ Run a play</div>
                   {plays.map((p) => (
                     <button key={p.id} onClick={() => runPlay(p)}
                       className="w-full text-left px-2.5 py-2 rounded-xl hover:bg-slate-50">
@@ -589,7 +608,7 @@ export default function ChatThread({ convId, input, setInput }: Props) {
                       {t} ✕
                     </button>
                   ))}
-                  {conv.tags.length === 0 && <span className="text-xs text-slate-400">No tags yet</span>}
+                  {conv.tags.length === 0 && <span className="text-xs text-slate-500">No tags yet</span>}
                 </div>
                 <div className="flex gap-1.5">
                   <Input value={tagText} onChange={(e) => setTagText(e.target.value)} placeholder="Add tag…" className="py-1.5 text-xs"
@@ -633,15 +652,23 @@ export default function ChatThread({ convId, input, setInput }: Props) {
               >
                 📇 View contact timeline
               </Button>
+              {disposition && (
+                <div className="rounded-xl bg-brix-50 border border-brix-100 p-3">
+                  <div className="text-[11px] font-bold uppercase tracking-wide text-brix-600 mb-1">Wrap-up</div>
+                  <div className="text-xs font-semibold text-slate-800">{disposition.code}</div>
+                  {disposition.note && <div className="text-xs text-slate-500 mt-1">{disposition.note}</div>}
+                  <div className="text-[11px] text-slate-500 mt-1">{disposition.by} · {timeAgo(disposition.at)}</div>
+                </div>
+              )}
             </div>
           ) : (
             <div>
               <div className="space-y-2.5 mb-4">
-                {conv.notes.length === 0 && <div className="text-xs text-slate-400">No internal notes yet.</div>}
+                {conv.notes.length === 0 && <div className="text-xs text-slate-500">No internal notes yet.</div>}
                 {conv.notes.map((n) => (
                   <div key={n.id} className="bg-amber-50 border border-amber-100 rounded-xl p-3">
                     <div className="text-[13px] text-slate-800 whitespace-pre-wrap">{n.text}</div>
-                    <div className="text-[11px] text-slate-400 mt-1.5 font-medium">{n.author} · {timeAgo(n.ts)}</div>
+                    <div className="text-[11px] text-slate-500 mt-1.5 font-medium">{n.author} · {timeAgo(n.ts)}</div>
                   </div>
                 ))}
               </div>
@@ -655,6 +682,17 @@ export default function ChatThread({ convId, input, setInput }: Props) {
           )}
         </div>
       </div>
+
+      {/* Conversation Operations: wrap-up disposition */}
+      <DispositionModal
+        open={dispOpen}
+        workspace={effectiveWorkspaceId()}
+        conversationId={convId}
+        visitor={conv.visitor}
+        agentName={agentName}
+        onDone={finishResolve}
+        onClose={() => setDispOpen(false)}
+      />
     </div>
   );
 }

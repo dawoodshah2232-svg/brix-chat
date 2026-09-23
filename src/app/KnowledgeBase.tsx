@@ -8,6 +8,8 @@ import type { Article } from '../lib/types';
 import { cx, timeAgo, uid } from '../lib/utils';
 import { Badge, Button, Card, EmptyState, Input, Label, Modal, SearchInput, Tabs, Textarea, Toggle, useConfirm } from '../components/ui';
 import { toast } from '../components/dashboard/Toasts';
+import { useKbVisibility } from '../lib/conversations';
+import type { KbVisibility } from '../lib/conversations';
 
 function slugify(title: string): string {
   return title.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
@@ -68,6 +70,8 @@ export default function KnowledgeBase() {
   const [section, setSection] = useState<'articles' | 'unanswered'>('articles');
   const [q, setQ] = useState('');
   const [catFilter, setCatFilter] = useState('all');
+  const [visFilter, setVisFilter] = useState<'all' | KbVisibility>('all');
+  const kbVis = useKbVisibility();
   const [unanswered, setUnanswered] = useState<ApiUnanswered[]>([]);
   const [busy, setBusy] = useState(false);
 
@@ -115,6 +119,7 @@ export default function KnowledgeBase() {
     const t = q.trim().toLowerCase();
     return store.data.articles
       .filter((a) => catFilter === 'all' || a.category === catFilter)
+      .filter((a) => visFilter === 'all' || kbVis.get(a.id) === visFilter)
       .filter((a) =>
         !t ||
         a.title.toLowerCase().includes(t) ||
@@ -122,7 +127,7 @@ export default function KnowledgeBase() {
         a.category.toLowerCase().includes(t),
       )
       .sort((a, b) => b.updatedAt - a.updatedAt);
-  }, [store.data.articles, q, catFilter]);
+  }, [store.data.articles, q, catFilter, visFilter, kbVis]);
 
   const set = (patch: Partial<Article>) => {
     if (!editor) return;
@@ -149,7 +154,7 @@ export default function KnowledgeBase() {
   };
 
   return (
-    <div className="space-y-5">
+    <div className="p-4 sm:p-6 max-w-6xl mx-auto space-y-5">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-display font-extrabold text-slate-900">Knowledge base</h1>
@@ -183,11 +188,11 @@ export default function KnowledgeBase() {
                   </span>
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-semibold text-slate-900">{u.question}</div>
-                    <div className="text-[11px] text-slate-400 mt-0.5">first asked {timeAgo(Date.parse(u.created_at))}</div>
+                    <div className="text-[11px] text-slate-500 mt-0.5">first asked {timeAgo(Date.parse(u.created_at))}</div>
                   </div>
                   <div className="flex gap-2 shrink-0">
                     <Button size="sm" onClick={() => promote(u.id)} disabled={busy}>📝 Promote to draft</Button>
-                    <Button size="sm" variant="ghost" className="text-slate-400 hover:text-slate-600" onClick={() => dismiss(u.id)}>Dismiss</Button>
+                    <Button size="sm" variant="ghost" className="text-slate-500 hover:text-slate-600" onClick={() => dismiss(u.id)}>Dismiss</Button>
                   </div>
                 </div>
               ))}
@@ -212,16 +217,26 @@ export default function KnowledgeBase() {
                 </button>
               ))}
             </div>
+            {/* Visibility filter — internal articles never appear on the public KB page */}
+            <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl w-fit" title="Visibility filter">
+              {(['all', 'public', 'internal'] as const).map((v) => (
+                <button key={v} onClick={() => setVisFilter(v)}
+                  className={cx('px-3 py-1.5 rounded-lg text-xs font-semibold transition',
+                    visFilter === v ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800')}>
+                  {v === 'all' ? 'All' : v === 'public' ? '🌐 Public' : '🔒 Internal'}
+                </button>
+              ))}
+            </div>
           </div>
 
       {filteredArticles.length === 0 ? (
-        <Card><EmptyState icon="📚" title="No articles found" hint="Write your first help article — it appears in the widget instantly." /></Card>
+        <Card><EmptyState icon="📚" image={`${import.meta.env.BASE_URL}images/empty-kb.png`} title="No articles found" hint="Write your first help article — it appears in the widget instantly." /></Card>
       ) : (
         <Card className="overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
+                <tr className="text-left text-xs uppercase tracking-wide text-slate-500 border-b border-slate-100">
                   <th className="px-5 py-3 font-semibold">Title</th>
                   <th className="px-5 py-3 font-semibold">Status</th>
                   <th className="px-5 py-3 font-semibold">Category</th>
@@ -235,8 +250,11 @@ export default function KnowledgeBase() {
                 {filteredArticles.map((a) => (
                   <tr key={a.id} className="border-b border-slate-50 last:border-0 hover:bg-slate-50/60">
                     <td className="px-5 py-3.5">
-                      <div className="font-semibold text-slate-900">{a.title}</div>
-                      <div className="text-xs text-slate-400 font-mono">/{a.slug}</div>
+                      <div className="font-semibold text-slate-900">
+                        {a.title}
+                        {kbVis.get(a.id) === 'internal' && <Badge tone="rose" className="ml-2">🔒 internal</Badge>}
+                      </div>
+                      <div className="text-xs text-slate-500 font-mono">/{a.slug}</div>
                     </td>
                     <td className="px-5 py-3.5">
                       <button onClick={() => store.saveArticle({ ...a, status: a.status === 'published' ? 'draft' : 'published', updatedAt: Date.now() })}
@@ -257,6 +275,13 @@ export default function KnowledgeBase() {
                       <div className="flex justify-end gap-2">
                         <Button size="sm" variant="secondary" onClick={() => setReader(a)}>Preview</Button>
                         <Button size="sm" variant="secondary" onClick={() => setEditor({ article: { ...a }, slugTouched: true })}>Edit</Button>
+                        <span title={kbVis.get(a.id) === 'internal' ? 'Mark as public — shows on the public help center' : 'Mark as internal — hidden from the public help center'}>
+                          <Button size="sm" variant="ghost"
+                            className={kbVis.get(a.id) === 'internal' ? 'text-rose-600 hover:bg-rose-50' : 'text-slate-500 hover:bg-slate-100'}
+                            onClick={() => kbVis.set(a.id, kbVis.get(a.id) === 'internal' ? 'public' : 'internal')}>
+                            {kbVis.get(a.id) === 'internal' ? '🔒' : '🌐'}
+                          </Button>
+                        </span>
                         <Button size="sm" variant="ghost" className="text-rose-600 hover:bg-rose-50"
                           onClick={() => confirm({
                             title: 'Delete article',
@@ -311,7 +336,7 @@ export default function KnowledgeBase() {
                           <button onClick={() => setOpenRev(openRev === r.id ? null : r.id)}
                             className="flex-1 text-left text-xs text-slate-600 hover:text-slate-900">
                             <span className="font-semibold">{timeAgo(r.at)}</span> · {r.by} · {r.status}
-                            {r.title !== editor.article.title && <span className="text-slate-400"> · was “{r.title}”</span>}
+                            {r.title !== editor.article.title && <span className="text-slate-500"> · was “{r.title}”</span>}
                           </button>
                           <Button size="sm" variant="secondary" onClick={() => {
                             set({ title: r.title, body: r.body, category: r.category, status: r.status });
@@ -323,7 +348,7 @@ export default function KnowledgeBase() {
                         {openRev === r.id && (
                           <div className="mt-2 rounded-lg bg-slate-950 text-[12px] font-mono max-h-56 overflow-y-auto slim-scroll p-3">
                             {diffLines(r.body, editor.article.body).filter((d) => d.kind !== 'same').length === 0 ? (
-                              <div className="text-slate-400">No body changes since this version.</div>
+                              <div className="text-slate-500">No body changes since this version.</div>
                             ) : diffLines(r.body, editor.article.body).map((d, i) => (
                               <div key={i} className={d.kind === 'add' ? 'text-emerald-300' : d.kind === 'del' ? 'text-rose-300' : 'text-slate-500'}>
                                 {d.kind === 'add' ? '+ ' : d.kind === 'del' ? '− ' : '  '}{d.text || '∅'}
@@ -361,7 +386,7 @@ export default function KnowledgeBase() {
               {reader.body.split(/\n\n+/).map((p, i) => (
                 <p key={i} className="text-[15px] leading-relaxed text-slate-700 whitespace-pre-line">{p}</p>
               ))}
-              {!reader.body && <p className="text-sm text-slate-400 italic">Empty article.</p>}
+              {!reader.body && <p className="text-sm text-slate-500 italic">Empty article.</p>}
             </div>
           </article>
         )}

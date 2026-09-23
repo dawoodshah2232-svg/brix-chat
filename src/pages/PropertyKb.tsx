@@ -5,6 +5,7 @@ import type { ApiProperty } from '../lib/api';
 import { asP2 } from '../lib/contentSeed';
 import type { ApiHelpArticle2, PropertySettings2 } from '../lib/contentSeed';
 import { Seo } from '../lib/seo';
+import { getKbVisibility } from '../lib/conversations';
 import { RichText } from './BlogPost';
 
 /**
@@ -55,7 +56,8 @@ export default function PropertyKb() {
         try {
           const { data } = await p2.helpDocs.list();
           const items = (data.items as ApiHelpArticle2[]).filter((a) =>
-            !('published' in a) || (a as ApiHelpArticle2).published !== false,
+            (!('published' in a) || (a as ApiHelpArticle2).published !== false) &&
+            getKbVisibility(a.id) !== 'internal', // internal-only articles never show publicly
           );
           setArticles([...items].sort((a, b) => a.order - b.order));
           if (items.length > 0) setActiveSlug(items[0].slug);

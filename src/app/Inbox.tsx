@@ -10,6 +10,10 @@ import { analyzeSentiment, type QualitySentiment } from '../lib/quality';
 import { SentimentDot, SentimentPill, SENTIMENT_META } from '../components/dashboard/Sentiment';
 import ChatThread from './ChatThread';
 import Copilot from './Copilot';
+import QueueBar from '../components/dashboard/QueueBar';
+import { PinButton, splitPinned } from '../components/dashboard/PinButton';
+import { RemindersWatcher, RemindersPanel } from '../components/dashboard/Reminders';
+import { usePins, useReminders } from '../lib/conversations';
 
 type Tab = ConvStatus;
 
@@ -57,6 +61,7 @@ export default function Inbox() {
   const [showSnoozed, setShowSnoozed] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkAgent, setBulkAgent] = useState('');
+  const [showReminders, setShowReminders] = useState(false);
 
   // saved views
   const [views, setViews] = useState<ApiSavedView[]>([]);
@@ -130,6 +135,12 @@ export default function Inbox() {
     });
     return filtered;
   }, [data.conversations, tab, dept, q, priority, assignee, tag, sentimentFilter, unreadOnly, unreadFirst, showSnoozed, session?.displayName]);
+
+  // Conversation Operations: pins + reminders
+  const { pins } = usePins(effectiveWorkspaceId());
+  const { reminders } = useReminders(effectiveWorkspaceId());
+  const [pinnedList, unpinnedList] = useMemo(() => splitPinned(list, pins), [list, pins]);
+  const orderedList = useMemo(() => [...pinnedList, ...unpinnedList], [pinnedList, unpinnedList]);
 
   const select = (id: string | null) => {
     if (id) setParams({ c: id }, { replace: true });
@@ -225,7 +236,10 @@ export default function Inbox() {
   const teamNames = data.settings.team.map((t) => t.name);
 
   return (
-    <div className="h-full flex">
+    <div className="h-full flex flex-col">
+      <QueueBar />
+      <RemindersWatcher workspace={effectiveWorkspaceId()} />
+      <div className="flex-1 min-h-0 flex">
       {/* Conversation list */}
       <div className={cx('w-full lg:w-96 xl:w-[26rem] shrink-0 flex flex-col border-r border-slate-200/80 bg-white', conv && 'hidden lg:flex')}>
         <div className="p-4 pb-3 space-y-3 border-b border-slate-100">
@@ -246,7 +260,7 @@ export default function Inbox() {
               <span key={v.id} className={cx('inline-flex items-center rounded-full border text-xs font-semibold transition',
                 activeView === v.id ? 'bg-brix-600 text-white border-brix-600' : 'bg-white text-slate-600 border-slate-200')}>
                 <button onClick={() => applyView(v)} className="pl-2.5 pr-1 py-1">{v.name}</button>
-                <button onClick={() => deleteView(v.id)} className="pr-2 pl-0.5 opacity-60 hover:opacity-100" title="Delete view">✕</button>
+                <button onClick={() => deleteView(v.id)} className="pr-2 pl-0.5 opacity-60 hover:opacity-100" title="Delete view" aria-label={`Delete view ${v.name}`}>✕</button>
               </span>
             ))}
             {savingView ? (
@@ -254,7 +268,7 @@ export default function Inbox() {
                 <Input value={viewName} onChange={(e) => setViewName(e.target.value)} placeholder="View name…" className="py-1 text-xs w-32"
                   onKeyDown={(e) => { if (e.key === 'Enter') saveView(); }} autoFocus />
                 <Button size="sm" onClick={saveView} disabled={!viewName.trim()}>Save</Button>
-                <button onClick={() => setSavingView(false)} className="text-xs text-slate-400">✕</button>
+                <button onClick={() => setSavingView(false)} className="text-xs text-slate-500" aria-label="Cancel saving view">✕</button>
               </span>
             ) : (
               <button onClick={() => setSavingView(true)} className="text-xs font-semibold text-brix-600 hover:text-brix-700">
@@ -317,7 +331,7 @@ export default function Inbox() {
               ⇅ Unread first
             </button>
             {(priority !== 'all' || assignee !== 'all' || tag !== 'all' || unreadOnly || q) && (
-              <button onClick={clearFilters} className="text-xs font-semibold text-slate-400 hover:text-slate-600">Clear</button>
+              <button onClick={clearFilters} className="text-xs font-semibold text-slate-500 hover:text-slate-600">Clear</button>
             )}
           </div>
 
@@ -326,6 +340,10 @@ export default function Inbox() {
               ⏰ {snoozedCount} snoozed {showSnoozed ? '(hide)' : '(show)'}
             </button>
           )}
+          <button onClick={() => setShowReminders(true)}
+            className="text-xs font-semibold text-brix-600 hover:text-brix-700">
+            🔔 Reminders{reminders.length > 0 ? ` (${reminders.length})` : ''}
+          </button>
 
           {/* Bulk bar */}
           {selected.size > 0 && (
@@ -340,16 +358,21 @@ export default function Inbox() {
               <button onClick={bulkResolve} className="text-xs font-semibold px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20">✓ Resolve</button>
               <button onClick={bulkSnooze} className="text-xs font-semibold px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20">⏰ 1h</button>
               <button onClick={bulkSpam} className="text-xs font-semibold px-2 py-1 rounded-lg bg-rose-500/80 hover:bg-rose-500">🚫 Spam</button>
-              <button onClick={() => setSelected(new Set())} className="ml-auto text-xs text-slate-300 hover:text-white">✕</button>
+              <button onClick={() => setSelected(new Set())} className="ml-auto text-xs text-slate-300 hover:text-white" aria-label="Clear selection">✕</button>
             </div>
           )}
         </div>
 
         <div className="flex-1 overflow-y-auto slim-scroll">
           {list.length === 0 && (
-            <EmptyState icon="💬" title={`No ${tab} conversations`} hint="New chats will land here when visitors message you." />
+            <EmptyState icon="💬" image={`${import.meta.env.BASE_URL}images/empty-inbox.png`} title={`No ${tab} conversations`} hint="New chats will land here when visitors message you." />
           )}
-          {list.map((c) => {
+          {pinnedList.length > 0 && tab === 'open' && (
+            <div className="px-4 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wide text-brix-600 flex items-center gap-1.5">
+              📌 Pinned ({pinnedList.length})
+            </div>
+          )}
+          {orderedList.map((c) => {
             const snoozed = c.snoozeUntil && c.snoozeUntil > Date.now();
             const cTexts = c.messages.filter((m) => m.from === 'visitor').map((m) => m.text);
             const cSent = analyzeSentiment(cTexts).label;
@@ -379,7 +402,7 @@ export default function Inbox() {
                     <div className="flex items-baseline gap-2">
                       <span className="font-semibold text-sm text-slate-900 truncate">{c.visitor}</span>
                       <SentimentDot texts={cTexts} />
-                      <span className="ml-auto text-[11px] text-slate-400 shrink-0">{timeAgo(c.updatedAt)}</span>
+                      <span className="ml-auto text-[11px] text-slate-500 shrink-0">{timeAgo(c.updatedAt)}</span>
                     </div>
                     <div className="text-[13px] text-slate-500 truncate mt-0.5">{snippet(c)}</div>
                     <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
@@ -397,10 +420,11 @@ export default function Inbox() {
                   </div>
                 </button>
                 <div className="flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition shrink-0">
+                  <PinButton conversationId={c.id} />
                   <button
                     onClick={() => cyclePriority(c)}
                     title={`Priority: ${c.priority ?? 'medium'} — click to cycle`}
-                    className="w-7 h-7 grid place-items-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-amber-600 text-sm"
+                    className="w-7 h-7 grid place-items-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-amber-600 text-sm"
                   >
                     ⚑
                   </button>
@@ -416,7 +440,7 @@ export default function Inbox() {
                     <button
                       onClick={() => snoozeOne(c.id)}
                       title="Snooze 1 hour"
-                      className="w-7 h-7 grid place-items-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-amber-600 text-sm"
+                      className="w-7 h-7 grid place-items-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-amber-600 text-sm"
                     >
                       ⏰
                     </button>
@@ -466,6 +490,8 @@ export default function Inbox() {
           </div>
         )}
       </div>
+      </div>
+      <RemindersPanel workspace={effectiveWorkspaceId()} open={showReminders} onClose={() => setShowReminders(false)} />
     </div>
   );
 }
