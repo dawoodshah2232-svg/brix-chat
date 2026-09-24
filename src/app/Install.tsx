@@ -4,7 +4,12 @@ import { useEffect, useState } from 'react';
 import { Button, Card, Select } from '../components/ui';
 import { toast } from '../components/dashboard/Toasts';
 import { useClientApi } from '../components/dashboard/useClientApi';
-import type { ApiProperty } from '../lib/api';
+import type { ApiProperty, PropertySettings } from '../lib/api';
+
+// Escape a value for use inside an HTML attribute.
+function attr(v: string): string {
+  return v.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
 
 const JS_API: Array<[string, string]> = [
   ['Open / close', 'BrixChat.open();\nBrixChat.close();\nBrixChat.toggle();'],
@@ -17,6 +22,7 @@ export default function Install() {
   const { api } = useClientApi();
   const [props, setProps] = useState<ApiProperty[]>([]);
   const [propId, setPropId] = useState('');
+  const [settings, setSettings] = useState<PropertySettings | null>(null);
 
   useEffect(() => {
     if (!api) return;
@@ -26,9 +32,25 @@ export default function Install() {
     }).catch(() => {});
   }, [api]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    if (!api || !propId) { setSettings(null); return; }
+    api.propertySettings.get(propId).then(({ data }) => setSettings(data)).catch(() => setSettings(null));
+  }, [api, propId]);
+
   const prop = props.find((p) => p.id === propId);
   const snippet = prop
-    ? `<!-- Brix Chat — paste before </body> -->\n<script\n  src="https://cdn.brixchat.com/widget.js"\n  data-key="${prop.public_key}"\n  async\n></script>`
+    ? `<!-- Brix Chat — paste before </body> -->\n<script\n  src="https://cdn.brixchat.com/widget.js"\n  data-key="${prop.public_key}"${settings ? `
+  data-color="${attr(settings.widget_color)}"
+  data-position="${attr(settings.widget_position)}"
+  data-launcher-style="${attr(settings.launcher_style)}"
+  data-launcher-icon="${attr(settings.launcher_icon)}"${settings.launcher_icon_svg ? `
+  data-launcher-icon-svg="${attr(settings.launcher_icon_svg)}"` : ''}
+  data-launcher-shape="${attr(settings.launcher_shape)}"
+  data-badge="${settings.launcher_badge ? '1' : '0'}"
+  data-pulse="${settings.launcher_pulse ? '1' : '0'}"${settings.greeting_tooltip ? `
+  data-greeting-tooltip="${attr(settings.greeting_tooltip)}"
+  data-greeting-tooltip-delay="${settings.greeting_tooltip_delay}"` : ''}` : ''}
+  async\n></script>`
     : '';
 
   const copy = async (text: string, label: string) => {
@@ -61,6 +83,7 @@ export default function Install() {
         <p className="text-xs text-slate-500 mt-3">
           Paste this before the closing <code className="font-mono">{'</body>'}</code> tag on every page where you want chat.
           The <code className="font-mono">data-key</code> identifies your website — keep it as-is unless you regenerate it in Properties.
+          The launcher icon, color, shape and position below come from your Branding studio, so the widget matches your site automatically.
         </p>
       </Card>
 
