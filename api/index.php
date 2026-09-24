@@ -471,6 +471,23 @@ function route_conversations(string $method, array $seg, $r1, $r2, $r3): void {
                 $db->prepare("UPDATE conversations SET $sets updated_at = UTC_TIMESTAMP() WHERE id = ?")->execute([$conv['id']]);
             }
             audit_log($c['wid'], $c['member'], 'message.sent', 'conversation', $conv['id'], ['sender' => $sender]);
+            // Visitor message -> fan out to subscribed webhooks. Deliveries
+            // are flushed by api/cron/webhook-retry.php (5-min cron).
+            if ($sender === 'visitor') {
+                $pst = $db->prepare('SELECT name FROM properties WHERE id = ?');
+                $pst->execute([$conv['property_id']]);
+                $propName = $pst->fetch()['name'] ?? null;
+                webhook_enqueue($c['wid'], 'message.received', $conv['property_id'], [
+                    'event' => 'message.received',
+                    'conversation_id' => $conv['id'],
+                    'visitor_id' => $conv['contact_id'] ?? null,
+                    'visitor_name' => $conv['visitor_name'],
+                    'message_text' => $text,
+                    'property_id' => $conv['property_id'],
+                    'property_name' => $propName,
+                    'timestamp' => now_iso(),
+                ]);
+            }
             $st = $db->prepare('SELECT * FROM messages WHERE id = ?');
             $st->execute([$mid]);
             brix_json(m_message($st->fetch()), 201);
@@ -2348,6 +2365,10 @@ function route_webhooks(string $method, array $seg, $r1, $r2, $r3): void {
         }
         $events = $b['events'] ?? [];
         if (!is_array($events) || !$events) brix_fail('validation', 'events must be a non-empty array', 422);
+        $events = array_values(array_unique(array_map(fn($e) => v_str($e, 'event', 128), $events)));
+        foreach ($events as $ev) {
+            if (!webhook_event_is_known($ev)) brix_fail('validation', "unknown webhook event '{$ev}'", 422);
+        }
         // property_id is NOT NULL in the schema (FK to properties): a webhook
         // always belongs to one property.
         $propId = own('properties', v_required($b, 'property_id'), $c['wid'])['id'];
@@ -2356,7 +2377,7 @@ function route_webhooks(string $method, array $seg, $r1, $r2, $r3): void {
                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
            ->execute([$wid2, $c['wid'], $propId, $url,
                       array_key_exists('secret', $b) && $b['secret'] !== null ? v_str($b['secret'], 'secret', 1024) : null,
-                      jenc(array_values(array_unique(array_map(fn($e) => v_str($e, 'event', 128), $events)))),
+                      jenc($events),
                       array_key_exists('enabled', $b) ? (v_bool($b['enabled']) ? 1 : 0) : 1,
                       array_key_exists('auto_disable', $b) ? (v_bool($b['auto_disable']) ? 1 : 0) : 1]);
         audit_log($c['wid'], $c['member'], 'webhook.created', 'webhook', $wid2, ['url' => $url]);
@@ -2372,6 +2393,7 @@ function route_webhooks(string $method, array $seg, $r1, $r2, $r3): void {
         $wh = own('webhooks', $r1, $c['wid']);
         $b = req_body();
         $event = v_str(v_required($b, 'event'), 'event', 128);
+        if (!webhook_event_is_known($event)) brix_fail('validation', "unknown webhook event '{$event}'", 422);
         $propId = v_opt_uuid($b['property_id'] ?? null, 'property_id');
         if ($propId) own('properties', $propId, $c['wid']);
         $enq = webhook_enqueue($c['wid'], $event, $propId, isset($b['data']) && is_array($b['data']) ? $b['data'] : [],
@@ -2415,7 +2437,11 @@ function route_webhooks(string $method, array $seg, $r1, $r2, $r3): void {
             }
             if (array_key_exists('events', $b)) {
                 if (!is_array($b['events']) || !$b['events']) brix_fail('validation', 'events must be a non-empty array', 422);
-                $sets[] = 'events = ?'; $params[] = jenc(array_values(array_unique(array_map(fn($e) => v_str($e, 'event', 128), $b['events']))));
+                $evs = array_values(array_unique(array_map(fn($e) => v_str($e, 'event', 128), $b['events'])));
+                foreach ($evs as $ev) {
+                    if (!webhook_event_is_known($ev)) brix_fail('validation', "unknown webhook event '{$ev}'", 422);
+                }
+                $sets[] = 'events = ?'; $params[] = jenc($evs);
             }
             if (array_key_exists('secret', $b)) { // rotation; null clears
                 $sets[] = 'secret = ?'; $params[] = $b['secret'] === null ? null : v_str($b['secret'], 'secret', 1024);

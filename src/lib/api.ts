@@ -479,6 +479,7 @@ export const WEBHOOK_EVENTS: Array<{ name: string; description: string }> = [
   { name: 'chat.ended', description: 'Chat session ends' },
   { name: 'chat.transcript', description: 'Full transcript ready after a chat ends' },
   { name: 'message.created', description: 'Any new message (visitor, agent, or bot)' },
+  { name: 'message.received', description: 'A visitor sent a message' },
   { name: 'conversation.assigned', description: 'Chat assigned to an agent or department' },
   { name: 'conversation.status_changed', description: 'Status flips between open / closed / spam / missed' },
   { name: 'ticket.created', description: 'New support ticket (offline form, missed chat)' },
@@ -1390,6 +1391,21 @@ export class BrixApi {
       if (input.sender === 'visitor') c.unread += 1;
       if (c.status !== 'open') { c.status = 'open'; c.closed_at = null; }
       this.save(db);
+      // Real visitor message (usually from the website widget): fan out to
+      // subscribed webhooks. Agent/system/ai sends don't take this branch.
+      if (input.sender === 'visitor') {
+        const propName = db.properties.find((p) => p.id === c.property_id)?.name ?? null;
+        void this.dispatchWebhookEvent('message.received', c.property_id, {
+          event: 'message.received',
+          conversation_id: c.id,
+          visitor_id: null, // local-first transport tracks no visitor id
+          visitor_name: c.visitor_name,
+          message_text: m.text,
+          property_id: c.property_id,
+          property_name: propName,
+          timestamp: m.created_at,
+        });
+      }
       return { data: m };
     },
     assign: async (id: string, input: { agent_id?: string | null; department?: string }): Promise<Envelope<ApiConversation>> => {
@@ -2825,6 +2841,52 @@ export class BrixApi {
     },
   };
 
+  /**
+   * Fire a real event to every enabled webhook subscribed to it (frontend
+   * transports only). Fire-and-forget: never throws and never blocks the
+   * caller — chat must keep working if webhooks misbehave.
+   *
+   * The payload is HMAC-SHA256 signed with the webhook's secret and recorded
+   * in the delivery log as 'pending'. In local-first mode there is no worker
+   * to POST the HTTP request, so the entry is honest about it: real HTTP
+   * delivery runs through the PHP backend worker (api/cron/webhook-retry.php)
+   * once a MySQL backend is configured. The PHP transport skips this — its
+   * server enqueues deliveries itself.
+   */
+  async dispatchWebhookEvent(event: string, propertyId: string, data: Record<string, unknown>): Promise<void> {
+    try {
+      const db = this.db();
+      const hooks = db.webhooks.filter(
+        (w) => w.enabled && w.property_id === propertyId && w.events.includes(event),
+      );
+      if (!hooks.length) return;
+      for (const w of hooks) {
+        let signed: SignedPayload | null = null;
+        try {
+          signed = await signWebhook(w.secret, event, propertyId, data);
+        } catch {
+          signed = null; // e.g. non-secure context — record the payload unsigned
+        }
+        db.deliveries.unshift({
+          id: uid('dlv'),
+          webhook_id: w.id,
+          event,
+          event_id: signed?.headers['X-Brix-Event-Id'] ?? uid('evt'),
+          payload: signed?.payload ?? { event, property_id: propertyId, timestamp: new Date().toISOString(), data },
+          status: 'pending',
+          http_status: null,
+          attempts: 0,
+          created_at: isoNow(),
+          note: 'Pending — HTTP delivery runs through the backend webhook worker (api/cron/webhook-retry.php) once a MySQL/PHP backend is configured.',
+        });
+      }
+      db.deliveries = db.deliveries.slice(0, 500);
+      this.save(db);
+    } catch {
+      /* webhooks must never break chat */
+    }
+  }
+
   // ---- api keys ------------------------------------------------------------------
   apiKeys = {
     list: async (): Promise<Envelope<ApiKeyRecord[]>> => {
@@ -2959,6 +3021,17 @@ export function samplePayload(event: string): Record<string, unknown> {
       return { conversation_id: conv.id, visitor: conv.visitor, messages: [{ sender: 'visitor', text: 'Hi! Do you offer annual billing?', at: '2026-09-23T14:00:00Z' }] };
     case 'message.created':
       return { message_id: 'msg_1a2b3c', conversation_id: conv.id, sender: 'visitor', text: 'Hi! Do you offer annual billing?' };
+    case 'message.received':
+      return {
+        event: 'message.received',
+        conversation_id: conv.id,
+        visitor_id: 'vis_7h2k',
+        visitor_name: conv.visitor.name,
+        message_text: 'Hi! Do you offer annual billing?',
+        property_id: 'prop_9f3k2m',
+        property_name: 'Demo Store',
+        timestamp: '2026-09-25T08:00:00Z',
+      };
     case 'conversation.assigned':
       return { conversation_id: conv.id, assignee: { type: 'agent', name: 'Demo Agent' } };
     case 'conversation.status_changed':
@@ -3832,6 +3905,25 @@ export class SupabaseBrixApi extends BrixApi {
               patch.closed_at = null;
             }
             if (Object.keys(patch).length) await this.updWs('conversations', id, patch, (r: Row) => r, 'Conversation');
+            // Real visitor message: fan out to subscribed webhooks (local-first
+            // webhooks registry; never blocks or breaks the send).
+            if (input.sender === 'visitor') {
+              let propName: string | null = null;
+              try {
+                const prow = await this.oneWsRaw('properties', String(row.property_id), 'Property');
+                propName = (prow?.name as string | undefined) ?? null;
+              } catch { /* ignore */ }
+              void this.dispatchWebhookEvent('message.received', String(row.property_id), {
+                event: 'message.received',
+                conversation_id: id,
+                visitor_id: null, // remote transport tracks no visitor id in the local registry
+                visitor_name: String(row.visitor_name ?? 'Guest'),
+                message_text: m.text,
+                property_id: String(row.property_id),
+                property_name: propName,
+                timestamp: m.created_at,
+              });
+            }
             return { data: m };
           },
           () => base_conversations.sendMessage(id, input),

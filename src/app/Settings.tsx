@@ -389,7 +389,7 @@ function SoundNotifications({ agent }: { agent: string }) {
               <Button
                 size="sm"
                 variant="secondary"
-                onClick={() => fireIncomingMessage(agent, 'Demo visitor', 'Hi! Is anyone there? This is a simulated incoming message to test your sound + desktop settings.')}
+                onClick={() => fireIncomingMessage(agent, 'Demo visitor', 'Hi! Is anyone there? This is a simulated incoming message to test your sound + desktop settings.', '/app', { preview: true, messageId: `demo-${Date.now()}` })}
               >
                 ✉ Simulate incoming message
               </Button>

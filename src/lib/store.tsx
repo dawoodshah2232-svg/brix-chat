@@ -22,6 +22,7 @@ import type {
 import { getApi, ApiError, StorageQuotaError } from './api';
 import { isPhpApiEnabled, ensurePhpPolling, stopPhpPolling, clearPhpToken } from './php-client';
 import type { ApiMember } from './api';
+import { fireIncomingMessage } from './sounds';
 import { seedData, seedDataForWorkspace, seedWorkspaces } from './seed';
 import { clientStatus } from '../components/admin/platform';
 import { detectDistress } from './quality';
@@ -395,15 +396,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const addMessage: Store['addMessage'] = (convId, msg) => {
       // P4-6 distress alert: heuristic check on live visitor messages.
       let distress: { convId: string; visitor: string; words: string[] } | null = null;
+      let visitorName = 'Visitor';
+      const messageId = uid('m');
       patchData((d) => {
         const cfg = d.settings.distress ?? { enabled: true, customWords: [] };
+        const conv = d.conversations.find((c) => c.id === convId);
+        if (conv) visitorName = msg.name?.trim() || conv.visitor || 'Visitor';
         return {
           ...d,
           conversations: d.conversations.map((c) => {
             if (c.id !== convId) return c;
             const updated: Conversation = {
               ...c,
-              messages: [...c.messages, { ...msg, id: uid('m'), ts: msg.ts ?? Date.now() } as ChatMessage],
+              messages: [...c.messages, { ...msg, id: messageId, ts: msg.ts ?? Date.now() } as ChatMessage],
               updatedAt: Date.now(),
               unread: msg.from === 'visitor' ? c.unread + 1 : c.unread,
             };
@@ -420,6 +425,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         };
       });
       if (distress) window.dispatchEvent(new CustomEvent('brix:distress', { detail: distress }));
+      // Desktop notification fan-out: a real visitor message reached the
+      // agent's dashboard. Never fires for agent/system/ai messages (they
+      // don't take this branch) or blank texts; the helper also honors the
+      // agent's desktop toggle + browser permission and dedupes per message.
+      if (msg.from === 'visitor') {
+        const agentName = persisted.session?.displayName?.trim() || 'Agent';
+        fireIncomingMessage(agentName, visitorName, msg.text, '/app', { messageId, convId });
+      }
     };
 
     const updateConversation: Store['updateConversation'] = (convId, patch) => {

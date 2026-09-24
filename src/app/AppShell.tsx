@@ -135,6 +135,19 @@ export default function AppShell() {
   });
   const { unread, onlineVisitors, ticketBadge } = useBadges();
 
+  // Desktop-notification clicks (brix:focus-conversation from sounds.ts):
+  // bring the agent to the right thread inside the app. Cross-tab/window
+  // focusing is handled by window.focus() in the click handler — the most
+  // the platform allows from a Notification.
+  useEffect(() => {
+    const onFocusConv = (e: Event) => {
+      const convId = (e as CustomEvent<{ convId?: string }>).detail?.convId;
+      if (convId) navigate(`/app?c=${encodeURIComponent(convId)}`);
+    };
+    window.addEventListener('brix:focus-conversation', onFocusConv);
+    return () => window.removeEventListener('brix:focus-conversation', onFocusConv);
+  }, [navigate]);
+
   const role = session?.role ?? 'agent';
   const showQuality = role !== 'viewer';
 

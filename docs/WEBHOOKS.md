@@ -19,6 +19,7 @@ signature header.
 | `chat.ended` | Chat session ends | conversation id, duration, message count, agent |
 | `chat.transcript` | Full transcript ready after a chat ends | conversation id, visitor, messages[] |
 | `message.created` | Any new message (visitor, agent, or bot) | message id, conversation id, sender, text |
+| `message.received` | A visitor sent a message | conversation id, visitor id, visitor name, message text, property id/name |
 | `conversation.assigned` | Chat assigned to an agent or department | conversation id, assignee |
 | `conversation.status_changed` | Status flips open / closed / spam / missed | conversation id, old/new status |
 | `ticket.created` | New ticket (offline form, missed chat) | ticket id, subject, requester |

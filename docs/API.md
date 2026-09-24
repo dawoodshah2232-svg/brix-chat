@@ -134,7 +134,7 @@ SLA breaches emit the `ticket.sla_breached` webhook.
 | `api.deliveries.testFire(webhookId, event)` | Build the exact signed payload that *would* be POSTed and log it as a `test` delivery. Local-only: no request leaves the browser. |
 
 Event catalog: `chat.started`, `chat.ended`, `chat.transcript`, `message.created`,
-`conversation.assigned`, `conversation.status_changed`, `ticket.created`,
+`message.received`, `conversation.assigned`, `conversation.status_changed`, `ticket.created`,
 `ticket.status_changed`, `contact.created`, `contact.updated`,
 `satisfaction.received`, `widget.opened`. See `docs/WEBHOOKS.md` for signing.
 

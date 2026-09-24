@@ -12,7 +12,7 @@ import { samplePayload } from '../lib/api';
 import { timeAgo, cx } from '../lib/utils';
 
 const SCOPES = ['chat:read', 'chat:write', 'contacts:read', 'contacts:write', 'tickets:read', 'tickets:write', 'metrics:read', 'webhooks:read', 'webhooks:write'];
-const EVENTS = ['chat.started', 'chat.ended', 'message.created', 'conversation.assigned', 'ticket.created', 'ticket.status_changed', 'ticket.sla_breached', 'rating.created', 'campaign.sent', 'goal.completed'];
+const EVENTS = ['chat.started', 'chat.ended', 'message.created', 'message.received', 'conversation.assigned', 'ticket.created', 'ticket.status_changed', 'ticket.sla_breached', 'rating.created', 'campaign.sent', 'goal.completed'];
 
 function ShowOnce({ title, value, hint, onDone }: { title: string; value: string; hint: string; onDone: () => void }) {
   return (
@@ -321,6 +321,10 @@ export default function Developers() {
           </div>
           <div>
             <Label>Events</Label>
+            <p className="text-xs text-slate-500 mb-2">
+              <code className="font-mono">message.received</code> fires when a visitor sends a message
+              (<code className="font-mono">message.created</code> fires for any new message, including agent and bot replies).
+            </p>
             <div className="grid grid-cols-2 gap-2 mt-1 max-h-56 overflow-y-auto slim-scroll">
               {EVENTS.map((e) => (
                 <label key={e} className={cx('flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-mono cursor-pointer transition', hookDraft?.events?.includes(e) ? 'border-brix-500 bg-brix-50 text-brix-800' : 'border-slate-200 text-slate-600')}>

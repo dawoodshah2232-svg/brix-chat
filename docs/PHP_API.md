@@ -337,11 +337,46 @@ No `internal_only` column in the schema: draft status = internal-only.
   `next_attempt_at = now`).
 - Dispatch: `POST /webhooks/:id/dispatch` enqueues + flushes immediately;
   `api/cron/webhook-retry.php` sweeps due deliveries.
-- Signing: `X-Brix-Signature: sha256=<HMAC-SHA256(raw JSON body, secret)>`
-  (only when a secret is set).
+- Signing: `X-Brix-Signature: hex(HMAC-SHA256(secret, "<unix_seconds>.<raw_json_body>"))`
+  (only when a secret is set; matches `docs/WEBHOOKS.md`).
 - Retry backoff: 1m → 10m → 1h → 6h; **dead after 5 attempts**; webhook
   **auto-disabled after 10 consecutive failures** (`auto_disable=1`).
 - Every attempt is logged to `webhook_delivery_attempts`.
+
+### Automatic events
+
+Some events fire automatically — no manual dispatch needed:
+
+| Event | Trigger | Payload (`data`) |
+|---|---|---|
+| `message.received` | A visitor sends a message (`POST /conversations/:id/messages` with `sender=visitor`) | `{event, conversation_id, visitor_id, visitor_name, message_text, property_id, property_name, timestamp}` |
+| `ticket.sla_breached` | `sla-checker.php` cron flags an overdue ticket | ticket payload (see code) |
+
+Example `message.received` body:
+
+```json
+{
+  "event": "message.received",
+  "event_id": "evt_9f3k2m",
+  "property_id": "prop_123",
+  "timestamp": "2026-09-25T08:00:00Z",
+  "data": {
+    "event": "message.received",
+    "conversation_id": "conv_9f3k2m",
+    "visitor_id": "con_4d5e",
+    "visitor_name": "Ayesha Khan",
+    "message_text": "Hi! Do you offer annual billing?",
+    "property_id": "prop_123",
+    "property_name": "Demo Store",
+    "timestamp": "2026-09-25T08:00:00Z"
+  }
+}
+```
+
+(`visitor_id` is the contact id, `null` when the visitor has no contact record.)
+Enqueue is synchronous with the message insert; HTTP delivery goes out via
+the 5-minute `webhook-retry.php` cron. Event names on webhook create/update
+and on manual dispatch are validated against the server event catalog.
 
 ## 8. Cron jobs (cPanel)
 

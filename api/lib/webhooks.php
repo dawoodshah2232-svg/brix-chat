@@ -8,6 +8,39 @@ const WEBHOOK_BACKOFF_SEC = [60, 600, 3600, 21600]; // 1m, 10m, 1h, 6h
 const WEBHOOK_MAX_ATTEMPTS = 5;
 const WEBHOOK_DISABLE_AFTER = 10;
 
+// Canonical event catalog (mirrors WEBHOOK_EVENTS in src/lib/api.ts).
+// HTTP boundaries validate event names against this list.
+const WEBHOOK_EVENT_CATALOG = [
+    'chat.started' => 'Visitor sends the first message of a chat',
+    'chat.ended' => 'Chat session ends',
+    'chat.transcript' => 'Full transcript ready after a chat ends',
+    'message.created' => 'Any new message (visitor, agent, or bot)',
+    'message.received' => 'A visitor sent a message',
+    'conversation.assigned' => 'Chat assigned to an agent or department',
+    'conversation.status_changed' => 'Status flips between open / closed / spam / missed',
+    'ticket.created' => 'New support ticket (offline form, missed chat)',
+    'ticket.status_changed' => 'Ticket resolved or reopened',
+    'contact.created' => 'Contact record created',
+    'contact.updated' => 'Contact record updated',
+    'satisfaction.received' => 'Visitor submits a post-chat rating',
+    'widget.opened' => 'Visitor opens the chat widget',
+    'ticket.sla_breached' => 'A ticket passed its SLA due time unresolved',
+    'campaign.sent' => 'A campaign finished sending',
+    'goal.completed' => 'A tracked goal event fired',
+    'widget.rating' => 'Visitor rates the widget experience',
+    'rating.created' => 'Visitor submits a CSAT or NPS rating',
+];
+
+/** True when $event is a known webhook event name. */
+function webhook_event_is_known(string $event): bool {
+    return array_key_exists($event, WEBHOOK_EVENT_CATALOG);
+}
+
+/** Human description of an event ('' for unknown names). */
+function webhook_event_description(string $event): string {
+    return WEBHOOK_EVENT_CATALOG[$event] ?? '';
+}
+
 // Enqueue one delivery per subscribed, enabled webhook.
 function webhook_enqueue(string $wid, string $event, ?string $property_id, array $data, ?string $event_id = null): array {
     $db = brix_db();

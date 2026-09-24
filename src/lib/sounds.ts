@@ -157,13 +157,57 @@ export async function requestDesktopPermission(): Promise<NotificationPermission
   }
 }
 
-function showDesktop(title: string, body: string, link?: string): void {
+/** Focuses the dashboard tab/window and opens the relevant conversation.
+ *  Cross-tab selection is not possible from a Notification click — the most
+ *  the platform allows is focusing this window and navigating inside it. */
+function focusConversation(convId?: string, fallbackLink = '/app'): void {
+  try {
+    window.focus();
+    if (convId) {
+      window.dispatchEvent(new CustomEvent('brix:focus-conversation', { detail: { convId } }));
+    } else {
+      window.location.href = fallbackLink;
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Message ids already raised as desktop notifications this session (dedupe). */
+const firedNotificationIds = new Set<string>();
+
+/** Clear the session dedupe set (tests / sign-out). */
+export function resetNotificationDedupe(): void {
+  firedNotificationIds.clear();
+}
+
+/** Tab/window is not the thing the agent is looking at right now. */
+function isBackgrounded(): boolean {
+  try {
+    return document.hidden || !document.hasFocus();
+  } catch {
+    return true;
+  }
+}
+
+function showDesktop(
+  title: string,
+  body: string,
+  opts: { link?: string; tag?: string; convId?: string } = {},
+): void {
   try {
     if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
-    const n = new Notification(title, { body });
+    if (opts.tag) {
+      if (firedNotificationIds.has(opts.tag)) return; // already raised — no duplicate
+      firedNotificationIds.add(opts.tag);
+    }
+    const n = new Notification(title, {
+      body,
+      tag: opts.tag, // replaces a same-tag notification instead of stacking
+      requireInteraction: false,
+    } as NotificationOptions);
     n.onclick = () => {
-      window.focus();
-      if (link) window.location.hash = ''; // noop guard; navigation handled by caller
+      focusConversation(opts.convId, opts.link ?? '/app');
       n.close();
     };
   } catch {
@@ -177,17 +221,51 @@ export const EVENT_LABELS: Record<NotifyEvent, string> = {
   mention: 'Mention in a note',
 };
 
+export interface IncomingMessageOpts {
+  /** Stable message id — used to dedupe repeat fires. */
+  messageId?: string;
+  /** Conversation id — clicking the notification opens this thread. */
+  convId?: string;
+  /** In-app fallback route when no convId is given. */
+  link?: string;
+  /** Bypass the hidden-tab gate (used by the Settings preview button). */
+  preview?: boolean;
+}
+
+/** Truncate a message preview for notification bodies (~80 chars). */
+export function truncatePreview(text: string, max = 80): string {
+  const t = text.trim();
+  return t.length > max ? `${t.slice(0, max)}…` : t;
+}
+
 /**
  * Full incoming-message fan-out for a simulated/live visitor message.
  * Honors the agent's prefs: plays the tone (if sound on), shows a toast,
- * and raises a desktop Notification (if enabled + permitted).
+ * and raises a desktop Notification — the desktop Notification only when
+ * desktop notifications are enabled, permission is 'granted', and the tab
+ * is in the background (or the caller explicitly passes preview: true).
+ * Never fires for blank/empty texts; dedupes repeat fires per message id.
  */
-export function fireIncomingMessage(agent: string, visitor: string, text: string, link = '/app'): void {
+export function fireIncomingMessage(
+  agent: string,
+  visitor: string,
+  text: string,
+  link = '/app',
+  opts: IncomingMessageOpts = {},
+): void {
+  if (!text.trim()) return; // e.g. rating-only messages have no preview text
   const p = loadNotifyPrefs(agent);
   if (!p.events.newMessage) return;
   if (p.sound) playTone(p.tone, p.volume);
-  toast.info(`New message from ${visitor}`, text.length > 90 ? `${text.slice(0, 90)}…` : text);
-  if (p.desktop) showDesktop(`New message from ${visitor}`, text, link);
+  const body = truncatePreview(text);
+  toast.info(`New message from ${visitor}`, body);
+  if (p.desktop && Notification.permission === 'granted' && (opts.preview || isBackgrounded())) {
+    showDesktop(`New message from ${visitor}`, body, {
+      link: opts.link ?? link,
+      tag: opts.messageId ?? `incoming-${Date.now()}`,
+      convId: opts.convId,
+    });
+  }
 }
 
 /** Generic event fan-out (assignment / mention) honoring prefs. */
@@ -196,5 +274,7 @@ export function fireNotifyEvent(agent: string, event: NotifyEvent, title: string
   if (!p.events[event]) return;
   if (p.sound) playTone(p.tone, p.volume);
   toast.info(title, body);
-  if (p.desktop) showDesktop(title, body ?? '');
+  if (p.desktop && Notification.permission === 'granted' && isBackgrounded()) {
+    showDesktop(title, body ?? '', { tag: `notify-${event}-${Date.now()}` });
+  }
 }
