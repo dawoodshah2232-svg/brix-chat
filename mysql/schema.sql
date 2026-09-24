@@ -23,8 +23,9 @@
 --   2. Select the database, open the Import tab, upload this file, Go.
 --   3. The file is safe to import into a FRESH (empty) database. Re-importing
 --      into a database that already has these tables will skip table creation
---      (CREATE TABLE IF NOT EXISTS) and skip the demo seed (it exits early
---      when a workspace with slug 'demo' exists).
+--      (CREATE TABLE IF NOT EXISTS) and skip each demo seed independently
+--      (the 'demo' and 'acme' workspace seeds each exit early when a
+--      workspace with that slug already exists).
 --
 -- PORTING NOTES (Postgres -> MySQL)
 --   * uuid PKs            -> CHAR(36). IDs are minted CLIENT-side
@@ -103,15 +104,20 @@
 --
 -- PASSCODES
 --   member_credentials.passcode_hash is VARCHAR(255) holding a bcrypt hash.
---   The demo seed below stores the same placeholder as the Postgres seed
---   ('__PLACEHOLDER__set_via_member_set_passcode' — deliberately NOT valid
---   bcrypt, login rejects it). Set real passcodes through the app's
---   set-passcode flow, which must use PHP:
---     $hash = password_hash($passcode, PASSWORD_BCRYPT); // verify with password_verify()
---   (Documented demo passcode for the 'demo' workspace's Demo Agent: '3456'.)
+--   The seed below stores REAL bcrypt hashes (generated with PHP
+--   password_hash($passcode, PASSWORD_BCRYPT); verify with password_verify()).
+--   PUBLIC DEMO CREDENTIALS (intentional — this is a demo/dev seed, identical
+--   in spirit to the frontend's localStorage demo data):
+--     workspace slug 'demo' -> passcode '3456' (Demo Agent, Sara, Omar)
+--     workspace slug 'acme' -> passcode '7890' (Ava Client, Ben Agent)
+--   These passcodes are NOT secrets; they exist so the shipped demo data is
+--   usable out of the box. Real deployments should change them via the
+--   member set-passcode endpoint (POST /members/:id/passcode).
 --   NOTE: the Postgres migrations seed ONLY the 'demo' workspace — there is
---   no 'acme' workspace and no '7890' passcode anywhere in the source
---   migrations, so none is created here either.
+--   no 'acme' workspace in the source migrations. The 'acme' seed here mirrors
+--   the frontend localStorage demo store instead (src/lib/seed.ts:
+--   workspace slug 'acme', displayName 'Ava Client', passcode '7890',
+--   role 'admin'), which the Postgres seed never covered.
 --
 -- TRANSACTIONS
 --   MySQL/MariaDB DDL auto-commits (each CREATE TABLE is its own implicit
@@ -1924,9 +1930,10 @@ CREATE TRIGGER trg_delivery_ws_backfill BEFORE INSERT ON webhook_deliveries
   FOR EACH ROW SET NEW.workspace_id = COALESCE(NEW.workspace_id,
     (SELECT workspace_id FROM webhooks WHERE id = NEW.webhook_id));
 -- ============================================================================
--- Demo seed (ports 002_seed_demo.sql)
--- Idempotent: the procedure exits early when a workspace with slug 'demo'
--- already exists, mirroring the Postgres DO-block guard.
+-- Demo + Acme seed (ports 002_seed_demo.sql, plus the 'acme' workspace that the
+-- frontend localStorage demo store defines in src/lib/seed.ts)
+-- Idempotent: each workspace seed exits early when a workspace with its slug
+-- ('demo' / 'acme') already exists, mirroring the Postgres DO-block guard.
 -- The whole seed runs inside one explicit transaction.
 -- ============================================================================
 
@@ -1935,12 +1942,13 @@ DELIMITER $$
 CREATE PROCEDURE brix_seed_demo()
 seed_block: BEGIN
   DECLARE v_now TIMESTAMP DEFAULT NULL;
-  -- Placeholder: NOT a valid bcrypt hash on purpose (login rejects any hash
-  -- that is not bcrypt). Replace via the app's set-passcode flow, which must
-  -- store password_hash($passcode, PASSWORD_BCRYPT). The documented demo
-  -- passcode for 'Demo Agent' is '3456'.
-  DECLARE c_placeholder VARCHAR(255)
-    DEFAULT '__PLACEHOLDER__set_via_member_set_passcode';
+  -- REAL bcrypt hashes (see PASSCODES header). Public demo credentials:
+  -- 'demo' workspace members all use passcode '3456'; 'acme' members '7890'.
+  -- Generated with: php -r "echo password_hash('3456', PASSWORD_BCRYPT), PHP_EOL;"
+  DECLARE c_hash_3456 VARCHAR(255)
+    DEFAULT '$2y$10$bb5Hd4Za1UX8.kIn4ha8zudkIsm7ouCz9oA5G8I7XZvmPqLCugLHq';
+  DECLARE c_hash_7890 VARCHAR(255)
+    DEFAULT '$2y$10$ZrnDlG3CEJAYL1l3K9DGletOk4IfFhgCz6C3nV4pynbOZbPaa1GM6';
 
   DECLARE c_ws        CHAR(36) DEFAULT '2c9f14ce-7614-4cda-a34a-8f506dce5f50';
   DECLARE c_prop      CHAR(36) DEFAULT '942e5c96-cc32-4ab8-b1bf-8a5cbc3a236a';
@@ -1992,7 +2000,7 @@ seed_block: BEGIN
     '{"color":"#4f46e5","position":"bottom-right","bubble":"round","greeting":"Hi there! How can we help you today?","offline_text":"We are currently offline. Leave a message and we will reply soon.","agent_name":"Support Team","show_branding":true,"prechat_form":false}'
   );
 
-  -- Members (placeholder passcode hashes — see header) --------------------------
+  -- Members (real bcrypt passcode hashes — see PASSCODES header) -------------------
   INSERT INTO members
     (id, workspace_id, display_name, initials, color, role, job_title, status)
   VALUES
@@ -2002,9 +2010,9 @@ seed_block: BEGIN
 
   INSERT INTO member_credentials (member_id, passcode_hash)
   VALUES
-    (c_admin, c_placeholder),
-    (c_sara,  c_placeholder),
-    (c_omar,  c_placeholder);
+    (c_admin, c_hash_3456),
+    (c_sara,  c_hash_3456),
+    (c_omar,  c_hash_3456);
 
   -- Departments ------------------------------------------------------------------
   INSERT INTO departments
@@ -2111,5 +2119,135 @@ START TRANSACTION;
 CALL brix_seed_demo();
 COMMIT;
 DROP PROCEDURE brix_seed_demo;
+
+-- ============================================================================
+-- Acme seed (mirrors the frontend localStorage demo store in src/lib/seed.ts)
+-- Idempotent: skipped when a workspace with slug 'acme' already exists.
+-- Mirrors: seedWorkspaces() acme entry (slug 'acme', displayName 'Ava Client',
+-- passcode '7890', role 'admin') + seedAcme*() data (Acme Store property,
+-- Ava Client + Ben Agent team members, departments, Huda Al Farsi chat,
+-- canned replies, Acme-flavored widget/branding).
+-- ============================================================================
+
+DROP PROCEDURE IF EXISTS brix_seed_acme;
+DELIMITER $$
+CREATE PROCEDURE brix_seed_acme()
+seed_block: BEGIN
+  DECLARE v_now TIMESTAMP DEFAULT NULL;
+  -- Real bcrypt hash of the public acme demo passcode '7890'
+  -- (see PASSCODES header — intentional public demo credential).
+  DECLARE c_hash_7890 VARCHAR(255)
+    DEFAULT '$2y$10$ZrnDlG3CEJAYL1l3K9DGletOk4IfFhgCz6C3nV4pynbOZbPaa1GM6';
+
+  DECLARE a_ws        CHAR(36) DEFAULT '1182dccf-8f49-4fa0-92bb-f8136fb65a68';
+  DECLARE a_prop      CHAR(36) DEFAULT '8699e07f-c974-4633-bc30-64435d4d9fb6';
+  DECLARE a_ava       CHAR(36) DEFAULT '16b34bff-73e5-42fc-a2d0-bd5bbc5d3130';
+  DECLARE a_ben       CHAR(36) DEFAULT '6205c5ac-63b9-4e51-80e7-19e7f189101f';
+  DECLARE a_dep_sales CHAR(36) DEFAULT 'c8a476c6-126e-4263-906d-8f2562883788';
+  DECLARE a_dep_supp  CHAR(36) DEFAULT '700821e6-6688-4169-8450-89a7697b4503';
+  DECLARE a_conv      CHAR(36) DEFAULT '29c13ba5-2e69-4f5b-ba5b-699b42d848c1';
+  DECLARE a_msg1      CHAR(36) DEFAULT '6119237b-e756-440d-b904-b1cc68a40bb2';
+  DECLARE a_msg2      CHAR(36) DEFAULT '935ec586-9057-4b11-a79a-c46ea0fb7f4f';
+  DECLARE a_msg3      CHAR(36) DEFAULT '5ed44618-6ade-457a-8c01-300024e56095';
+  DECLARE a_contact   CHAR(36) DEFAULT '4792fb10-d26c-4c2a-8560-416dfb185f65';
+  DECLARE a_canned1   CHAR(36) DEFAULT '7075643e-3a2b-4ee4-a6e4-d75f3600899d';
+  DECLARE a_canned2   CHAR(36) DEFAULT '9c7b3f21-4d5e-4a8b-9c1d-2e6f8a0b4c5d';
+  DECLARE a_branding  CHAR(36) DEFAULT '1f2e3d4c-5b6a-4789-9e0f-1a2b3c4d5e6f';
+  DECLARE a_psettings CHAR(36) DEFAULT '2a3b4c5d-6e7f-4890-a1b2-c3d4e5f60718';
+  DECLARE a_audit1    CHAR(36) DEFAULT '3b4c5d6e-7f80-49a1-b2c3-d4e5f6071829';
+
+  IF EXISTS (SELECT 1 FROM workspaces WHERE slug = 'acme') THEN
+    LEAVE seed_block;
+  END IF;
+
+  SET v_now = UTC_TIMESTAMP();
+
+  -- Workspace + property -------------------------------------------------------
+  INSERT INTO workspaces (id, name, slug)
+  VALUES (a_ws, 'Acme Store', 'acme');
+
+  INSERT INTO properties (id, workspace_id, name, domain, public_key, secure_mode, widget_config)
+  VALUES (
+    a_prop, a_ws, 'Acme Store', 'acme-store.brixchat.com', 'bx_acme_9d2f4a1b7e5c083d', 0,
+    '{"color":"#0d9488","position":"bottom-right","bubble":"round","greeting":"Hi! Looking for gear? Ask us anything.","offline_text":"We are away — leave a message and we will reply within a few hours.","agent_name":"Acme Store team","show_branding":true,"prechat_form":false}'
+  );
+
+  -- Members (real bcrypt passcode hashes — see PASSCODES header) -----------------
+  INSERT INTO members
+    (id, workspace_id, display_name, initials, color, role, job_title, status)
+  VALUES
+    (a_ava, a_ws, 'Ava Client', 'AC', '#0d9488', 'admin', 'Store Owner', 'offline'),
+    (a_ben, a_ws, 'Ben Agent',  'BA', '#4f46e5', 'agent', '',            'offline');
+
+  INSERT INTO member_credentials (member_id, passcode_hash)
+  VALUES
+    (a_ava, c_hash_7890),
+    (a_ben, c_hash_7890);
+
+  -- Departments ------------------------------------------------------------------
+  INSERT INTO departments
+    (id, workspace_id, property_id, name, description, routing_mode, offline_behavior)
+  VALUES
+    (a_dep_sales, a_ws, a_prop, 'Sales',   'Orders, discounts and shipping.', 'round-robin', 'ticket'),
+    (a_dep_supp,  a_ws, a_prop, 'Support', 'Returns, exchanges and order help.', 'least-busy',  'message');
+
+  INSERT INTO department_members (department_id, member_id)
+  VALUES (a_dep_sales, a_ava), (a_dep_supp, a_ava), (a_dep_sales, a_ben);
+
+  -- Branding + property settings ---------------------------------------------------
+  INSERT INTO branding
+    (id, workspace_id, property_id, brand_name, tagline, theme, accent_color,
+     widget_color, widget_position, launcher_style, language)
+  VALUES
+    (a_branding, a_ws, a_prop, 'Acme Store', 'Outdoor gear, delivered fast.', 'light',
+     '#0d9488', '#0d9488', 'bottom-right', 'bubble', 'en');
+
+  INSERT INTO property_settings (id, workspace_id, property_id, settings)
+  VALUES (
+    a_psettings, a_ws, a_prop,
+    '{"greeting_online":"Hi! Looking for gear? Ask us anything.","greeting_away":"We stepped away for a moment — leave a message and we will be right back.","greeting_offline":"We are away — leave a message and we will reply within a few hours.","offline_form_enabled":true,"offline_form_fields":["name","email","message"],"prechat_enabled":false,"prechat_fields":["name","email"],"business_hours":[{"day":1,"open":"09:00","close":"18:00"},{"day":2,"open":"09:00","close":"18:00"},{"day":3,"open":"09:00","close":"18:00"},{"day":4,"open":"09:00","close":"18:00"},{"day":5,"open":"09:00","close":"18:00"}],"timezone":"Asia/Dubai","blocked":[],"booking_url":""}'
+  );
+
+  -- Sample conversation (visitor Huda Al Farsi — mirrors seed.ts) ------------------
+  INSERT INTO conversations
+    (id, workspace_id, property_id, visitor_name, visitor_email, page_url, referrer,
+     status, department_id, assignee_id, tags, priority, unread)
+  VALUES
+    (a_conv, a_ws, a_prop, 'Huda Al Farsi', 'huda@example.com', '/products/trail-backpack-45l', '',
+     'open', a_dep_sales, a_ben, '["order","shipping"]', 'medium', 1);
+
+  INSERT INTO messages (id, workspace_id, conversation_id, sender, kind, text, metadata, created_at)
+  VALUES
+    (a_msg1, a_ws, a_conv, 'visitor', 'text', 'Hi! Is the Trail Backpack 45L waterproof?',
+     '{}', v_now - INTERVAL 22 MINUTE),
+    (a_msg2, a_ws, a_conv, 'agent',   'text', 'Hi Huda! It is water-resistant with a rain cover included — the cover packs into its own pocket. Happy to add one to your cart.',
+     '{}', v_now - INTERVAL 19 MINUTE),
+    (a_msg3, a_ws, a_conv, 'visitor', 'text', 'And delivery to Dubai — how long?',
+     '{}', v_now - INTERVAL 6 MINUTE);
+
+  INSERT INTO contacts
+    (id, workspace_id, property_id, name, email, country, tags, notes, source, chats_count, last_seen_at)
+  VALUES
+    (a_contact, a_ws, a_prop, 'Huda Al Farsi', 'huda@example.com', 'UAE', '["customer"]',
+     'Asked about the Trail Backpack 45L.', 'chat', 1, v_now);
+
+  -- Canned responses --------------------------------------------------------------
+  INSERT INTO canned_responses (id, workspace_id, property_id, shortcut, title, body)
+  VALUES
+    (a_canned1, a_ws, a_prop, '/greet',    'Greeting',            'Hi there! Welcome to Acme Store — looking for anything in particular today?'),
+    (a_canned2, a_ws, a_prop, '/discount', 'First-order discount', 'Here is 10% off your first order: ACME10 — applied automatically at checkout.');
+
+  -- Audit trail entry ------------------------------------------------------------------
+  INSERT INTO audit_log (id, workspace_id, actor_name, action, entity, entity_id, meta)
+  VALUES (a_audit1, a_ws, 'system', 'workspace.seeded', 'workspace', a_ws,
+          '{"note":"acme seed (mirrors src/lib/seed.ts localStorage demo)"}');
+
+END$$
+DELIMITER ;
+
+START TRANSACTION;
+CALL brix_seed_acme();
+COMMIT;
+DROP PROCEDURE brix_seed_acme;
 
 -- End of Brix Chat MySQL/MariaDB schema.

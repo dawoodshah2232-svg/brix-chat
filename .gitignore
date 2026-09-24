@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Brix Chat PHP API local config (contains DB password + APP_SECRET)
+api/config.php
