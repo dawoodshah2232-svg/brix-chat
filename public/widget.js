@@ -9,9 +9,19 @@
  *   <script async src="https://YOUR-HOST/brix-chat/widget.js" data-property="bx_..."></script>
  *
  * data-* overrides: data-property (required; legacy data-key also works),
- *   data-color, data-position (bottom-right|bottom-left), data-greeting, data-locale,
+ *   data-color, data-position (bottom-right|bottom-left|top-right|top-left),
+ *   data-greeting, data-locale,
  *   data-theme (light|dark|auto — widget color scheme; default follows the
  *   property branding theme set in Admin → Branding).
+ *   data-launcher-style (bubble|bar), data-launcher-icon (chat|headset|dots),
+ *   data-launcher-icon-svg (sanitized SVG data URL — a custom launcher icon
+ *   uploaded in Admin → Branding), data-launcher-shape (circle|rounded),
+ *   data-badge (1|0 — unread count badge), data-pulse (1|0 — attention pulse),
+ *   data-greeting-tooltip (tooltip text), data-greeting-tooltip-delay
+ *   (seconds before the tooltip appears; default 5).
+ *   All of these are also accepted on boot({...}) — e.g. boot({ position:
+ *   'top-left', launcherIcon: 'headset' }). boot() also accepts the
+ *   PropertySettings snake_case aliases (launcher_icon, launcher_shape, …).
  *   data-queue="1" — chat queue position: when the property has queue enabled
  *   (also via boot({ queue: true })), the loader shows "You're #N in line —
  *   about X min wait" from the shared queue key below, and forwards the flag
@@ -136,13 +146,50 @@
 
   var validTheme = function (th) { return th === 'light' || th === 'dark' || th === 'auto' ? th : ''; };
 
+  /* phase 6: launcher customization validators (mirror the PropertySettings
+   * fields launcher_icon/launcher_icon_svg/launcher_shape/widget_position/
+   * launcher_badge/launcher_pulse/greeting_tooltip/greeting_tooltip_delay —
+   * read defensively so absent fields fall back to sane defaults) */
+  var validPosition = function (p) { return p === 'top-right' || p === 'top-left' || p === 'bottom-left' ? p : 'bottom-right'; };
+  var validLauncherStyle = function (s) { return s === 'bar' ? 'bar' : 'bubble'; };
+  var validLauncherIcon = function (i) { return i === 'headset' || i === 'dots' ? i : 'chat'; };
+  var validLauncherShape = function (s) { return s === 'rounded' ? 'rounded' : 'circle'; };
+  /* custom icon: only SVG data URLs are honored. The dashboard sanitizes the
+   * SVG at upload; injecting via <img> (never inline) keeps it inert here. */
+  var validIconSvg = function (u) {
+    u = String(u || '');
+    return /^data:image\/svg\+xml[;,]/.test(u) ? u.slice(0, 65536) : '';
+  };
+  var validColor = function (c) {
+    c = String(c || '').trim();
+    return /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(c) ? c : '#4f46e5';
+  };
+  var toBool = function (v, def) {
+    if (v === undefined || v === null) return def;
+    if (typeof v === 'string') { v = v.toLowerCase(); return v !== '0' && v !== 'false' && v !== 'no'; }
+    return !!v;
+  };
+  var validDelay = function (d, def) {
+    d = parseFloat(d);
+    return isNaN(d) ? def : Math.max(0, Math.min(d, 30)); // seconds, 0-30 (matches PropertySettings)
+  };
+
   var cfg = {
     property: dataAttr('property', dataAttr('key', '')),
     color: dataAttr('color', '#4f46e5'),
-    position: dataAttr('position', 'bottom-right'),
+    position: validPosition(dataAttr('position', 'bottom-right')),
     greeting: dataAttr('greeting', ''),
     locale: validLocale,
     theme: validTheme(dataAttr('theme', '')), // phase 3: widget color scheme override
+    // phase 6: launcher customization — mirrors PropertySettings fields
+    launcherStyle: validLauncherStyle(dataAttr('launcher-style', 'bubble')),
+    launcherIcon: validLauncherIcon(dataAttr('launcher-icon', 'chat')),
+    launcherIconSvg: validIconSvg(dataAttr('launcher-icon-svg', '')),
+    launcherShape: validLauncherShape(dataAttr('launcher-shape', 'circle')),
+    badge: toBool(dataAttr('badge', '1'), true),
+    pulse: toBool(dataAttr('pulse', '1'), true),
+    greetingTooltip: String(dataAttr('greeting-tooltip', '')).slice(0, 200),
+    greetingTooltipDelay: validDelay(dataAttr('greeting-tooltip-delay', '5'), 5),
     // phase 2: host overrides for the widget's pre-chat / offline forms,
     // forwarded to the iframe; WidgetPage merges them over property settings
     prechat: null,   // { enabled?: boolean, fields?: string[] }
@@ -166,7 +213,8 @@
     hidden: false,
     unread: 0,
     chatOngoing: false,
-    status: 'online'
+    status: 'online',
+    everOpened: false // phase 6: first-load attention pulse stops after first open
   };
 
   /* ---------- callbacks ---------- */
@@ -186,7 +234,7 @@
   }
 
   /* ---------- DOM ---------- */
-  var bubble = null, badge = null, frame = null, teaserWrap = null;
+  var bubble = null, badge = null, frame = null, teaserWrap = null, tipWrap = null;
 
   function el(name, styles, attrs) {
     var e = DOC.createElement(name);
@@ -195,8 +243,121 @@
     return e;
   }
 
-  var ICON_CHAT = '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" style="margin:auto;display:block"><path d="M21 12a8 8 0 0 1-8 8H4l2-3a8 8 0 1 1 15-5z" fill="white"/></svg>';
+  var ICON_STYLE = 'width="28" height="28" viewBox="0 0 24 24" fill="none" style="margin:auto;display:block"';
+  var ICON_STROKE = 'stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"';
+  /* phase 6: original launcher icons, one consistent stroke style */
+  var ICONS = {
+    chat: '<svg ' + ICON_STYLE + '><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" ' + ICON_STROKE + '/></svg>',
+    headset: '<svg ' + ICON_STYLE + '><path d="M3 18v-6a9 9 0 0 1 18 0v6" ' + ICON_STROKE + '/><rect x="2.4" y="16.2" width="4.2" height="6.6" rx="2" ' + ICON_STROKE + '/><rect x="17.4" y="16.2" width="4.2" height="6.6" rx="2" ' + ICON_STROKE + '/></svg>',
+    dots: '<svg ' + ICON_STYLE + '><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5c-1.5 0-3-.4-4.2-1L3 21l1.9-5.6A8.5 8.5 0 1 1 21 11.5z" ' + ICON_STROKE + '/><circle cx="8.6" cy="11.5" r="1.1" fill="white"/><circle cx="12" cy="11.5" r="1.1" fill="white"/><circle cx="15.4" cy="11.5" r="1.1" fill="white"/></svg>'
+  };
   var ICON_X = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" style="margin:auto;display:block"><path d="M6 6l12 12M18 6L6 18" stroke="white" stroke-width="2.5" stroke-linecap="round"/></svg>';
+
+  /* ---------- phase 6: launcher rendering helpers ---------- */
+  function hexToRgb(h) {
+    h = String(h || '').replace('#', '');
+    if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+    var n = parseInt(h, 16) || 0;
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  }
+  function rgba(h, a) { var c = hexToRgb(h); return 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + a + ')'; }
+  function shadeHex(h, amt) {
+    var c = hexToRgb(h).map(function (v) { return Math.max(0, Math.min(255, Math.round(v + amt))); });
+    return 'rgb(' + c[0] + ',' + c[1] + ',' + c[2] + ')';
+  }
+  function launcherSide() { return cfg.position === 'bottom-left' || cfg.position === 'top-left' ? 'left' : 'right'; }
+  function launcherTop() { return cfg.position === 'top-left' || cfg.position === 'top-right'; }
+
+  /* inner HTML for the launcher: X when the panel is open, else the custom
+   * uploaded SVG (via <img> so it stays inert), else the chosen built-in icon */
+  function launcherIconHtml() {
+    if (state.open) return ICON_X;
+    var svg = validIconSvg(cfg.launcherIconSvg);
+    if (svg) {
+      var size = cfg.launcherStyle === 'bar' ? '24' : '28';
+      return '<img src="' + svg.replace(/"/g, '%22') + '" alt="" style="width:' + size + 'px;height:' + size + 'px;margin:auto;display:block;pointer-events:none">';
+    }
+    var icon = ICONS[cfg.launcherIcon] || ICONS.chat;
+    if (cfg.launcherStyle === 'bar') {
+      icon = icon.replace('width="28" height="28"', 'width="24" height="24"');
+      return icon + '<span style="color:#fff;font:600 15px/1 system-ui,sans-serif;white-space:nowrap">' + escapeHtml(t('startChat')) + '</span>';
+    }
+    return icon;
+  }
+  function renderLauncherIcon() {
+    if (!bubble) return;
+    bubble.innerHTML = launcherIconHtml();
+    if (badge) bubble.appendChild(badge); // keep badge on top after innerHTML swap
+  }
+
+  /* (re)apply launcher look + corner anchoring; called on boot and on
+   * boot({...}) restyles so the host can change them live */
+  function applyLauncher() {
+    if (!bubble) return;
+    var side = launcherSide(), top = launcherTop();
+    var color = validColor(cfg.color);
+    var bar = cfg.launcherStyle === 'bar';
+    bubble.style.top = top ? '20px' : '';
+    bubble.style.bottom = top ? '' : '20px';
+    bubble.style.left = side === 'left' ? '20px' : '';
+    bubble.style.right = side === 'right' ? '20px' : '';
+    bubble.style.width = bar ? 'auto' : '60px';
+    bubble.style.height = '60px';
+    bubble.style.minWidth = bar ? '60px' : '';
+    bubble.style.padding = bar ? '0 22px 0 18px' : '0';
+    bubble.style.display = bar ? 'inline-flex' : 'block';
+    bubble.style.alignItems = bar ? 'center' : '';
+    bubble.style.justifyContent = bar ? 'center' : '';
+    bubble.style.gap = bar ? '10px' : '';
+    bubble.style.borderRadius = cfg.launcherShape === 'rounded' ? '18px' : (bar ? '30px' : '50%');
+    bubble.style.background = 'linear-gradient(135deg,' + color + ',' + shadeHex(color, -28) + ')';
+    bubble.style.boxShadow = '0 10px 30px ' + rgba(color, .45);
+    renderLauncherIcon();
+    if (badge) {
+      badge.style.right = side === 'right' ? '-4px' : 'auto';
+      badge.style.left = side === 'left' ? '-4px' : 'auto';
+    }
+    positionChrome();
+  }
+
+  /* anchor the chat panel, proactive teaser and greeting tooltip to the
+   * launcher corner: above the launcher for bottom positions, below for top */
+  function positionChrome() {
+    var side = launcherSide(), top = launcherTop();
+    if (frame) {
+      frame.style.top = top ? '94px' : '';
+      frame.style.bottom = top ? '' : '94px';
+      frame.style.left = side === 'left' ? '20px' : '';
+      frame.style.right = side === 'right' ? '20px' : '';
+    }
+    if (teaserWrap) {
+      teaserWrap.style.top = top ? '94px' : '';
+      teaserWrap.style.bottom = top ? '' : '94px';
+      teaserWrap.style.left = side === 'left' ? '20px' : '';
+      teaserWrap.style.right = side === 'right' ? '20px' : '';
+    }
+    positionTip();
+  }
+  function positionTip() {
+    if (!tipWrap) return;
+    var side = launcherSide(), top = launcherTop();
+    tipWrap.style.top = top ? '94px' : '';
+    tipWrap.style.bottom = top ? '' : '94px';
+    tipWrap.style.left = side === 'left' ? '20px' : '';
+    tipWrap.style.right = side === 'right' ? '20px' : '';
+  }
+
+  /* ---------- phase 6: attention pulse ----------
+   * Gentle expanding-glow ring on the launcher while there are unread
+   * messages, or on first load until the panel is first opened. Subtle by
+   * design (2.6s cycle, fades out) — never a hard blink. */
+  function setPulse(on) {
+    if (!bubble) return;
+    bubble.style.animation = (on && cfg.pulse) ? NS + '-pulse 2.6s ease-out infinite' : '';
+  }
+  function refreshPulse() {
+    setPulse(state.unread > 0 || !state.everOpened);
+  }
 
   /* phase 3: loader-side dark check (mirrors the widget's own resolution for
    * the iframe shell + proactive teaser; the widget re-resolves inside too) */
@@ -209,34 +370,27 @@
   }
 
   function buildDom() {
-    var side = cfg.position === 'bottom-left' ? 'left' : 'right';
-
     bubble = el('button', {
-      position: 'fixed', bottom: '20px', zIndex: '2147483000',
-      width: '60px', height: '60px', borderRadius: '50%', border: 'none',
-      background: 'linear-gradient(135deg,#6366f1,#06b6d4)', cursor: 'pointer',
-      boxShadow: '0 10px 30px rgba(79,70,229,.45)', padding: '0'
+      position: 'fixed', zIndex: '2147483000',
+      border: 'none', cursor: 'pointer', padding: '0',
+      fontFamily: 'system-ui,sans-serif'
     }, { 'aria-label': t('openChat'), 'aria-expanded': 'false', id: NS + '-bubble' });
-    bubble.style[side] = '20px';
-    bubble.innerHTML = ICON_CHAT;
 
     badge = el('span', {
-      position: 'absolute', top: '-4px', right: '-4px',
+      position: 'absolute', top: '-4px',
       minWidth: '22px', height: '22px', padding: '0 5px',
       borderRadius: '11px', background: '#f43f5e', color: '#fff',
       fontSize: '12px', fontWeight: '700', lineHeight: '22px', textAlign: 'center',
       display: 'none', fontFamily: 'system-ui,sans-serif', boxSizing: 'border-box'
     }, { id: NS + '-badge' });
-    bubble.style.position = 'fixed';
     bubble.appendChild(badge);
 
     frame = el('iframe', {
-      position: 'fixed', bottom: '94px', zIndex: '2147483000',
+      position: 'fixed', zIndex: '2147483000',
       width: '380px', height: '560px', maxHeight: 'calc(100vh - 120px)',
       maxWidth: 'calc(100vw - 32px)', border: 'none', borderRadius: '18px',
       boxShadow: '0 24px 70px rgba(2,6,23,.35)', display: 'none', background: loaderDark() ? '#020617' : '#fff'
     }, { id: NS + '-frame', title: t('chatPanel'), role: 'dialog', 'aria-modal': 'false', 'aria-label': t('chatPanel'), tabindex: '-1', allow: 'microphone' }); // P4-17
-    frame.style[side] = '20px';
     frame.src = widgetUrl();
     frame.addEventListener('load', function () {
       if (!state.ready) {
@@ -253,24 +407,41 @@
 
     bubble.addEventListener('click', function () { api.toggle(); });
 
-    // phase 2: proactive-prompt teaser container (sits above the launcher)
+    // phase 2: proactive-prompt teaser container (sits next to the launcher,
+    // on the opposite side of the chat panel)
     teaserWrap = el('div', {
-      position: 'fixed', bottom: '94px', zIndex: '2147482999',
+      position: 'fixed', zIndex: '2147482999',
       maxWidth: '260px', display: 'none'
     }, { id: NS + '-teaser', role: 'status', 'aria-live': 'polite' });
-    teaserWrap.style[side] = '20px';
     if (RTL[cfg.locale]) teaserWrap.style.direction = 'rtl';
+
+    // phase 6: greeting-tooltip container (dismissible, session-once)
+    tipWrap = el('div', {
+      position: 'fixed', zIndex: '2147483000',
+      maxWidth: 'min(260px, calc(100vw - 40px))', display: 'none'
+    }, { id: NS + '-tip', role: 'status', 'aria-live': 'polite' });
+    if (RTL[cfg.locale]) tipWrap.style.direction = 'rtl';
 
     DOC.body.appendChild(frame);
     DOC.body.appendChild(teaserWrap);
+    DOC.body.appendChild(tipWrap);
     DOC.body.appendChild(bubble);
+    applyLauncher(); // launcher look + anchor frame/teaser/tooltip to the corner
+    refreshPulse();  // first-load attention pulse (until first open)
     applyLang();
     maybeShowQueue(); // phase 5: queue position teaser when queue: true
-    // keyframes for the prompt teaser entrance
+    scheduleTip();    // phase 6: greeting tooltip after the configured delay
+    // keyframes: prompt teaser entrance, greeting tooltip entrance, attention pulse
     try {
       var st = DOC.createElement('style');
+      var lc = validColor(cfg.color);
       st.setAttribute('data-' + NS, '1');
-      st.textContent = '@keyframes ' + NS + '-pop{from{opacity:0;transform:translateY(8px) scale(.97)}to{opacity:1;transform:none}}';
+      st.textContent =
+        '@keyframes ' + NS + '-pop{from{opacity:0;transform:translateY(8px) scale(.97)}to{opacity:1;transform:none}}' +
+        '@keyframes ' + NS + '-tip{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}' +
+        '@keyframes ' + NS + '-pulse{0%{box-shadow:0 10px 30px ' + rgba(lc, .45) + ',0 0 0 0 ' + rgba(lc, .35) + '}' +
+        '70%{box-shadow:0 10px 30px ' + rgba(lc, .45) + ',0 0 0 18px rgba(0,0,0,0)}' +
+        '100%{box-shadow:0 10px 30px ' + rgba(lc, .45) + ',0 0 0 0 rgba(0,0,0,0)}}';
       DOC.head.appendChild(st);
     } catch (e) { /* ignore */ }
   }
@@ -287,6 +458,59 @@
     }
     if (teaserWrap && RTL[cfg.locale]) teaserWrap.style.direction = 'rtl';
     else if (teaserWrap) teaserWrap.style.direction = '';
+    if (tipWrap && RTL[cfg.locale]) tipWrap.style.direction = 'rtl';
+    else if (tipWrap) tipWrap.style.direction = '';
+  }
+
+  /* ---------- phase 6: greeting tooltip ----------
+   * Small dismissible bubble next to the launcher showing greeting_tooltip
+   * after greeting_tooltip_delay seconds. Clicking it opens the chat. It is
+   * session-once: once shown or dismissed with × it never reappears. It
+   * yields the slot to proactive teasers (shows again after they clear). */
+  var tipTimer = null, tipShown = false, tipDismissed = false;
+
+  function scheduleTip() {
+    if (tipTimer || !cfg.greetingTooltip || tipShown || tipDismissed || !state.booted) return;
+    tipTimer = setTimeout(function () { showTip(); }, cfg.greetingTooltipDelay * 1000);
+  }
+  function showTip() {
+    tipTimer = null;
+    if (!tipWrap || !cfg.greetingTooltip || tipShown || tipDismissed || state.open || state.hidden || !state.booted) return;
+    if (activePrompt) { scheduleTip(); return; } // teaser owns the slot — retry after it clears
+    tipShown = true;
+    tipWrap.innerHTML = '';
+    var card = el('div', {
+      background: loaderDark() ? '#0f172a' : '#fff', borderRadius: '14px', padding: '12px 36px 12px 14px',
+      boxShadow: '0 12px 32px rgba(2,6,23,.22)', fontSize: '13px', color: loaderDark() ? '#e2e8f0' : '#1e293b',
+      fontFamily: 'system-ui,sans-serif', lineHeight: '1.45', cursor: 'pointer', position: 'relative',
+      border: loaderDark() ? '1px solid rgba(148,163,184,.25)' : '1px solid rgba(99,102,241,.18)',
+      animation: NS + '-tip .25s ease-out'
+    });
+    if (RTL[cfg.locale]) { card.style.padding = '12px 14px 12px 36px'; }
+    card.textContent = cfg.greetingTooltip;
+    card.setAttribute('tabindex', '0');
+    card.setAttribute('role', 'button');
+    card.setAttribute('aria-label', cfg.greetingTooltip + ' — ' + t('startChat'));
+    var openIt = function () { dismissTip(); api.open(); };
+    card.addEventListener('click', openIt);
+    card.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openIt(); } });
+
+    var x = el('button', {
+      position: 'absolute', top: '4px', right: '6px', border: 'none', background: 'transparent',
+      color: '#94a3b8', fontSize: '15px', cursor: 'pointer', padding: '2px 4px', lineHeight: '1'
+    }, { 'aria-label': t('dismiss') });
+    if (RTL[cfg.locale]) { x.style.right = 'auto'; x.style.left = '6px'; }
+    x.textContent = '×';
+    x.addEventListener('click', function (e) { e.stopPropagation(); tipDismissed = true; dismissTip(); });
+
+    card.appendChild(x);
+    tipWrap.appendChild(card);
+    tipWrap.style.display = 'block';
+    positionTip();
+  }
+  function dismissTip() {
+    if (tipTimer) { clearTimeout(tipTimer); tipTimer = null; }
+    if (tipWrap) { tipWrap.style.display = 'none'; tipWrap.innerHTML = ''; }
   }
 
   /* ---------- proactive prompts (phase 2, queued, dismissible) ---------- */
@@ -357,6 +581,7 @@
     if (teaserWrap) { teaserWrap.style.display = 'none'; teaserWrap.innerHTML = ''; }
     emit('promptDismissed', { id: p.id, reason: reason });
     pumpPrompts();
+    scheduleTip(); // phase 6: the greeting tooltip may now take the slot
   }
 
   /* phase 4 (P4-2): proactive triggers — defs arrive via the
@@ -683,9 +908,10 @@
   function setOpen(v) {
     state.open = v;
     if (frame) frame.style.display = v ? 'block' : 'none';
-    if (bubble) bubble.innerHTML = v ? ICON_X : ICON_CHAT;
-    if (bubble && badge) bubble.appendChild(badge); // keep badge on top after innerHTML swap
+    renderLauncherIcon();
     if (v) {
+      state.everOpened = true;
+      dismissTip(); // phase 6: opening the chat consumes the greeting tooltip
       setUnread(0);
       if (activePrompt) dismissPrompt(activePrompt, 'open'); // opening chat consumes the teaser
       try { if (frame) frame.focus({ preventScroll: true }); } catch (e) { /* ignore */ }
@@ -694,6 +920,7 @@
       pumpPrompts(); // panel closed — a queued teaser may now show
     }
     applyLang();
+    refreshPulse(); // phase 6: stop the first-load pulse once opened
     emit(v ? 'open' : 'close', {});
   }
 
@@ -710,10 +937,12 @@
   function setUnread(n) {
     state.unread = n;
     if (badge) {
-      badge.style.display = n > 0 ? 'block' : 'none';
-      badge.textContent = n > 99 ? '99+' : String(n);
+      var show = n > 0 && cfg.badge; // phase 6: respect the launcher_badge toggle
+      badge.style.display = show ? 'block' : 'none';
+      badge.textContent = n > 9 ? '9+' : String(n); // phase 6: cap display at 9+
     }
     emit('unreadCountChanged', n);
+    refreshPulse(); // phase 6: pulse while unread messages wait
   }
 
   /* ---------- public API ---------- */
@@ -725,10 +954,19 @@
     opts = opts || {};
     if (opts.property) cfg.property = opts.property;
     if (opts.color) cfg.color = opts.color;
-    if (opts.position) cfg.position = opts.position;
+    if (opts.position) cfg.position = validPosition(opts.position);
     if (opts.greeting) cfg.greeting = opts.greeting;
     if (opts.locale && LANGS[opts.locale]) { cfg.locale = opts.locale; applyLang(); }
     if (opts.theme && validTheme(opts.theme)) cfg.theme = opts.theme; // phase 3: boot-time theme override
+    // phase 6: launcher customization (camelCase + PropertySettings snake_case aliases)
+    if (opts.launcherStyle || opts.launcher_style) cfg.launcherStyle = validLauncherStyle(opts.launcherStyle || opts.launcher_style);
+    if (opts.launcherIcon || opts.launcher_icon) cfg.launcherIcon = validLauncherIcon(opts.launcherIcon || opts.launcher_icon);
+    if (opts.launcherIconSvg || opts.launcher_icon_svg) cfg.launcherIconSvg = validIconSvg(opts.launcherIconSvg || opts.launcher_icon_svg);
+    if (opts.launcherShape || opts.launcher_shape) cfg.launcherShape = validLauncherShape(opts.launcherShape || opts.launcher_shape);
+    if (opts.badge !== undefined || opts.launcher_badge !== undefined) cfg.badge = toBool(opts.badge !== undefined ? opts.badge : opts.launcher_badge, true);
+    if (opts.pulse !== undefined || opts.launcher_pulse !== undefined) cfg.pulse = toBool(opts.pulse !== undefined ? opts.pulse : opts.launcher_pulse, true);
+    if (opts.greetingTooltip !== undefined || opts.greeting_tooltip !== undefined) cfg.greetingTooltip = String(opts.greetingTooltip !== undefined ? opts.greetingTooltip : opts.greeting_tooltip).slice(0, 200);
+    if (opts.greetingTooltipDelay !== undefined || opts.greeting_tooltip_delay !== undefined) cfg.greetingTooltipDelay = validDelay(opts.greetingTooltipDelay !== undefined ? opts.greetingTooltipDelay : opts.greeting_tooltip_delay, 5);
     if (opts.prechat) cfg.prechat = opts.prechat;   // phase 2 host overrides
     if (opts.offline) cfg.offline = opts.offline;   // phase 2 host overrides
     if (opts.queue !== undefined) cfg.queue = !!opts.queue; // phase 5: chat queue position
@@ -739,6 +977,9 @@
     }
     if (state.booted) {
       if (frame) { frame.src = widgetUrl(); state.ready = false; }
+      applyLauncher(); // phase 6: restyle the launcher live
+      setUnread(state.unread); // phase 6: re-apply badge toggle + 9+ cap
+      refreshPulse();
       return;
     }
     state.booted = true;
@@ -786,8 +1027,8 @@
       sendCmd('language', { code: code });
       return true;
     },
-    show: function () { ensureBoot(); state.hidden = false; if (bubble) bubble.style.display = 'block'; pumpPrompts(); },
-    hide: function () { ensureBoot(); state.hidden = true; if (bubble) bubble.style.display = 'none'; if (frame) frame.style.display = 'none'; state.open = false; },
+    show: function () { ensureBoot(); state.hidden = false; if (bubble) bubble.style.display = cfg.launcherStyle === 'bar' ? 'inline-flex' : 'block'; pumpPrompts(); scheduleTip(); },
+    hide: function () { ensureBoot(); state.hidden = true; if (bubble) bubble.style.display = 'none'; if (frame) frame.style.display = 'none'; dismissTip(); state.open = false; },
     toggle: function () { ensureBoot(); setOpen(!state.open); },
     open: function () { ensureBoot(); setOpen(true); },
     close: function () { ensureBoot(); setOpen(false); },
