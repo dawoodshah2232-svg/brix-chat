@@ -3,11 +3,55 @@
 
 import { useEffect, useState } from 'react';
 import type { ChangeEvent } from 'react';
-import { Button, Card, Input, Label, Select } from '../components/ui';
+import { Button, Card, Input, Label, Select, Toggle } from '../components/ui';
 import { toast } from '../components/dashboard/Toasts';
 import { useClientApi } from '../components/dashboard/useClientApi';
 import WidgetPreview from '../components/dashboard/WidgetPreview';
+import { LauncherChatIcon, LauncherHeadsetIcon, LauncherDotsIcon } from '../components/icons';
 import type { ApiProperty, PropertySettings } from '../lib/api';
+
+const ICON_CHOICES = [
+  { id: 'chat' as const, label: 'Chat bubble', Icon: LauncherChatIcon },
+  { id: 'headset' as const, label: 'Headset', Icon: LauncherHeadsetIcon },
+  { id: 'dots' as const, label: 'Message dots', Icon: LauncherDotsIcon },
+];
+
+const POSITION_LABELS: Record<string, string> = {
+  'bottom-right': 'Bottom right',
+  'bottom-left': 'Bottom left',
+  'top-right': 'Top right',
+  'top-left': 'Top left',
+};
+
+// Sanitize an uploaded SVG: reject anything that isn't valid SVG, strip
+// executable content, and return a data URL — or null when unsafe.
+function sanitizeSvgText(text: string): string | null {
+  if (!text || text.length > 50 * 1024) return null;
+  let doc: Document;
+  try {
+    doc = new DOMParser().parseFromString(text, 'image/svg+xml');
+  } catch {
+    return null;
+  }
+  if (doc.querySelector('parsererror')) return null;
+  const svg = doc.querySelector('svg');
+  if (!svg) return null;
+  svg.querySelectorAll('script, foreignObject').forEach((n) => n.remove());
+  const all: Element[] = [svg, ...Array.from(svg.querySelectorAll('*'))];
+  for (const el of all) {
+    for (const attr of Array.from(el.attributes)) {
+      const name = attr.name.toLowerCase();
+      const value = attr.value.trim().toLowerCase();
+      if (name.startsWith('on') || value.includes('javascript:')) {
+        el.removeAttribute(attr.name);
+      }
+    }
+  }
+  if (svg.querySelector('script, foreignObject')) return null;
+  const serialized = new XMLSerializer().serializeToString(svg);
+  if (!serialized || serialized.length > 60 * 1024) return null;
+  return 'data:image/svg+xml;utf8,' + encodeURIComponent(serialized);
+}
 
 const PALETTES: Array<{ name: string; widget: string; accent: string }> = [
   { name: 'Indigo', widget: '#4f46e5', accent: '#4f46e5' },
@@ -60,6 +104,36 @@ export default function Branding() {
     const reader = new FileReader();
     reader.onload = () => set({ logo_data_url: String(reader.result) });
     reader.readAsDataURL(f);
+  };
+
+  const onLauncherSvg = (e: ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    e.target.value = '';
+    if (!f) return;
+    if (!f.name.toLowerCase().endsWith('.svg') && f.type !== 'image/svg+xml') {
+      toast.error('Please choose an .svg file.');
+      return;
+    }
+    if (f.size > 50 * 1024) {
+      toast.error('SVG must be under 50 KB.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const dataUrl = sanitizeSvgText(String(reader.result));
+        if (!dataUrl) {
+          toast.error('That SVG is invalid or unsafe — it was not used.');
+          return;
+        }
+        set({ launcher_icon_svg: dataUrl });
+        toast.success('Custom launcher icon added.');
+      } catch {
+        toast.error('Could not read that SVG file.');
+      }
+    };
+    reader.onerror = () => toast.error('Could not read that SVG file.');
+    reader.readAsText(f);
   };
 
   const save = async () => {
@@ -173,10 +247,93 @@ export default function Branding() {
             </div>
             <div>
               <Label>Widget position</Label>
-              <Select value={settings.widget_position} onChange={(e) => set({ widget_position: e.target.value as 'bottom-right' | 'bottom-left' })} className="w-full">
-                <option value="bottom-right">Bottom right</option>
-                <option value="bottom-left">Bottom left</option>
+              <Select value={settings.widget_position} onChange={(e) => set({ widget_position: e.target.value as PropertySettings['widget_position'] })} className="w-full">
+                {Object.entries(POSITION_LABELS).map(([v, l]) => (
+                  <option key={v} value={v}>{l}</option>
+                ))}
               </Select>
+            </div>
+            <div>
+              <Label>Launcher icon</Label>
+              <div className="flex flex-wrap items-center gap-2">
+                {ICON_CHOICES.map(({ id, label, Icon }) => {
+                  const active = settings.launcher_icon_svg == null && (settings.launcher_icon || 'chat') === id;
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => set({ launcher_icon: id, launcher_icon_svg: null })}
+                      title={label}
+                      aria-label={label}
+                      className={`w-12 h-12 rounded-xl border grid place-items-center transition ${active ? 'border-brix-600 bg-brix-50 text-brix-700' : 'border-slate-200 text-slate-500 hover:border-slate-300'}`}
+                    >
+                      <Icon className="w-6 h-6" />
+                    </button>
+                  );
+                })}
+                <label className="cursor-pointer">
+                  <span className={`inline-flex items-center w-12 h-12 rounded-xl border grid place-items-center text-slate-500 transition ${settings.launcher_icon_svg ? 'border-brix-600 bg-brix-50 text-brix-700' : 'border-slate-200 hover:border-slate-300'}`} title="Upload SVG">
+                    {settings.launcher_icon_svg ? (
+                      <img src={settings.launcher_icon_svg} alt="Custom" className="w-6 h-6 object-contain" />
+                    ) : (
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" className="w-6 h-6" aria-hidden>
+                        <path d="M12 16V8M8 12h8" />
+                        <path d="M12 3.5v2M12 18.5v2M3.5 12h2M18.5 12h2" />
+                      </svg>
+                    )}
+                  </span>
+                  <input type="file" accept=".svg,image/svg+xml" className="hidden" onChange={onLauncherSvg} />
+                </label>
+                {settings.launcher_icon_svg && (
+                  <button type="button" onClick={() => set({ launcher_icon_svg: null })} className="text-sm text-rose-600 font-semibold hover:underline">
+                    Remove
+                  </button>
+                )}
+              </div>
+              <p className="text-xs text-slate-500 mt-1.5">SVG only, under 50 KB. Unsafe content is stripped automatically.</p>
+            </div>
+            <div>
+              <Label>Launcher shape</Label>
+              <div className="inline-flex rounded-xl border border-slate-200 p-1 bg-slate-50">
+                {(['circle', 'rounded'] as const).map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => set({ launcher_shape: s })}
+                    className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition ${(settings.launcher_shape || 'circle') === s ? 'bg-white text-brix-800 shadow' : 'text-slate-500 hover:text-slate-700'}`}
+                  >
+                    {s === 'circle' ? 'Circle' : 'Rounded square'}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-3">
+              <Toggle label="Show unread badge" checked={settings.launcher_badge !== false} onChange={(v) => set({ launcher_badge: v })} />
+              <Toggle label="Attention pulse animation" checked={settings.launcher_pulse !== false} onChange={(v) => set({ launcher_pulse: v })} />
+            </div>
+            <div>
+              <Label>Greeting tooltip</Label>
+              <Input
+                value={settings.greeting_tooltip || ''}
+                onChange={(e) => set({ greeting_tooltip: e.target.value })}
+                placeholder="Need help? Chat with us…"
+                maxLength={120}
+              />
+              <div className="mt-2 flex items-center gap-3">
+                <span className="text-xs text-slate-500 font-medium whitespace-nowrap">Show after</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={30}
+                  step={1}
+                  value={settings.greeting_tooltip_delay ?? 5}
+                  onChange={(e) => set({ greeting_tooltip_delay: Number(e.target.value) })}
+                  className="flex-1 accent-indigo-600"
+                  aria-label="Tooltip delay in seconds"
+                />
+                <span className="text-xs font-bold text-slate-700 tabular-nums w-10 text-right">{settings.greeting_tooltip_delay ?? 5}s</span>
+              </div>
+              <p className="text-xs text-slate-500 mt-1.5">Appears after this many seconds (0–30). Leave the text empty to disable.</p>
             </div>
           </Card>
           <WidgetPreview settings={settings} />

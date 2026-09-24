@@ -163,3 +163,34 @@ export function SearchIcon(props: P) {
     </svg>
   );
 }
+
+export function LauncherChatIcon(props: P) {
+  return (
+    <svg {...base(props)}>
+      <path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v7a2.5 2.5 0 0 1-2.5 2.5H9l-4.2 3.2V6.5Z" />
+      <path d="M8 9.2h8M8 12.4h4.8" />
+    </svg>
+  );
+}
+
+export function LauncherHeadsetIcon(props: P) {
+  return (
+    <svg {...base(props)}>
+      <path d="M4.5 14.2V10.5a7.5 7.5 0 0 1 15 0v3.7" />
+      <rect x="2.8" y="12.4" width="3.6" height="6.6" rx="1.8" />
+      <rect x="17.6" y="12.4" width="3.6" height="6.6" rx="1.8" />
+      <path d="M19.4 19v1.1a3 3 0 0 1-3 3h-1.6" />
+    </svg>
+  );
+}
+
+export function LauncherDotsIcon(props: P) {
+  return (
+    <svg {...base(props)}>
+      <rect x="3.5" y="6.2" width="17" height="10.6" rx="5.3" />
+      <circle cx="9" cy="11.5" r="1.3" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="11.5" r="1.3" fill="currentColor" stroke="none" />
+      <circle cx="15" cy="11.5" r="1.3" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}

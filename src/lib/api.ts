@@ -431,8 +431,15 @@ export interface PropertySettings {
   logo_data_url: string | null;
   theme: string;
   accent_color: string;
-  widget_position: 'bottom-right' | 'bottom-left';
+  widget_position: 'bottom-right' | 'bottom-left' | 'top-right' | 'top-left';
   launcher_style: 'bubble' | 'bar';
+  launcher_icon: 'chat' | 'headset' | 'dots';
+  launcher_icon_svg: string | null;
+  launcher_shape: 'circle' | 'rounded';
+  launcher_badge: boolean;
+  launcher_pulse: boolean;
+  greeting_tooltip: string;
+  greeting_tooltip_delay: number; // seconds, 0-30
   language: string;
   booking_url: string;
 }
@@ -657,6 +664,13 @@ function defaultPropertySettings(): PropertySettings {
     accent_color: '#4f46e5',
     widget_position: 'bottom-right',
     launcher_style: 'bubble',
+    launcher_icon: 'chat',
+    launcher_icon_svg: null,
+    launcher_shape: 'circle',
+    launcher_badge: true,
+    launcher_pulse: true,
+    greeting_tooltip: '',
+    greeting_tooltip_delay: 5,
     language: 'en',
     booking_url: '',
   };
