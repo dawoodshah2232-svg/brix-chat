@@ -20,6 +20,7 @@ import type {
   Workspace,
 } from './types';
 import { getApi, ApiError, StorageQuotaError } from './api';
+import { isPhpApiEnabled, ensurePhpPolling, stopPhpPolling, clearPhpToken } from './php-client';
 import type { ApiMember } from './api';
 import { seedData, seedDataForWorkspace, seedWorkspaces } from './seed';
 import { clientStatus } from '../components/admin/platform';
@@ -228,6 +229,29 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return () => { cancelled = true; };
   }, [persisted.session?.workspaceId, persisted.session?.viewingWorkspaceId, persisted.session?.memberId]);
 
+  // PHP transport realtime: poll GET /updates while signed in; stop on logout.
+  // Ticks are skipped quietly until login (no token), so this is safe to arm
+  // as soon as a session exists.
+  const signedIn = persisted.session !== null;
+  useEffect(() => {
+    if (!signedIn || !isPhpApiEnabled()) return;
+    ensurePhpPolling();
+    return () => { stopPhpPolling(); };
+  }, [signedIn]);
+
+  // The PHP transport dispatches brix:auth-expired when the bearer token
+  // lapses (or the workspace changed): drop the session so the login screen
+  // prompts for re-login.
+  useEffect(() => {
+    const onExpired = () => {
+      clearPhpToken();
+      setCurrentMember(null);
+      setPersisted((p) => (p.session ? { ...p, session: null } : p));
+    };
+    window.addEventListener('brix:auth-expired', onExpired);
+    return () => window.removeEventListener('brix:auth-expired', onExpired);
+  }, []);
+
   const store = useMemo<Store>(() => {
     const norm = (s: string) => s.trim().toLowerCase();
 
@@ -321,6 +345,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     };
 
     const logout = () => {
+      clearPhpToken();
       setPersisted((p) => ({ ...p, session: null }));
       setCurrentMember(null);
     };

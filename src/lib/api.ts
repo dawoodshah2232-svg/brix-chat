@@ -3035,10 +3035,24 @@ export function getApi(workspace: string, actor = 'system'): BrixApi {
 // (re-exported from this module).
 // ===========================================================================
 
-import { getSupabase, ensureBrixRealtime } from './supabase-client';
+import { getSupabase, ensureBrixRealtime, onRemoteChange as onSupabaseRemoteChange } from './supabase-client';
+import { onPhpRemoteChange } from './php-client';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import type { RemoteChangeListener } from './supabase-client';
 
-export { onRemoteChange } from './supabase-client';
+/**
+ * Unified remote-change subscription: fans out to both the Supabase realtime
+ * bus and the PHP transport's poller bus. Only one transport is active at a
+ * time (see getTransport()), so a subscriber never gets duplicate events.
+ */
+export function onRemoteChange(cb: RemoteChangeListener): () => void {
+  const offSupabase = onSupabaseRemoteChange(cb);
+  const offPhp = onPhpRemoteChange(cb);
+  return () => {
+    offSupabase();
+    offPhp();
+  };
+}
 export type { RemoteChange, RemoteChangeListener } from './supabase-client';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -5755,18 +5769,1384 @@ export class SupabaseBrixApi extends BrixApi {
   }
 }
 
+// ===========================================================================
+// TRANSPORT LAYER — Plain-PHP REST API (MySQL) implementation
+//
+// PhpBrixApi extends BrixApi and overrides namespace methods with fetch()
+// implementations against the PHP API (docs/PHP_API.md). Signatures and
+// { data } envelopes are identical to the localStorage transport;
+// getTransport() picks this class only when VITE_API_URL is set (and the
+// Supabase env vars are not).
+//
+// AUTH: the PHP API is token-based. members.login() POSTs /auth/login and the
+// bearer token is kept in the php-client singleton (memory + sessionStorage).
+// guardPhp() falls back to the localStorage implementation on transport
+// failures (unreachable server, 5xx); validation / not_found / conflict /
+// not_supported / unauthorized / auth_expired propagate. auth_expired means
+// the 30-day token lapsed or the workspace changed — the store drops the
+// session so the UI prompts for re-login.
+//
+// REALTIME: the constructor calls ensurePhpPolling(), which polls
+// GET /updates?since= every ~5s and forwards rows into the same shared
+// onRemoteChange bus the Supabase transport uses.
+//
+// DEVIATIONS (docs/PHP_API.md §10): unanswered.add without a conversation
+// throws not_supported; ticket parent/relation links are not representable
+// server-side (setParent/related/split keep the localStorage implementation,
+// exactly like the Supabase transport); round-robin routing counters stay
+// client-side (localStorage), as before.
+// ===========================================================================
+
+import { isPhpApiEnabled, getPhpApi, ensurePhpPolling, clearPhpToken } from './php-client';
+import type { PhpApiClient, PhpRow } from './php-client';
+
+// ---- PHP row -> API mappers (mirror api/lib/serialize.php shapes) ---------
+
+const mapPhpProperty = (r: PhpRow): ApiProperty => ({
+  id: r.id,
+  name: r.name,
+  domain: r.domain ?? '',
+  public_key: r.public_key,
+  widget_config: { ...defaultWidgetConfig(), ...((r.widget_config ?? {}) as WidgetConfig) },
+  secure_mode: !!r.secure_mode,
+  enabled: true, // no enabled column server-side; remote properties are live
+  created_at: isoOf(r.created_at),
+});
+
+const mapPhpMessage = (r: PhpRow): ApiMessage => ({
+  id: r.id,
+  conversation_id: r.conversation_id,
+  sender: (['visitor', 'agent', 'ai', 'system'] as MsgSender[]).includes(r.sender) ? r.sender : 'system',
+  kind: (['text', 'file', 'voice', 'rating'] as MsgKind[]).includes(r.kind) ? r.kind : 'text',
+  text: r.text ?? '',
+  metadata: (r.metadata ?? {}) as Record<string, unknown>,
+  created_at: isoOf(r.created_at),
+});
+
+const mapPhpNote = (r: PhpRow): ConvNote => ({
+  author: r.author ?? '',
+  text: r.text ?? '',
+  created_at: isoOf(r.created_at),
+});
+
+const mapPhpConversation = (r: PhpRow): ApiConversation => ({
+  id: r.id,
+  property_id: r.property_id,
+  visitor_name: r.visitor_name ?? '',
+  visitor_email: r.visitor_email ?? '',
+  page_url: r.page_url ?? '',
+  referrer: r.referrer ?? '',
+  status: r.status ?? 'open',
+  department: r.department ?? '',
+  agent_id: r.agent_id ?? null,
+  agent_name: r.agent_name ?? null,
+  tags: asArr<string>(r.tags),
+  priority: r.priority ?? 'medium',
+  notes: asArr<PhpRow>(r.notes).map(mapPhpNote),
+  rating: r.rating ?? null,
+  unread: r.unread ?? 0,
+  ai_handled: !!r.ai_handled,
+  created_at: isoOf(r.created_at),
+  updated_at: isoOf(r.updated_at),
+  closed_at: r.closed_at ?? null,
+  messages: asArr<PhpRow>(r.messages).map(mapPhpMessage),
+});
+
+const mapPhpContact = (r: PhpRow): ApiContact => ({
+  id: r.id,
+  name: r.name,
+  email: r.email ?? '',
+  phone: r.phone ?? '',
+  country: r.country ?? '',
+  tags: asArr<string>(r.tags),
+  notes: r.notes ?? '',
+  source: r.source ?? 'chat',
+  chats: r.chats ?? 0,
+  created_at: isoOf(r.created_at),
+  last_seen_at: isoOf(r.last_seen_at),
+});
+
+const mapPhpMember = (r: PhpRow): ApiMember => ({
+  id: r.id,
+  display_name: r.display_name,
+  initials: r.initials ?? '',
+  color: r.color ?? '#4f46e5',
+  role: r.role ?? 'agent',
+  // Passcodes are never readable remotely (member_credentials is deny-all).
+  passcode: '',
+  last_login: r.last_login ?? null,
+  status: r.status === 'away' || r.status === 'offline' ? r.status : 'online',
+  job_title: r.job_title ?? '',
+  avatar_data_url: r.avatar_data_url ?? null,
+  department_ids: asArr<string>(r.department_ids),
+  created_at: isoOf(r.created_at),
+});
+
+const mapPhpAgent = (r: PhpRow): ApiAgent => ({
+  id: r.id,
+  display_name: r.display_name,
+  role: r.role ?? 'agent',
+  online: !!r.online,
+  active: r.active ?? true,
+  passcode: '',
+  created_at: isoOf(r.created_at),
+  last_login_at: r.last_login ?? null,
+});
+
+const mapPhpTicket = (r: PhpRow): ApiTicket => ({
+  id: r.id,
+  property_id: r.property_id ?? null,
+  subject: r.subject ?? '',
+  requester_name: r.requester_name ?? '',
+  requester_email: r.requester_email ?? '',
+  message: r.message ?? '',
+  status: r.status ?? 'new',
+  priority: r.priority ?? 'medium',
+  assignee_id: r.assignee_id ?? null,
+  sla_due: r.sla_due ?? null,
+  conversation_id: r.conversation_id ?? null,
+  tags: asArr<string>(r.tags),
+  category_id: r.category_id ?? null,
+  parent_id: null, // no parent_id column server-side (links live in audit_log)
+  relation: null,
+  created_at: isoOf(r.created_at),
+  updated_at: isoOf(r.updated_at),
+});
+
+const mapPhpNotification = (r: PhpRow): ApiNotification => ({
+  id: r.id,
+  type: r.type ?? 'system',
+  title: r.title ?? '',
+  body: r.body ?? '',
+  link: r.link ?? null,
+  read: !!r.read,
+  created_at: isoOf(r.created_at),
+});
+
+const mapPhpRating = (r: PhpRow): ApiRating => ({
+  id: r.id,
+  property_id: r.property_id,
+  conversation_id: r.conversation_id ?? null,
+  agent_id: r.agent_id ?? null,
+  kind: r.kind ?? 'csat',
+  score: Number(r.score ?? 0),
+  comment: r.comment ?? '',
+  created_at: typeof r.created_at === 'number' ? r.created_at : msOf(r.created_at),
+});
+
+const mapPhpDepartment = (r: PhpRow): ApiDepartment => ({
+  id: r.id,
+  property_id: r.property_id,
+  name: r.name ?? '',
+  description: r.description ?? '',
+  agent_ids: asArr<string>(r.agent_ids),
+  routing_mode: r.routing_mode ?? 'round-robin',
+  hours_override: (r.hours_override ?? null) as ApiDepartment['hours_override'],
+  offline_behavior: r.offline_behavior ?? 'ticket',
+  created_at: typeof r.created_at === 'number' ? r.created_at : msOf(r.created_at),
+});
+
+const mapPhpCategory = (r: PhpRow): ApiCategory => ({
+  id: r.id,
+  scope: r.scope,
+  property_id: r.property_id,
+  name: r.name ?? '',
+  color: r.color ?? '#4f46e5',
+  created_at: typeof r.created_at === 'number' ? r.created_at : msOf(r.created_at),
+});
+
+const mapPhpView = (r: PhpRow): ApiSavedView => ({
+  id: r.id,
+  name: r.name ?? '',
+  filters: (r.filters ?? {}) as ApiSavedView['filters'],
+  created_at: isoOf(r.created_at),
+});
+
+const mapPhpPlay = (r: PhpRow): ApiPlay => ({
+  id: r.id,
+  name: r.name ?? '',
+  steps: asArr<ApiPlayStep>(r.steps),
+  created_at: isoOf(r.created_at),
+});
+
+const mapPhpGoal = (r: PhpRow): ApiGoal => ({
+  id: r.id,
+  name: r.name ?? '',
+  event: r.event ?? '',
+  revenue: Number(r.revenue ?? 0),
+  created_at: isoOf(r.created_at),
+});
+
+const mapPhpGoalEvent = (id: string, goalId: string, conversationId: string | null, value: number): ApiGoalEvent => ({
+  id,
+  goal_id: goalId,
+  conversation_id: conversationId,
+  value,
+  created_at: isoNow(),
+});
+
+const mapPhpUnanswered = (r: PhpRow): ApiUnanswered => ({
+  id: r.id,
+  question: r.question ?? '',
+  conversation_id: r.conversation_id ?? null,
+  count: r.count ?? 0,
+  dismissed: !!r.dismissed,
+  created_at: isoOf(r.created_at),
+});
+
+const mapPhpArticle = (r: PhpRow): ApiArticle => ({
+  id: r.id,
+  title: r.title ?? '',
+  slug: r.slug ?? '',
+  body: r.body ?? '',
+  category: r.category ?? 'General',
+  category_id: r.category_id ?? null,
+  status: r.status === 'published' ? 'published' : 'draft',
+  views: r.views ?? 0,
+  updated_at: isoOf(r.updated_at),
+});
+
+const mapPhpCanned = (r: PhpRow): ApiCanned => ({
+  id: r.id,
+  shortcut: r.shortcut ?? '',
+  title: r.title ?? '',
+  body: r.body ?? '',
+  category_id: r.category_id ?? null,
+});
+
+const mapPhpKey = (r: PhpRow): ApiKeyRecord => ({
+  id: r.id,
+  name: r.name ?? '',
+  prefix: r.prefix ?? '',
+  key_hash: '', // never readable
+  scopes: asArr<string>(r.scopes),
+  revoked: !!r.revoked,
+  usage_count: r.usage_count ?? 0,
+  last_used_at: r.last_used_at ?? null,
+  created_at: isoOf(r.created_at),
+});
+
+const mapPhpAudit = (r: PhpRow): AuditEntry => ({
+  id: r.id,
+  actor: r.actor ?? '',
+  action: r.action ?? '',
+  entity: r.entity ?? '',
+  entity_id: r.entity_id ?? '',
+  meta: (r.meta ?? {}) as Record<string, unknown>,
+  created_at: isoOf(r.created_at),
+});
+
+const mapPhpIntegration = (def: (typeof INTEGRATION_REGISTRY)[number], row: PhpRow | undefined): ApiIntegration => ({
+  id: def.id,
+  name: def.name,
+  description: def.description,
+  fields: def.keyFields.map((f) => ({ name: f.name, label: f.label, secret: f.secret })),
+  values: ((row?.values ?? {}) as Record<string, string>),
+  enabled: !!row?.enabled,
+  phase: def.status,
+});
+
+// ===========================================================================
+// PhpBrixApi
+// ===========================================================================
+
+export class PhpBrixApi extends BrixApi {
+  constructor(workspace: string, actor = 'system') {
+    super(workspace, actor);
+    ensurePhpPolling();
+    this.wirePhpNamespaces();
+  }
+
+  private php(): PhpApiClient {
+    const c = getPhpApi();
+    if (!c) throw new ApiError('php_unavailable', 'PHP API is not configured (VITE_API_URL).', 503);
+    return c;
+  }
+
+  /**
+   * The bearer token is scoped to the workspace it was issued for. If this
+   * instance targets a different workspace the token must not be reused —
+   * clear it and surface auth_expired so the UI prompts for re-login.
+   */
+  private requireWorkspace(): void {
+    const c = this.php();
+    if (c.hasToken() && c.workspace && c.workspace !== this.workspace) {
+      clearPhpToken();
+      throw new ApiError('auth_expired', 'Workspace changed — please sign in again.', 401);
+    }
+  }
+
+  /**
+   * Run a remote op; on transport failure (unreachable server, 5xx, …) fall
+   * back to the localStorage implementation with a non-blocking warning.
+   * Data errors propagate — like the Supabase transport: validation /
+   * not_found / conflict / not_supported, plus unauthorized (a real
+   * permission/credential answer from the server) and auth_expired (the
+   * session lapsed — the store logs the user out so the UI re-prompts).
+   */
+  private async guardPhp<T>(remote: () => Promise<T>, local: () => Promise<T>): Promise<T> {
+    try {
+      this.requireWorkspace();
+      return await remote();
+    } catch (e) {
+      if (
+        e instanceof ApiError &&
+        (e.code === 'validation' ||
+          e.code === 'not_found' ||
+          e.code === 'conflict' ||
+          e.code === 'not_supported' ||
+          e.code === 'unauthorized' ||
+          e.code === 'auth_expired')
+      ) {
+        if (e.code === 'auth_expired' && typeof window !== 'undefined') {
+          // The session lapsed (or the workspace changed): tell the app to
+          // drop the session so the UI prompts for re-login.
+          window.dispatchEvent(new CustomEvent('brix:auth-expired'));
+        }
+        throw e;
+      }
+      // eslint-disable-next-line no-console
+      console.warn('[brix-chat] PHP transport failed — using local data instead:', e instanceof Error ? e.message : e);
+      return local();
+    }
+  }
+
+  private async deptIdByName(propertyId: string, name: string): Promise<string> {
+    const depts = await this.php().departments.list();
+    const dep = depts
+      .filter((d) => d.property_id === propertyId)
+      .find((d) => ((d.name ?? '') as string).toLowerCase() === name.trim().toLowerCase());
+    if (!dep) throw new ApiError('not_found', `Department '${name}' not found.`, 404);
+    return dep.id as string;
+  }
+
+  /** Ratings summary computed client-side from the remote ratings list. */
+  private async ratingSummary(
+    propertyId: string,
+    days = 30,
+  ): Promise<{
+    csat_avg: number | null; csat_count: number; nps_score: number | null; nps_count: number;
+    promoters: number; passives: number; detractors: number;
+    trend: Array<{ day: string; csat_avg: number | null; nps_avg: number | null; count: number }>;
+  }> {
+    const cutoff = Date.now() - days * 86400000;
+    const { items } = await this.php().ratings.list({ property_id: propertyId, limit: 200 });
+    const all = items.map(mapPhpRating).filter((r) => r.created_at >= cutoff);
+    const csat = all.filter((r) => r.kind === 'csat');
+    const nps = all.filter((r) => r.kind === 'nps');
+    const round1 = (n: number) => Math.round(n * 10) / 10;
+    const avg = (xs: ApiRating[]) => (xs.length ? round1(xs.reduce((a, r) => a + r.score, 0) / xs.length) : null);
+    const promoters = nps.filter((r) => r.score >= 9).length;
+    const passives = nps.filter((r) => r.score === 7 || r.score === 8).length;
+    const detractors = nps.filter((r) => r.score <= 6).length;
+    const nps_score = nps.length ? Math.round((promoters / nps.length) * 100 - (detractors / nps.length) * 100) : null;
+    const dayKey = (ts: number) => new Date(ts).toISOString().slice(0, 10);
+    const trend: Array<{ day: string; csat_avg: number | null; nps_avg: number | null; count: number }> = [];
+    for (let i = days - 1; i >= 0; i--) {
+      const key = dayKey(Date.now() - i * 86400000);
+      const dayItems = all.filter((r) => dayKey(r.created_at) === key);
+      trend.push({
+        day: key,
+        csat_avg: avg(dayItems.filter((r) => r.kind === 'csat')),
+        nps_avg: avg(dayItems.filter((r) => r.kind === 'nps')),
+        count: dayItems.length,
+      });
+    }
+    return {
+      csat_avg: avg(csat),
+      csat_count: csat.length,
+      nps_score,
+      nps_count: nps.length,
+      promoters,
+      passives,
+      detractors,
+      trend,
+    };
+  }
+
+  private wirePhpNamespaces(): void {
+    // ---- properties -----------------------------------------------------
+    const base_properties = this.properties;
+    this.properties = {
+      ...base_properties,
+      list: () =>
+        this.guardPhp(async () => ({ data: (await this.php().properties.list()).map(mapPhpProperty) }), () =>
+          base_properties.list(),
+        ),
+      get: (id: string) =>
+        this.guardPhp(async () => ({ data: mapPhpProperty(await this.php().properties.get(id)) }), () =>
+          base_properties.get(id),
+        ),
+      getByPublicKey: (publicKey: string) =>
+        this.guardPhp(
+          async () => ({ data: mapPhpProperty(await this.php().properties.getByPublicKey(publicKey)) }),
+          () => base_properties.getByPublicKey(publicKey),
+        ),
+      create: (input: { name: string; domain?: string }) =>
+        this.guardPhp(
+          async () => {
+            if (!input.name.trim()) throw new ApiError('validation', 'Property name is required.', 422);
+            return { data: mapPhpProperty(await this.php().properties.create(input)) };
+          },
+          () => base_properties.create(input),
+        ),
+      update: (id: string, patch: Partial<Pick<ApiProperty, 'name' | 'domain' | 'secure_mode' | 'enabled'>>) =>
+        this.guardPhp(
+          async () => {
+            // enabled is a local-only flag — no properties.enabled column remotely.
+            const { enabled: _enabled, ...remote } = patch;
+            return { data: mapPhpProperty(await this.php().properties.patch(id, remote)) };
+          },
+          () => base_properties.update(id, patch),
+        ),
+      regenerateKey: (id: string) =>
+        this.guardPhp(
+          async () => ({ data: await this.php().properties.regenerateKey(id) }),
+          () => base_properties.regenerateKey(id),
+        ),
+      remove: (id: string) =>
+        this.guardPhp(
+          async () => {
+            await this.php().properties.remove(id);
+            return { data: { deleted: true as const } };
+          },
+          () => base_properties.remove(id),
+        ),
+    };
+
+    // ---- widget config ----------------------------------------------------
+    const base_widget = this.widget;
+    this.widget = {
+      ...base_widget,
+      getConfig: (propertyId: string) =>
+        this.guardPhp(
+          async () => ({
+            data: { ...defaultWidgetConfig(), ...((await this.php().properties.getWidgetConfig(propertyId)) as WidgetConfig) },
+          }),
+          () => base_widget.getConfig(propertyId),
+        ),
+      updateConfig: (propertyId: string, patch: Partial<WidgetConfig>) =>
+        this.guardPhp(
+          async () => ({
+            data: { ...defaultWidgetConfig(), ...((await this.php().properties.patchWidgetConfig(propertyId, patch)) as WidgetConfig) },
+          }),
+          () => base_widget.updateConfig(propertyId, patch),
+        ),
+    };
+
+
+    // ---- conversations ----------------------------------------------------
+    const base_conversations = this.conversations;
+    this.conversations = {
+      ...base_conversations,
+      list: (opts: Parameters<BrixApi['conversations']['list']>[0] = {}) =>
+        this.guardPhp(async () => {
+          const { items, next_cursor } = await this.php().conversations.list({
+            property_id: opts.propertyId,
+            status: opts.status,
+            priority: opts.priority,
+            agent_id: opts.assignee,
+            q: opts.q,
+            tag: opts.tag,
+            cursor: opts.cursor,
+            limit: opts.limit,
+          });
+          return { data: { items: items.map(mapPhpConversation), next_cursor } };
+        }, () => base_conversations.list(opts)),
+      get: (id: string) =>
+        this.guardPhp(async () => ({ data: mapPhpConversation(await this.php().conversations.get(id)) }), () =>
+          base_conversations.get(id),
+        ),
+      startSession: (propertyId: string, visitor: { name?: string; email?: string; page_url?: string; referrer?: string }) =>
+        this.guardPhp(
+          async () => ({
+            data: mapPhpConversation(
+              await this.php().conversations.create({
+                property_id: propertyId,
+                name: visitor.name,
+                email: visitor.email,
+                page_url: visitor.page_url,
+                referrer: visitor.referrer,
+              }),
+            ),
+          }),
+          () => base_conversations.startSession(propertyId, visitor),
+        ),
+      sendMessage: (
+        id: string,
+        input: { sender: MsgSender; text: string; kind?: MsgKind; metadata?: Record<string, unknown> },
+      ) =>
+        this.guardPhp(async () => {
+          // AI sender is rewritten as 'system' server-side; mirror it so the
+          // local fallback cache and the returned row agree.
+          const sender: MsgSender = input.sender === 'ai' ? 'system' : input.sender;
+          return {
+            data: mapPhpMessage(
+              await this.php().conversations.sendMessage(id, {
+                sender,
+                kind: input.kind ?? 'text',
+                text: input.text,
+                metadata: input.metadata,
+              }),
+            ),
+          };
+        }, () => base_conversations.sendMessage(id, input)),
+      assign: (id: string, input: { agent_id?: string | null; department?: string }) =>
+        this.guardPhp(async () => {
+          const conv = mapPhpConversation(await this.php().conversations.get(id));
+          if (input.department) {
+            const depId = await this.deptIdByName(conv.property_id, input.department);
+            await this.php().conversations.transfer(id, { to_department_id: depId, note: '' });
+          }
+          if (input.agent_id !== undefined) {
+            await this.php().conversations.assign(id, input.agent_id ?? null);
+          }
+          return { data: mapPhpConversation(await this.php().conversations.get(id)) };
+        }, () => base_conversations.assign(id, input)),
+      transfer: (id: string, target: { agent_id?: string | null; department_id?: string | null }, note = '') =>
+        this.guardPhp(
+          async () => ({
+            data: mapPhpConversation(
+              await this.php().conversations.transfer(id, {
+                to_member_id: target.agent_id ?? null,
+                to_department_id: target.department_id ?? null,
+                note,
+              }),
+            ),
+          }),
+          () => base_conversations.transfer(id, target, note),
+        ),
+      setStatus: (id: string, status: ConvStatus) =>
+        this.guardPhp(
+          async () => ({ data: mapPhpConversation(await this.php().conversations.setStatus(id, status)) }),
+          () => base_conversations.setStatus(id, status),
+        ),
+      setTags: (id: string, tags: string[]) =>
+        this.guardPhp(
+          async () => ({ data: mapPhpConversation(await this.php().conversations.setTags(id, tags)) }),
+          () => base_conversations.setTags(id, tags),
+        ),
+      addNote: (id: string, input: { author: string; text: string }) =>
+        this.guardPhp(
+          async () => ({ data: mapPhpNote(await this.php().conversations.addNote(id, { text: input.text, author: input.author })) }),
+          () => base_conversations.addNote(id, input),
+        ),
+      setRating: (id: string, rating: number) =>
+        this.guardPhp(
+          async () => ({ data: mapPhpConversation(await this.php().conversations.setRating(id, rating)) }),
+          () => base_conversations.setRating(id, rating),
+        ),
+      markRead: (id: string) =>
+        this.guardPhp(
+          async () => ({ data: { unread: (await this.php().conversations.markRead(id)).unread ?? 0 } }),
+          () => base_conversations.markRead(id),
+        ),
+    };
+
+    // ---- contacts ---------------------------------------------------------
+    const base_contacts = this.contacts;
+    this.contacts = {
+      ...base_contacts,
+      list: (opts: Parameters<BrixApi['contacts']['list']>[0] = {}) =>
+        this.guardPhp(async () => {
+          const { items, next_cursor } = await this.php().contacts.list({
+            q: opts.q,
+            tag: opts.tag,
+            cursor: opts.cursor,
+            limit: opts.limit,
+          });
+          return { data: { items: items.map(mapPhpContact), next_cursor } };
+        }, () => base_contacts.list(opts)),
+      get: (id: string) =>
+        this.guardPhp(async () => ({ data: mapPhpContact(await this.php().contacts.get(id)) }), () =>
+          base_contacts.get(id),
+        ),
+      create: (input: Parameters<BrixApi['contacts']['create']>[0]) =>
+        this.guardPhp(async () => ({ data: mapPhpContact(await this.php().contacts.create(input)) }), () =>
+          base_contacts.create(input),
+        ),
+      update: (id: string, patch: Parameters<BrixApi['contacts']['update']>[1]) =>
+        this.guardPhp(async () => ({ data: mapPhpContact(await this.php().contacts.patch(id, patch)) }), () =>
+          base_contacts.update(id, patch),
+        ),
+      remove: (id: string) =>
+        this.guardPhp(
+          async () => {
+            await this.php().contacts.remove(id);
+            return { data: { deleted: true as const } };
+          },
+          () => base_contacts.remove(id),
+        ),
+    };
+
+    // ---- agents -----------------------------------------------------------
+    const base_agents = this.agents;
+    this.agents = {
+      ...base_agents,
+      list: () =>
+        this.guardPhp(async () => ({ data: (await this.php().members.list()).map(mapPhpAgent) }), () =>
+          base_agents.list(),
+        ),
+      invite: (input: { display_name: string; role?: TeamRole }) =>
+        this.guardPhp(async () => {
+          const name = input.display_name.trim();
+          if (!name) throw new ApiError('validation', 'Name is required.', 422);
+          const passcode = String(Math.floor(100000 + Math.random() * 900000));
+          const member = await this.php().members.create({ display_name: name, role: input.role ?? 'agent', passcode });
+          return { data: { agent: mapPhpAgent(member), passcode } };
+        }, () => base_agents.invite(input)),
+      update: (id: string, patch: Parameters<BrixApi['agents']['update']>[1]) =>
+        this.guardPhp(async () => {
+          const remote: Record<string, unknown> = {};
+          if (patch.role !== undefined) remote.role = patch.role;
+          if (patch.display_name !== undefined) remote.display_name = patch.display_name;
+          if (patch.online !== undefined) remote.status = patch.online ? 'online' : 'offline';
+          // active has no server-side column (members are always active).
+          return { data: mapPhpAgent(await this.php().members.patch(id, remote)) };
+        }, () => base_agents.update(id, patch)),
+      remove: (id: string) =>
+        this.guardPhp(
+          async () => {
+            await this.php().members.remove(id);
+            return { data: { deleted: true as const } };
+          },
+          () => base_agents.remove(id),
+        ),
+    };
+
+
+    // ---- tickets ----------------------------------------------------------
+    const base_tickets = this.tickets;
+    this.tickets = {
+      ...base_tickets,
+      list: (opts: Parameters<BrixApi['tickets']['list']>[0] = {}) =>
+        this.guardPhp(async () => {
+          const { items, next_cursor } = await this.php().tickets.list({
+            status: opts.status,
+            priority: opts.priority,
+            assigneeId: opts.assignee,
+            q: opts.q,
+            cursor: opts.cursor,
+            limit: opts.limit,
+          });
+          return { data: { items: items.map(mapPhpTicket), next_cursor } };
+        }, () => base_tickets.list(opts)),
+      get: (id: string) =>
+        this.guardPhp(async () => ({ data: mapPhpTicket(await this.php().tickets.get(id)) }), () =>
+          base_tickets.get(id),
+        ),
+      create: (input: Parameters<BrixApi['tickets']['create']>[0]) =>
+        this.guardPhp(async () => ({ data: mapPhpTicket(await this.php().tickets.create(input)) }), () =>
+          base_tickets.create(input),
+        ),
+      update: (id: string, patch: Parameters<BrixApi['tickets']['update']>[1]) =>
+        this.guardPhp(async () => ({ data: mapPhpTicket(await this.php().tickets.patch(id, patch)) }), () =>
+          base_tickets.update(id, patch),
+        ),
+      setStatus: (id: string, status: TicketStatus) =>
+        this.guardPhp(
+          async () => ({ data: mapPhpTicket(await this.php().tickets.setStatus(id, status)) }),
+          () => base_tickets.setStatus(id, status),
+        ),
+      assign: (id: string, agentId: string | null) =>
+        this.guardPhp(
+          async () => ({ data: mapPhpTicket(await this.php().tickets.assign(id, agentId)) }),
+          () => base_tickets.assign(id, agentId),
+        ),
+      setPriority: (id: string, p: TicketPriority) =>
+        this.guardPhp(
+          async () => ({ data: mapPhpTicket(await this.php().tickets.setPriority(id, p)) }),
+          () => base_tickets.setPriority(id, p),
+        ),
+      bulk: (ids: string[], action: 'resolve' | 'assign' | 'spam', agentId?: string) =>
+        this.guardPhp(async () => {
+          if (!ids.length) throw new ApiError('validation', 'Select at least one ticket.', 422);
+          if (action === 'assign' && !agentId) throw new ApiError('validation', 'An assignee is required for bulk assign.', 422);
+          const patch: Record<string, unknown> = {};
+          if (action === 'resolve') patch.status = 'resolved';
+          if (action === 'assign') patch.assignee_id = agentId ?? null;
+          if (action === 'spam') {
+            patch.status = 'resolved';
+            // Mirror the local/Supabase behavior: add the 'spam' tag.
+            const items = await Promise.all(ids.map((tid) => this.php().tickets.get(tid).catch(() => null)));
+            const tags = new Set<string>();
+            for (const t of items) if (t) asArr<string>(t.tags).forEach((x) => tags.add(x));
+            tags.add('spam');
+            patch.tags = [...tags];
+          }
+          const { updated } = await this.php().tickets.bulk(ids, patch);
+          return { data: { updated } };
+        }, () => base_tickets.bulk(ids, action, agentId)),
+      fromConversation: (convId: string, input: Parameters<BrixApi['tickets']['fromConversation']>[1]) =>
+        this.guardPhp(
+          async () => {
+            // The server derives subject/requester/message from the
+            // conversation itself; local-only overrides cannot be sent.
+            return { data: mapPhpTicket(await this.php().tickets.fromConversation(convId)) };
+          },
+          () => base_tickets.fromConversation(convId, input),
+        ),
+    };
+
+    // ---- notifications ----------------------------------------------------
+    const base_notifications = this.notifications;
+    this.notifications = {
+      ...base_notifications,
+      list: (opts: Parameters<BrixApi['notifications']['list']>[0] = {}) =>
+        this.guardPhp(async () => {
+          const { items, next_cursor } = await this.php().notifications.list(opts.unreadOnly, {
+            cursor: opts.cursor,
+            limit: opts.limit,
+          });
+          return { data: { items: items.map(mapPhpNotification), next_cursor } };
+        }, () => base_notifications.list(opts)),
+      markRead: (id: string) =>
+        this.guardPhp(async () => ({ data: mapPhpNotification(await this.php().notifications.markRead(id)) }), () =>
+          base_notifications.markRead(id),
+        ),
+      markAllRead: () =>
+        this.guardPhp(
+          async () => ({ data: { read: Number((await this.php().notifications.markAllRead()).read ?? 0) } }),
+          () => base_notifications.markAllRead(),
+        ),
+      push: (type: ApiNotification['type'], title: string, body: string, link: string | null = null) =>
+        this.guardPhp(async () => {
+          return { data: mapPhpNotification(await this.php().notifications.push({ type, title, body, link })) };
+        }, () => base_notifications.push(type, title, body, link)),
+    };
+
+    // ---- ratings ----------------------------------------------------------
+    const base_ratings = this.ratings;
+    this.ratings = {
+      ...base_ratings,
+      create: (input: Parameters<BrixApi['ratings']['create']>[0]) =>
+        this.guardPhp(async () => {
+          const scale = input.kind === 'nps' ? 10 : 5;
+          if (!Number.isInteger(input.score) || input.score < 1 || input.score > scale) {
+            throw new ApiError('validation', `Score must be 1-${scale} for ${input.kind}.`, 422);
+          }
+          return {
+            data: mapPhpRating(
+              await this.php().ratings.create({
+                property_id: input.property_id,
+                conversation_id: input.conversation_id ?? null,
+                member_id: input.agent_id ?? null,
+                kind: input.kind,
+                score: input.score,
+                comment: input.comment,
+              }),
+            ),
+          };
+        }, () => base_ratings.create(input)),
+      list: (opts: Parameters<BrixApi['ratings']['list']>[0] = {}) =>
+        this.guardPhp(async () => {
+          const { items } = await this.php().ratings.list({ property_id: opts.property_id, limit: 200 });
+          let rows = items.map(mapPhpRating);
+          if (opts.agent_id) rows = rows.filter((r) => r.agent_id === opts.agent_id);
+          if (opts.kind) rows = rows.filter((r) => r.kind === opts.kind);
+          if (opts.from !== undefined) rows = rows.filter((r) => r.created_at >= (opts.from as number));
+          if (opts.to !== undefined) rows = rows.filter((r) => r.created_at <= (opts.to as number));
+          return { data: paginate(rows, opts) };
+        }, () => base_ratings.list(opts)),
+      summary: (propertyId: string, days = 30) =>
+        this.guardPhp(async () => ({ data: await this.ratingSummary(propertyId, days) }), () =>
+          base_ratings.summary(propertyId, days),
+        ),
+    };
+
+    // ---- departments ------------------------------------------------------
+    const base_departments = this.departments;
+    this.departments = {
+      ...base_departments,
+      list: (propertyId: string) =>
+        this.guardPhp(
+          async () => ({
+            data: (await this.php().departments.list())
+              .filter((d) => d.property_id === propertyId)
+              .map(mapPhpDepartment),
+          }),
+          () => base_departments.list(propertyId),
+        ),
+      create: (propertyId: string, input: Parameters<BrixApi['departments']['create']>[1]) =>
+        this.guardPhp(async () => {
+          if (!input.name.trim()) throw new ApiError('validation', 'Department name is required.', 422);
+          return {
+            data: mapPhpDepartment(
+              await this.php().departments.create({
+                name: input.name.trim(),
+                property_id: propertyId,
+                description: input.description,
+                routing_mode: input.routing_mode,
+                agent_ids: input.agent_ids,
+                hours_override: input.hours_override,
+                offline_behavior: input.offline_behavior,
+              }),
+            ),
+          };
+        }, () => base_departments.create(propertyId, input)),
+      update: (id: string, patch: Parameters<BrixApi['departments']['update']>[1]) =>
+        this.guardPhp(async () => ({ data: mapPhpDepartment(await this.php().departments.patch(id, patch)) }), () =>
+          base_departments.update(id, patch),
+        ),
+      delete: (id: string) =>
+        this.guardPhp(
+          async () => {
+            await this.php().departments.remove(id);
+            return { data: { deleted: true as const } };
+          },
+          () => base_departments.delete(id),
+        ),
+    };
+
+    // ---- routing ----------------------------------------------------------
+    const base_routing = this.routing;
+    this.routing = {
+      ...base_routing,
+      routeChat: (propertyId: string, departmentId?: string | null) =>
+        this.guardPhp(async () => {
+          // Same semantics as the local implementation: pick the target
+          // department (or the only/online-capable one), then the least-busy
+          // online member, with a client-side round-robin tie-break.
+          const depts = ((await this.departments.list(propertyId)) as Envelope<ApiDepartment[]>).data;
+          const dep = departmentId ? depts.find((d) => d.id === departmentId) ?? null : depts[0] ?? null;
+          const members = ((await this.members.list()) as Envelope<ApiMember[]>).data;
+          let candidates = members.filter(
+            (m) => dep && dep.agent_ids.includes(m.id) && m.status === 'online',
+          );
+          if (!candidates.length) candidates = members.filter((m) => m.status === 'online');
+          if (!candidates.length) candidates = members;
+          if (!candidates.length || !dep) {
+            return { data: { agent_id: null as string | null, department_id: dep?.id ?? null } };
+          }
+          const { items } = (await this.conversations.list({ status: 'open', limit: 200 })).data;
+          const counts = new Map<string, number>();
+          for (const c of items) if (c.agent_id) counts.set(c.agent_id, (counts.get(c.agent_id) ?? 0) + 1);
+          const rrKey = `brix:rr:${propertyId}:${dep.id}`;
+          let rr = Number(localStorage.getItem(rrKey) ?? '0');
+          let best = candidates[0];
+          let bestScore = Infinity;
+          for (const m of candidates) {
+            const score = (counts.get(m.id) ?? 0) * 1000 + ((rr + candidates.indexOf(m)) % candidates.length);
+            if (score < bestScore) {
+              bestScore = score;
+              best = m;
+            }
+          }
+          localStorage.setItem(rrKey, String(rr + 1));
+          return { data: { agent_id: best.id, department_id: dep.id as string } };
+        }, () => base_routing.routeChat(propertyId, departmentId)),
+    };
+
+
+    // ---- categories -------------------------------------------------------
+    const base_categories = this.categories;
+    this.categories = {
+      ...base_categories,
+      list: (scope: ApiCategory['scope'], propertyId?: string) =>
+        this.guardPhp(async () => {
+          const items = await this.php().categories.list(scope);
+          return {
+            data: items
+              .filter((c) => !propertyId || c.property_id === propertyId)
+              .map(mapPhpCategory),
+          };
+        }, () => base_categories.list(scope, propertyId)),
+      create: (scope: ApiCategory['scope'], propertyId: string, name: string, color?: string) =>
+        this.guardPhp(async () => {
+          if (!name.trim()) throw new ApiError('validation', 'Category name is required.', 422);
+          return {
+            data: mapPhpCategory(
+              await this.php().categories.create({ scope, name: name.trim(), color, property_id: propertyId as string }),
+            ),
+          };
+        }, () => base_categories.create(scope, propertyId, name, color)),
+      // PATCH/DELETE need the category's scope for the PHP endpoint; look it
+      // up across scopes first.
+      update: (id: string, patch: Parameters<BrixApi['categories']['update']>[1]) =>
+        this.guardPhp(async () => {
+          const scope = await this.categoryScopeOf(id);
+          return { data: mapPhpCategory(await this.php().categories.patch(id, scope, patch)) };
+        }, () => base_categories.update(id, patch)),
+      delete: (id: string) =>
+        this.guardPhp(
+          async () => {
+            const scope = await this.categoryScopeOf(id);
+            await this.php().categories.remove(id, scope);
+            return { data: { deleted: true as const } };
+          },
+          () => base_categories.delete(id),
+        ),
+    };
+
+    // ---- saved views ------------------------------------------------------
+    const base_views = this.views;
+    this.views = {
+      ...base_views,
+      list: () =>
+        this.guardPhp(async () => ({ data: (await this.php().savedViews.list()).map(mapPhpView) }), () =>
+          base_views.list(),
+        ),
+      create: (name: string, filters: ApiSavedView['filters']) =>
+        this.guardPhp(async () => {
+          if (!name.trim()) throw new ApiError('validation', 'View name is required.', 422);
+          return { data: mapPhpView(await this.php().savedViews.create({ name, filters })) };
+        }, () => base_views.create(name, filters)),
+      delete: (id: string) =>
+        this.guardPhp(
+          async () => {
+            await this.php().savedViews.remove(id);
+            return { data: { deleted: true as const } };
+          },
+          () => base_views.delete(id),
+        ),
+    };
+
+    // ---- plays ------------------------------------------------------------
+    const base_plays = this.plays;
+    this.plays = {
+      ...base_plays,
+      list: () =>
+        this.guardPhp(async () => ({ data: (await this.php().plays.list()).map(mapPhpPlay) }), () =>
+          base_plays.list(),
+        ),
+      create: (name: string, steps: ApiPlayStep[]) =>
+        this.guardPhp(async () => {
+          if (!name.trim()) throw new ApiError('validation', 'Play name is required.', 422);
+          if (!steps.length) throw new ApiError('validation', 'A play needs at least one step.', 422);
+          return { data: mapPhpPlay(await this.php().plays.create({ name, steps })) };
+        }, () => base_plays.create(name, steps)),
+      delete: (id: string) =>
+        this.guardPhp(
+          async () => {
+            await this.php().plays.remove(id);
+            return { data: { deleted: true as const } };
+          },
+          () => base_plays.delete(id),
+        ),
+      run: (conversationId: string, playId: string) =>
+        this.guardPhp(async () => {
+          const { applied } = await this.php().plays.run(playId, conversationId);
+          return { data: { applied } };
+        }, () => base_plays.run(conversationId, playId)),
+    };
+
+    // ---- goals ------------------------------------------------------------
+    const base_goals = this.goals;
+    this.goals = {
+      ...base_goals,
+      list: () =>
+        this.guardPhp(async () => ({ data: (await this.php().goals.list()).map(mapPhpGoal) }), () =>
+          base_goals.list(),
+        ),
+      create: (name: string, event: string, revenue = 0) =>
+        this.guardPhp(async () => {
+          if (!name.trim()) throw new ApiError('validation', 'Goal name is required.', 422);
+          return { data: mapPhpGoal(await this.php().goals.create({ name, event, revenue })) };
+        }, () => base_goals.create(name, event, revenue)),
+      delete: (id: string) =>
+        this.guardPhp(
+          async () => {
+            await this.php().goals.remove(id);
+            return { data: { deleted: true as const } };
+          },
+          () => base_goals.delete(id),
+        ),
+      track: (goalId: string, conversationId: string | null = null, value?: number) =>
+        this.guardPhp(async () => {
+          const row = await this.php().goals.track(goalId, conversationId, value);
+          return { data: mapPhpGoalEvent(String(row.id ?? ''), goalId, conversationId, value ?? 0) };
+        }, () => base_goals.track(goalId, conversationId, value)),
+      funnel: (days = 30) =>
+        this.guardPhp(async () => {
+          const f = await this.php().goals.funnel(days);
+          return {
+            data: {
+              visitors: f.visitors,
+              chats: f.chats,
+              goals: asArr<{ goal: PhpRow; count: number; revenue: number }>(f.goals).map((g) => ({
+                goal: mapPhpGoal(g.goal),
+                count: g.count,
+                revenue: g.revenue,
+              })),
+            },
+          };
+        }, () => base_goals.funnel(days)),
+    };
+
+    // ---- members ----------------------------------------------------------
+    const base_members = this.members;
+    this.members = {
+      ...base_members,
+      list: () =>
+        this.guardPhp(async () => ({ data: (await this.php().members.list()).map(mapPhpMember) }), () =>
+          base_members.list(),
+        ),
+      get: (id: string) =>
+        this.guardPhp(async () => ({ data: mapPhpMember(await this.php().members.get(id)) }), () =>
+          base_members.get(id),
+        ),
+      create: (
+        displayName: string,
+        role: TeamRole,
+        passcode: string,
+        extras: { job_title?: string; avatar_data_url?: string | null; department_ids?: string[] } = {},
+      ) =>
+        this.guardPhp(async () => {
+          if (!displayName.trim()) throw new ApiError('validation', 'Name is required.', 422);
+          return {
+            data: mapPhpMember(
+              await this.php().members.create({
+                display_name: displayName.trim(),
+                role,
+                passcode,
+                job_title: extras.job_title,
+                avatar_url: extras.avatar_data_url,
+                department_ids: extras.department_ids,
+              }),
+            ),
+          };
+        }, () => base_members.create(displayName, role, passcode, extras)),
+      update: (id: string, patch: Parameters<BrixApi['members']['update']>[1]) =>
+        this.guardPhp(async () => {
+          const { avatar_data_url, ...rest } = patch;
+          const remote: Record<string, unknown> = { ...rest };
+          if (avatar_data_url !== undefined) remote.avatar_url = avatar_data_url;
+          return { data: mapPhpMember(await this.php().members.patch(id, remote)) };
+        }, () => base_members.update(id, patch)),
+      remove: (id: string) =>
+        this.guardPhp(
+          async () => {
+            await this.php().members.remove(id);
+            return { data: { deleted: true as const } };
+          },
+          () => base_members.remove(id),
+        ),
+      login: (displayName: string, passcode: string) =>
+        (async () => {
+          // Remote-first: POST /auth/login establishes the bearer token.
+          // Bad credentials (401/403) propagate and must NEVER fall back to
+          // the local demo — that would sign the user into the wrong
+          // backend. Only a network-level failure falls back to local.
+          const name = displayName.trim();
+          if (!name || !passcode) throw new ApiError('validation', 'Name and passcode are required.', 422);
+          try {
+            const { member } = await this.php().auth.login(this.workspace, passcode, name);
+            return { data: mapPhpMember(member) };
+          } catch (e) {
+            if (e instanceof ApiError && e.code === 'php_unreachable') {
+              // eslint-disable-next-line no-console
+              console.warn('[brix-chat] PHP API unreachable — login falls back to local demo.');
+              return base_members.login(displayName, passcode);
+            }
+            throw e;
+          }
+        })(),
+      setPasscode: (id: string, passcode: string) =>
+        this.guardPhp(async () => {
+          await this.php().members.setPasscode(id, passcode);
+          return { data: { updated: true as const } };
+        }, () => base_members.setPasscode(id, passcode)),
+      touchLogin: (id: string) =>
+        this.guardPhp(async () => ({ data: mapPhpMember(await this.php().members.touchLogin(id)) }), () =>
+          base_members.touchLogin(id),
+        ),
+      setStatus: (id: string, status: 'online' | 'away' | 'offline') =>
+        this.guardPhp(async () => ({ data: mapPhpMember(await this.php().members.setStatus(id, status)) }), () =>
+          base_members.setStatus(id, status),
+        ),
+    };
+
+    // ---- property settings ------------------------------------------------
+    const base_propertySettings = this.propertySettings;
+    this.propertySettings = {
+      ...base_propertySettings,
+      get: (propertyId: string) =>
+        this.guardPhp(
+          async () => ({ data: { ...defaultPropertySettings(), ...(await this.php().properties.getSettings(propertyId)) } }),
+          () => base_propertySettings.get(propertyId),
+        ),
+      patch: (propertyId: string, patch: Partial<PropertySettings>) =>
+        this.guardPhp(async () => {
+          const { departments: _departments, ...remote } = patch;
+          return {
+            data: { ...defaultPropertySettings(), ...(await this.php().properties.patchSettings(propertyId, remote)) },
+          };
+        }, () => base_propertySettings.patch(propertyId, patch)),
+    };
+
+    // ---- integrations -----------------------------------------------------
+    const base_integrations = this.integrations;
+    this.integrations = {
+      ...base_integrations,
+      list: () =>
+        this.guardPhp(async () => {
+          const rows = await this.php().integrations.list();
+          const byProvider = new Map(rows.map((r) => [r.provider as string, r]));
+          return { data: INTEGRATION_REGISTRY.map((def) => mapPhpIntegration(def, byProvider.get(def.id))) };
+        }, () => base_integrations.list()),
+      patch: (id: string, patch: Parameters<BrixApi['integrations']['patch']>[1]) =>
+        this.guardPhp(async () => {
+          const def = INTEGRATION_REGISTRY.find((d) => d.id === id);
+          if (!def) throw new ApiError('not_found', 'Integration not found.', 404);
+          const row = await this.php().integrations.patch(id, patch);
+          return { data: mapPhpIntegration(def, row) };
+        }, () => base_integrations.patch(id, patch)),
+    };
+
+    // ---- unanswered questions ----------------------------------------------
+    const base_unanswered = this.unanswered;
+    this.unanswered = {
+      ...base_unanswered,
+      list: (opts: Parameters<BrixApi['unanswered']['list']>[0] = {}) =>
+        this.guardPhp(async () => {
+          const { items, next_cursor } = await this.php().unanswered.list(opts.includeDismissed, {
+            cursor: opts.cursor,
+            limit: opts.limit,
+          });
+          return { data: { items: items.map(mapPhpUnanswered), next_cursor } };
+        }, () => base_unanswered.list(opts)),
+      add: (question: string, conversationId: string | null = null) =>
+        this.guardPhp(async () => {
+          // The PHP API requires a conversation for unanswered questions.
+          if (!conversationId) {
+            throw new ApiError(
+              'not_supported',
+              'Unanswered questions without a conversation are not supported by the PHP API.',
+              501,
+            );
+          }
+          return {
+            data: mapPhpUnanswered(await this.php().unanswered.create({ question, conversation_id: conversationId })),
+          };
+        }, () => base_unanswered.add(question, conversationId)),
+      dismiss: (id: string) =>
+        this.guardPhp(async () => ({ data: mapPhpUnanswered(await this.php().unanswered.dismiss(id)) }), () =>
+          base_unanswered.dismiss(id),
+        ),
+      promote: (id: string) =>
+        this.guardPhp(async () => ({ data: mapPhpArticle(await this.php().unanswered.promote(id)) }), () =>
+          base_unanswered.promote(id),
+        ),
+    };
+
+    // ---- audit log ----------------------------------------------------------
+    const base_audit = this.audit;
+    this.audit = {
+      ...base_audit,
+      log: async (action: string, entity: string, entityId = '', meta: Record<string, unknown> = {}) => {
+        // Best-effort: audit must never break the app.
+        try {
+          await this.php().auditLog.append({ action, entity, entity_id: entityId, meta });
+        } catch {
+          /* ignore */
+        }
+      },
+      search: (opts: Parameters<BrixApi['audit']['search']>[0] = {}) =>
+        this.guardPhp(async () => {
+          const { items, next_cursor } = await this.php().auditLog.list({
+            actor: opts.actor,
+            action: opts.action,
+            from: opts.from,
+            to: opts.to,
+            cursor: opts.cursor,
+            limit: opts.limit,
+          });
+          return { data: { items: items.map(mapPhpAudit), next_cursor } };
+        }, () => base_audit.search(opts)),
+    };
+
+    // ---- knowledge base -----------------------------------------------------
+    const base_kb = this.kb;
+    this.kb = {
+      ...base_kb,
+      list: (opts: { q?: string; status?: 'draft' | 'published'; category?: string } & ListOpts = {}) =>
+        this.guardPhp(async () => {
+          const { items, next_cursor } = await this.php().kb.list({
+            q: opts.q,
+            category: opts.category,
+            status: opts.status,
+            cursor: opts.cursor,
+            limit: opts.limit,
+          });
+          return { data: { items: items.map(mapPhpArticle), next_cursor } };
+        }, () => base_kb.list(opts)),
+      search: (q: string) =>
+        this.guardPhp(async () => {
+          const items = await this.php().kb.search(q);
+          return { data: items.map(mapPhpArticle) };
+        }, () => base_kb.search(q)),
+      get: (id: string) =>
+        this.guardPhp(async () => ({ data: mapPhpArticle(await this.php().kb.get(id)) }), () =>
+          base_kb.get(id),
+        ),
+      create: (input: Parameters<BrixApi['kb']['create']>[0]) =>
+        this.guardPhp(async () => {
+          if (!input.title.trim()) throw new ApiError('validation', 'Title is required.', 422);
+          return { data: mapPhpArticle(await this.php().kb.create(input)) };
+        }, () => base_kb.create(input)),
+      update: (id: string, patch: Parameters<BrixApi['kb']['update']>[1]) =>
+        this.guardPhp(async () => ({ data: mapPhpArticle(await this.php().kb.patch(id, patch)) }), () =>
+          base_kb.update(id, patch),
+        ),
+      remove: (id: string) =>
+        this.guardPhp(
+          async () => {
+            await this.php().kb.remove(id);
+            return { data: { deleted: true as const } };
+          },
+          () => base_kb.remove(id),
+        ),
+    };
+
+    // ---- canned replies -----------------------------------------------------
+    const base_canned = this.canned;
+    this.canned = {
+      ...base_canned,
+      list: (opts: { category?: string } = {}) =>
+        this.guardPhp(async () => {
+          const { items } = await this.php().canned.list({ category: opts.category });
+          return { data: items.map(mapPhpCanned) };
+        }, () => base_canned.list(opts)),
+      create: (input: Parameters<BrixApi['canned']['create']>[0]) =>
+        this.guardPhp(async () => {
+          if (!input.title.trim()) throw new ApiError('validation', 'Title is required.', 422);
+          if (!input.body.trim()) throw new ApiError('validation', 'Body is required.', 422);
+          return { data: mapPhpCanned(await this.php().canned.create(input)) };
+        }, () => base_canned.create(input)),
+      update: (id: string, patch: Parameters<BrixApi['canned']['update']>[1]) =>
+        this.guardPhp(async () => ({ data: mapPhpCanned(await this.php().canned.patch(id, patch)) }), () =>
+          base_canned.update(id, patch),
+        ),
+      remove: (id: string) =>
+        this.guardPhp(
+          async () => {
+            await this.php().canned.remove(id);
+            return { data: { deleted: true as const } };
+          },
+          () => base_canned.remove(id),
+        ),
+    };
+
+    // ---- API keys -----------------------------------------------------------
+    const base_apiKeys = this.apiKeys;
+    this.apiKeys = {
+      ...base_apiKeys,
+      list: () =>
+        this.guardPhp(async () => ({ data: (await this.php().apiKeys.list()).map(mapPhpKey) }), () =>
+          base_apiKeys.list(),
+        ),
+      create: (input: { name: string; scopes: string[] }) =>
+        this.guardPhp(async () => {
+          const row = await this.php().apiKeys.create({ name: input.name, scopes: input.scopes });
+          return {
+            data: { record: mapPhpKey(row.record as PhpRow), key: String(row.key ?? '') },
+          };
+        }, () => base_apiKeys.create(input)),
+      revealOnce: (id: string) =>
+        this.guardPhp(async () => ({ data: await this.php().apiKeys.reveal(id) }), () =>
+          base_apiKeys.revealOnce(id),
+        ),
+      rotate: (id: string) =>
+        this.guardPhp(async () => {
+          const row = await this.php().apiKeys.rotate(id);
+          return {
+            data: { record: mapPhpKey(row.record as PhpRow), key: String(row.key ?? '') },
+          };
+        }, () => base_apiKeys.rotate(id)),
+      revoke: (id: string) =>
+        this.guardPhp(async () => {
+          const row = await this.php().apiKeys.revoke(id);
+          const record = row.id ? row : await this.php().apiKeys.get(id);
+          return { data: mapPhpKey(record) };
+        }, () => base_apiKeys.revoke(id)),
+      remove: (id: string) =>
+        this.guardPhp(
+          async () => {
+            await this.php().apiKeys.remove(id);
+            return { data: { deleted: true as const } };
+          },
+          () => base_apiKeys.remove(id),
+        ),
+    };
+
+    // ---- metrics ------------------------------------------------------------
+    const base_metrics = this.metrics;
+    this.metrics = {
+      ...base_metrics,
+      chats: (opts: { days?: number } = {}) =>
+        this.guardPhp(
+          async () => ({
+            data: (await this.php().metrics.chats(opts.days)) as Array<{ date: string; total: number; missed: number }>,
+          }),
+          () => base_metrics.chats(opts),
+        ),
+      responseTimes: () =>
+        this.guardPhp(
+          async () => ({
+            data: (await this.php().metrics.responseTimes()) as unknown as {
+              avg_first_response_sec: number; p95_first_response_sec: number; samples: number;
+            },
+          }),
+          () => base_metrics.responseTimes(),
+        ),
+      satisfaction: () =>
+        this.guardPhp(
+          async () => ({
+            data: (await this.php().metrics.satisfaction()) as unknown as {
+              rated: number; distribution: Record<string, number>; csat_pct: number;
+            },
+          }),
+          () => base_metrics.satisfaction(),
+        ),
+      tickets: () =>
+        this.guardPhp(
+          async () => ({ data: (await this.php().metrics.tickets()) as unknown as Record<TicketStatus, number> }),
+          () => base_metrics.tickets(),
+        ),
+    };
+
+    // ---- audit log viewer -----------------------------------------------------
+    const base_auditLog = this.auditLog;
+    this.auditLog = {
+      ...base_auditLog,
+      list: (opts: ListOpts = {}) =>
+        this.guardPhp(async () => {
+          const { items, next_cursor } = await this.php().auditLog.list({ cursor: opts.cursor, limit: opts.limit });
+          return { data: { items: items.map(mapPhpAudit), next_cursor } };
+        }, () => base_auditLog.list(opts)),
+    };
+  }
+
+  /** Resolve a category's scope by scanning the scope-scoped lists. */
+  private async categoryScopeOf(id: string): Promise<ApiCategory['scope']> {
+    const scopes: ApiCategory['scope'][] = ['kb', 'canned', 'tickets'];
+    for (const scope of scopes) {
+      const items = await this.php().categories.list(scope);
+      if (items.some((c) => c.id === id)) return scope;
+    }
+    throw new ApiError('not_found', 'Category not found.', 404);
+  }
+}
+
+
 /** The localStorage-backed transport (default; works offline, no env vars). */
 export { BrixApi as localTransport };
 /** The Supabase/PostgREST-backed transport (active when env vars are set). */
 export { SupabaseBrixApi as supabaseTransport };
+/** The plain-PHP/MySQL-backed transport (active when VITE_API_URL is set). */
+export { PhpBrixApi as phpTransport };
 
 /**
- * Pick the active transport: Supabase when VITE_SUPABASE_URL and
- * VITE_SUPABASE_ANON_KEY are both configured, otherwise localStorage.
+ * Pick the active transport, by priority:
+ *   1. Supabase — VITE_SUPABASE_URL + VITE_SUPABASE_ANON_KEY both set.
+ *   2. Plain-PHP API — VITE_API_URL set.
+ *   3. localStorage — the default; no env vars, works offline.
  * Signatures and return shapes are identical either way.
  */
 export function getTransport(workspace: string, actor = 'system'): BrixApi {
-  return isSupabaseEnabled() ? new SupabaseBrixApi(workspace, actor) : new BrixApi(workspace, actor);
+  if (isSupabaseEnabled()) return new SupabaseBrixApi(workspace, actor);
+  if (isPhpApiEnabled()) return new PhpBrixApi(workspace, actor);
+  return new BrixApi(workspace, actor);
 }
 
 /* eslint-enable @typescript-eslint/no-explicit-any */

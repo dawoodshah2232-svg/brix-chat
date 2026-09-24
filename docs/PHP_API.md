@@ -381,3 +381,82 @@ property is reserved for it).
 - Round-robin assignment counters stay client-side (localStorage), as before.
 - `campaigns` table exists in the schema but campaign *sending* was never
   implemented upstream — no send worker here either.
+
+## 11. Frontend transport (`VITE_API_URL`)
+
+The React frontend (`src/lib/`) can use this PHP API as a drop-in transport
+behind the same `BrixApi` interface the localStorage and Supabase transports
+implement. Wiring lives in three files:
+
+- `src/lib/php-client.ts` — low-level `fetch()` client: `{data}` unwrapping,
+  `{items,next_cursor}` pagination, error mapping, Bearer <redacted> handling,
+  and the `/updates` poller.
+- `src/lib/api.ts` — `PhpBrixApi extends BrixApi` overrides every supported
+  namespace with remote implementations (same signatures, same `{ data }`
+  envelopes); `getTransport()` picks the transport.
+- `src/lib/store.tsx` — login/session wiring, polling lifecycle, and
+  `auth_expired` handling.
+
+### Selection priority
+
+`getTransport(workspace, actor)` picks, in order:
+
+1. **Supabase** — when `VITE_SUPABASE_URL` **and** `VITE_SUPABASE_ANON_KEY`
+   are both set.
+2. **PHP API** — when `VITE_API_URL` is set (e.g.
+   `VITE_API_URL=https://example.com/api`).
+3. **localStorage** — the default when neither is set. The GitHub Pages /
+   local demo behaves exactly as before; no `VITE_API_URL` means no network
+   calls, no token, no polling.
+
+### Realtime: 5-second polling
+
+PHP has no realtime transport, so `ensurePhpPolling()` (started by the
+`PhpBrixApi` constructor and armed by the store while a session exists)
+polls `GET /updates?since=<ISO-8601>` roughly every **5 seconds** and feeds
+`conversations` / `messages` / `visitors` events into the shared
+`onRemoteChange` bus — the same callback behavior as the Supabase transport
+(`api.ts` merges both buses into one `onRemoteChange()` export). Ticks are
+skipped quietly until login (no token yet) and polling never throws: a failed
+tick is retried on the next interval.
+
+### Auth tokens
+
+- `members.login()` calls `POST /auth/login`; the returned 30-day Bearer <redacted>
+  is kept in the php-client singleton (**memory + `sessionStorage` only**,
+  never localStorage — closing the tab ends the session) and sent as
+  `Authorization: Bearer` on every other call.
+- The client decodes the token's expiry locally and the server rejects
+  lapsed/forged tokens with 401: both surface as
+  `ApiError('auth_expired', …, 401)`.
+- On `auth_expired` the transport dispatches a `brix:auth-expired` window
+  event; the store drops the session (and the token) so the UI returns to
+  the login screen and prompts for re-login. `logout()` clears the token too.
+- Tokens are **workspace-scoped**: if the app instance targets a different
+  workspace than the token was issued for, the token is discarded and
+  `auth_expired` is raised. (Platform-admin cross-workspace viewing is not
+  supported on this transport.)
+
+### Failure behavior
+
+`PhpBrixApi` wraps every remote call in `guardPhp()`: transport failures
+(server unreachable, 5xx, …) fall back to the localStorage implementation
+with a `console.warn`, exactly like the Supabase transport. Data errors
+propagate — `validation` / `not_found` / `conflict` / `not_supported` /
+`unauthorized` / `auth_expired` — never silently. Login is remote-first:
+bad credentials (401/403) never fall back to the local demo.
+
+### Known limitations of this transport
+
+- Ticket `setParent` / `related` / `split` keep the localStorage
+  implementation (parent/relation links are not representable server-side),
+  exactly like the Supabase transport. `split` exists server-side but is not
+  wired, to keep the override set identical across transports.
+- `unanswered.add()` without a conversation throws 501 `not_supported`
+  (the API requires `conversation_id`).
+- `properties.enabled` is a local-only flag (no server column); updates strip
+  it before PATCH.
+- `ratings.summary()` is computed client-side from the remote ratings list
+  (same math as the Supabase transport).
+- `conversations.sendMessage()` maps the `ai` sender to `system` to match the
+  server's rewrite.
