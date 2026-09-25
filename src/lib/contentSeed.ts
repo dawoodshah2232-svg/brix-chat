@@ -298,6 +298,407 @@ The storage layer moves to an API; method names, the admin UI and your data mode
     published: true,
     reading_mins: 4,
   },
+  {
+    slug: 'ecommerce-chat-playbooks',
+    title: 'Chat on ecommerce: where to trigger, what to say, and when to stay quiet',
+    excerpt:
+      'Ecommerce chat pays for itself on product, cart, and checkout pages — and annoys everywhere else. Page-specific plays, honest timing, and the discipline to stay silent.',
+    body: `## The short answer
+
+Chat earns its keep on ecommerce in exactly three places: the product page, the cart, and checkout. Everywhere else it should stay quiet. One well-timed, page-specific question beats a site-wide popup every time.
+
+## Where doubt is expensive
+
+Not all pages are equal. A confused visitor on your About page costs you nothing; a confused visitor on checkout costs you the order. Aim chat at the pages where hesitation has a price:
+
+- **Product pages.** Sizing, compatibility, "will this work with what I already own" — the questions that decide a purchase, asked at the moment of decision.
+- **Cart page.** Shipping-cost surprises, delivery dates, discount codes that "should" work. This is where carts quietly die.
+- **Checkout.** Payment errors and last-minute trust doubts. A chat launcher here is a safety net, not a sales pitch.
+- **Post-purchase.** "Where is my order?" is the most common ecommerce question in existence. Answer it inside the widget with an order lookup and it never reaches an agent.
+
+## What to say — and what never to say
+
+Good proactive messages name the page they are on. "Comparing the two models? I can point you at the right one." Bad ones could appear on any site on the internet: "Hi! Need help with anything?" The first earns a reply because it proves a human is paying attention; the second earns a click on the close button.
+
+Write every trigger message as a question about the page, in plain language, under fifteen words. If you cannot tell which page it belongs to, rewrite it.
+
+## When to stay quiet
+
+Restraint is the whole skill. A few rules that never backfire:
+
+- Do not trigger on a first-time visitor's first five seconds. Let them look around.
+- Do not pop anything while someone is typing in a checkout field. Interrupting a payment is unforgivable.
+- Do not message twice if the first message was ignored. Silence is an answer.
+- Be honest about hours. "We are away right now — leave a message and we reply in the morning" builds more trust than a bot pretending to be an agent.
+
+## Four plays worth setting up
+
+1. **The cart nudge.** After 45–60 idle seconds on the cart page: "Quick question — is it the shipping cost or the delivery date holding things up?" Most cart doubts are one of those two.
+2. **The exit save.** Exit-intent on the cart page only, one message, one question about what is unresolved. Never a discount thrown blindly — you are training visitors to threaten to leave.
+3. **The fit check.** Right after add-to-cart on technical products: "Want me to double-check this fits your setup?" Compatibility anxiety is real and cheap to resolve.
+4. **The date reassurance.** Before holidays and sale events, a checkout-page note: "Order in the next few hours and it arrives before the holiday." Only say this if your logistics actually support it.
+
+## Product pages: the three questions that decide purchases
+
+On product pages, visitors are almost always stuck on one of three things. Write your trigger and your canned answers around them:
+
+- **"Will it fit / work with what I have?"** Compatibility and sizing questions. The best answer includes a link to the size guide or compatibility chart, not just a yes.
+- **"Which one should I get?"** Comparison anxiety between your own products. A short "if you need X, take A; if you need Y, take B" resolves more purchases than any feature list.
+- **"Is it actually in stock / when will it arrive?"** Availability and delivery questions asked at the moment of commitment. Answer with specifics, never "soon."
+
+## The cart-page autopsy
+
+When a cart sits idle, it is usually one of four problems. Train your triggers and your team on all four:
+
+1. **Shipping shock.** The total jumped at the last step. A message naming it directly — "Shipping added more than expected? Here is what it covers, and here is the free-shipping threshold" — works better than pretending it did not happen.
+2. **Delivery doubt.** "Will it arrive by Friday?" Answer with the real cutoff, and say so plainly when the answer is no. A lost sale today beats a chargeback next week.
+3. **Code hunting.** They are in another tab searching for a discount code. A cart message offering any current promotion ends the hunt and the distraction.
+4. **Second thoughts.** They are not sure they need it. This one you cannot and should not push — a simple "Anything I can clarify about the product?" respects the decision.
+
+## Checkout: be a safety net, not a distraction
+
+Checkout is the one page where proactive chat should almost never trigger on its own. Someone entering card details does not want a popup. Keep the launcher visible and quiet, make sure an agent or a good offline message is behind it, and let the visitor come to you. The exception is a payment error: if the page can detect a failed attempt, a gentle "Payment didn't go through — want a hand?" is genuinely helpful.
+
+## A note on mobile
+
+More than half your cart traffic is on phones, where a chat popup covers the whole screen. On mobile, prefer a small persistent chat button over any proactive bubble, and keep trigger messages to one short line. If your trigger looks fine on desktop but covers the checkout button on a phone, it is costing you orders.
+
+## How to know a play works
+
+Track three things per trigger: how often it fires, what share of visitors reply, and how many of those conversations end near a completed order. A play that fires a thousand times and gets ten replies is not "brand awareness" — it is noise. Turn it off and try a different message or a different page.
+
+## The takeaway
+
+Ecommerce chat is a scalpel, not a billboard. Put it where doubt costs money, write messages that prove you can see the page, and have the discipline to stay silent everywhere else.`,
+    tags: ['conversion', 'triggers', 'campaigns'],
+    author: 'Marco Reyes',
+    published: true,
+    reading_mins: 6,
+  },
+  {
+    slug: 'ai-assist-humans-in-charge',
+    title: 'AI drafts, humans send: a practical AI-assist setup for small teams',
+    excerpt:
+      'AI is at its best drafting replies, fixing tone, and summarizing threads — with a human pressing send. The guardrails that keep assist helpful instead of risky.',
+    body: `## The short answer
+
+Let AI draft, rephrase, and summarize. Let humans decide and send. That one boundary — AI never sends a message on its own — removes almost every risk people fear about AI in support.
+
+## Where AI actually helps a small team
+
+Forget the fully autonomous agent for now. The unglamorous assist features are where the value is:
+
+- **Drafting replies.** The agent writes two rough sentences; AI turns them into a clear, complete answer. The thinking stays human, the writing gets polished.
+- **Tone repair.** Tired agents write terse replies at 11pm. AI softens them without changing the meaning.
+- **Summaries.** Long threads, handoffs between shifts, ticket escalations — a three-line summary saves the next person five minutes of scrolling.
+- **Suggested answers from your docs.** AI grounded in your own knowledge base surfaces the right article while the agent chats, instead of the agent searching for it.
+
+## The guardrails that matter
+
+**AI never sends.** This is the rule everything else hangs on. Suggestions appear in the agent's composer; the agent reviews, edits, and sends. On billing, refunds, and account changes, some teams go further and require a second human glance.
+
+**Show the source.** When AI pulls from your knowledge base, show which article it used. An agent who can see the source can spot when the AI is guessing. An agent who cannot is flying blind.
+
+**Keep a human review loop for the first month.** Skim a sample of AI-assisted conversations weekly. You are looking for two things: places the AI was wrong, and places agents stopped thinking and just clicked send. Both are fixable; neither is visible without the review.
+
+**Tell visitors when it is AI.** "Our assistant drafted this reply — an agent reviewed it" is honest and costs you nothing. Visitors can tell anyway; being upfront is what keeps the trust.
+
+## What to ground it in
+
+AI without your knowledge base is just confident guessing. Point it at your help articles, your canned responses, and your past resolved chats. The quality of AI assist tracks the quality of your docs almost one to one — which is a good reason to maintain both.
+
+## When to turn it off
+
+AI assist is wrong for some conversations: angry customers who need a human to take responsibility, brand-new issue types with no documentation yet, and anything legally sensitive. Give agents a visible off switch and permission to use it. Assist that cannot be declined becomes a crutch.
+
+## Prompt discipline: the three sentences every assist prompt needs
+
+AI assist is only as good as its instructions. Every drafting or suggestion prompt in your setup should contain three things:
+
+1. **Who it is.** "You are a support assistant for [company], writing in a friendly, plain-spoken tone." Without this, the AI borrows a tone from nowhere.
+2. **What it may use.** "Answer only from these help articles and past resolved chats. If the answer is not there, say so." This single sentence prevents most hallucinations.
+3. **What it must never do.** "Never invent prices, dates, or policy details. Never promise refunds, timelines, or outcomes." The never-list is more important than the can-list.
+
+Review these prompts the way you would review a new hire's scripts — because that is what they are.
+
+## Common failure modes (and the fixes)
+
+- **Hallucinated policy.** The AI invents a return window or a price. Fix: tighten the grounding rule above, and keep your docs current — stale docs produce confident wrong answers.
+- **Over-politeness.** "I sincerely apologize for any inconvenience this may have caused you" for a two-minute delay. Fix: tell the prompt to match the customer's register and keep apologies proportional.
+- **Tone drift across agents.** One agent accepts every draft verbatim, another rewrites everything. Fix: the weekly review should look at edit distance — drafts that always ship untouched mean agents stopped thinking.
+- **The confident wrong answer.** The most dangerous kind: fluent, specific, and false. Fix: source display plus the human-send rule. Fluency is not accuracy.
+
+## What changes for the customer
+
+Done right, customers notice almost nothing — replies are just clearer and faster. Done wrong, they notice everything: robotic phrasing, answers that dodge the question, apologies that sound generated. The weekly review is how you stay on the right side of that line. If assisted replies start scoring worse on follow-up questions ("but what about…"), the AI is papering over gaps in your docs. Fix the docs.
+
+## The cost question
+
+AI assist costs inference on every draft, which is real money at scale. The math that justifies it: measure handle time per conversation before and after, and the share of chats resolved without escalation. If drafting saves each agent even a few minutes per chat, it pays for itself quickly on a busy team. If your volume is tiny, the free-form discipline in this article still applies when you grow into it.
+
+## Start small
+
+Turn on one feature — reply drafting is the usual first — for one team, for two weeks. Review the sample, adjust the prompts and the docs, then expand. Teams that roll out everything at once end up trusting none of it.
+
+## The takeaway
+
+AI in support works best as a very fast junior colleague: quick with drafts, honest about sources, and never allowed to send the email itself. Set that boundary and the rest is just good tooling.`,
+    tags: ['ai', 'agents', 'workflow'],
+    author: 'Tariq Aziz',
+    published: true,
+    reading_mins: 6,
+  },
+  {
+    slug: 'onboard-support-agent',
+    title: 'Your first support hire: the onboarding checklist that gets them answering in a week',
+    excerpt:
+      'A new support agent can handle real chats well within a week — if the first five days are structured. The day-by-day plan, the tools to hand over, and what to review at day 30.',
+    body: `## The short answer
+
+Day one is shadowing and product. Days two and three are the canned library and tone. Day four is supervised chats. Day five is solo with review. Structure the week and a new hire is genuinely useful by Friday.
+
+## Before day one
+
+Have three things ready before they start, or the first week dissolves into setup:
+
+- **Access to everything:** the chat dashboard, the knowledge base, the order system — with a practice or sandbox mode if you have one.
+- **The reading list:** your ten most common questions and their best answers, your tone guide, and your escalation policy. Not the whole wiki; the ten that matter.
+- **A buddy:** one experienced agent who answers "is this normal?" questions for the first two weeks. This matters more than any document.
+
+## The five-day plan
+
+**Day 1 — Watch and learn.** They shadow the buddy's chats, read resolved conversations, and click through the product as a customer would. No pressure to perform; the goal is context. End the day by asking them to explain the product back to you in their own words.
+
+**Day 2 — The library.** Walk through your canned responses and help articles together. For each of the top ten questions: what the customer is really asking, what a good answer contains, and what never to promise. Have them rewrite two canned replies in their own voice.
+
+**Day 3 — Tone and edge cases.** Practice the hard ones: the angry customer, the refund outside policy, the question nobody knows. Role-play three scenarios out loud. Awkward now beats disastrous later.
+
+**Day 4 — Supervised chats.** They take real chats with the buddy watching and able to jump in. Keep the queue light — three to five conversations, not fifteen. Review each one together afterward: what went well, one thing to change.
+
+**Day 5 — Solo, with a safety net.** They work the queue alone, but every conversation gets a quick review at end of day. By now they should be resolving the common cases independently and escalating the rest cleanly.
+
+## What "good" looks like at day 30
+
+Do not judge a new hire on speed in the first month. Judge them on three things: do customers understand their answers, do they escalate with full context instead of dumping, and do they ask for help early rather than guessing. Speed comes naturally once those are solid.
+
+## The tools to hand over on day one
+
+- The canned response library, with permission to edit and improve it.
+- The escalation list: who takes what, and how to hand over with context.
+- The tone guide: two pages maximum. If it is longer, nobody will read it.
+- Permission to say "I don't know, let me find out" — and the habit of actually following up.
+
+## Week two: widening the net
+
+Week one builds the foundation; week two builds range. Have them take on the less common cases with the buddy on call rather than watching, start answering in the channels you have not covered yet (email, social, tickets), and write their first help article — the question they got asked twice that was not documented. Writing the article forces them to learn the answer properly, and your knowledge base grows.
+
+## The quality rubric to review against
+
+Vague feedback like "be more helpful" teaches nothing. Review their chats against a short, concrete rubric:
+
+- **Accuracy.** Was the answer correct and complete? One wrong answer undoes ten friendly ones.
+- **Clarity.** Could a non-technical customer follow it? Short sentences, no jargon, one idea per message.
+- **Ownership.** Did they take responsibility ("I'll sort this out") or deflect ("That's another team's issue")?
+- **Handoff quality.** When they escalated, did the next person get full context, or start from zero?
+- **Follow-through.** Did they actually come back with the answer they promised?
+
+Score a handful of chats weekly for the first month. Share the scores with them — the point is coaching, not surveillance.
+
+## Making the buddy system actually work
+
+"Ask me anything" is not a buddy system. Make it concrete: the buddy reviews the new hire's first twenty chats, is the default escalation target for two weeks, and has explicit permission to interrupt a live chat when something is going wrong. Pick buddies for patience and clarity, not just tenure — your fastest agent is not always your best teacher. Rotate the buddy after a month so the new hire sees more than one style.
+
+## When a new hire is struggling
+
+Most struggles trace back to one of three causes, and each has a fix:
+
+- **Product knowledge gaps.** They guess instead of checking. Fix: pair them with docs for a day and quiz them on the top twenty questions until the answers are reflex.
+- **Fear of the queue.** They freeze on live chats. Fix: more supervised sessions, not fewer — confidence comes from reps with a safety net.
+- **Tone problems.** Too stiff, too casual, too defensive. Fix: show them three of their own chats next to three great ones and let them spot the difference themselves. People internalize what they discover.
+
+If all three are fine and performance still lags after a month, the role may genuinely not fit — and it is kinder to everyone to say so early.
+
+## The 30-60-90 check-ins
+
+Keep the structure going after the first week. At 30 days: review the rubric scores together and set one skill to improve. At 60: they should be mentoring the *next* new hire's shadowing day — teaching is the fastest way to cement knowledge. At 90: a proper review against the same standards as everyone else. Onboarding does not end when the training wheels come off; it ends when they are indistinguishable from the team.
+
+## The mistake to avoid
+
+Throwing a new hire onto the full queue on day two "to learn by doing." They learn, all right — they learn bad habits, panic responses, and that asking for help is discouraged. A structured week costs you five days. An unstructured start costs you months of retraining.
+
+## The takeaway
+
+Support skill is mostly product knowledge plus judgment, and both transfer faster than founders expect — when the transfer is deliberate. Five structured days, a buddy, and a day-30 review turn a new hire into a real contributor before the month is out.`,
+    tags: ['agents', 'productivity', 'workflow'],
+    author: 'Layla Haddad',
+    published: true,
+    reading_mins: 6,
+  },
+  {
+    slug: 'after-hours-chat-offline',
+    title: 'What your chat widget should say when nobody is online',
+    excerpt:
+      'Most websites only think about chat during office hours — but visitors arrive around the clock. Handle the offline hours honestly: clear hours, a message that sets a real reply window, and a leave-a-message form people actually complete.',
+    body: `## The short answer
+
+Your chat widget is most dishonest at 2 a.m. — when it still looks ready to help and nobody is behind it. Visitors do not mind that you are asleep; they mind finding out by typing into a void. An honest offline state tells them three things: that nobody is online right now, when a human will be back, and what to do instead. Get those three right and after-hours chat becomes a lead-capture channel instead of a disappointment machine.
+
+## Stop pretending somebody is there
+
+The worst offline experience is a chat window that behaves exactly like the online one — typing indicator, "we usually reply in minutes" — until the visitor realizes the conversation went nowhere. That is not a small UX wart; it teaches people that your widget lies. The fix is embarrassingly simple: when agents are offline, change the widget's greeting to say so, plainly: "We are offline right now." No euphemisms like "all agents are currently assisting other customers" when the truth is that it is midnight. Visitors can tell, and the ones who cannot will feel tricked when nobody replies.
+
+If you run a bot after hours, say it is a bot: "Our assistant can answer common questions — a person replies in the morning." Honesty costs nothing and buys you the trust that makes the morning reply welcome instead of suspicious.
+
+## Say when you are back — specifically
+
+"We will get back to you soon" is the offline equivalent of elevator music: technically a response, emotionally nothing. Soon could mean ten minutes or ten days, and the visitor knows it. Replace it with a specific window you can actually keep:
+
+- If you start the day at a fixed time: "We are back online at 9:00 AM — leave a message and we will reply first thing."
+- If hours vary by day: show today's hours and tomorrow's opening time.
+- If replies come by email rather than chat: say that, and say when. "We reply to every message within one business day" is a promise; "we will be in touch" is a shrug.
+
+The rule is simple: never promise a reply window in the widget that your team does not actually meet. One broken promise teaches the visitor to never trust the widget again.
+
+## The leave-a-message form that gets replies
+
+Offline chat usually ends in a message form, and most message forms are interrogations: name, email, phone, company, subject, priority, message, captcha. Every field you add past the essential three costs you completions. Keep three and only three:
+
+1. **What is this about?** (the message itself — the one field that matters)
+2. **Where should we reply?** (one contact field, email or phone — their choice, not yours)
+3. **Their name** (so the reply can be personal)
+
+Then close the loop the way you promised: the reply should reference what they wrote, come from a named person, and arrive inside the window you stated. Nothing destroys trust faster than an offline message that vanishes into silence. Make the morning catch-up a named job — "check last night's messages" belongs to one specific person, not to whoever remembers.
+
+## Weekend and holiday mode
+
+Teams remember to set office hours and forget the exceptions, so the widget keeps promising "back at 9 AM" on a public holiday. Two habits fix this: a holiday calendar your widget reads for its offline message, and a fallback line for the days you forgot — "We are currently closed; we reply to messages within one business day." The fallback should be the honest default, not a special case. Visitors are forgiving of a closed shop; they are not forgiving of a shop that claims to be open and is not.
+
+## Let the bot hold the night shift
+
+A simple after-hours bot that answers the five questions people actually ask at night — opening hours, delivery times, pricing basics, how to book, where the thing they bought is — can resolve a meaningful share of overnight conversations on its own. The bar is not a brilliant conversationalist; it is a helpful FAQ with a search box. Ground it in your own help articles so it cannot invent answers, and always offer the escape: "Want a person? Leave a message and we will reply in the morning." A bot that admits its limits is more useful than an agent-shaped lie.
+
+## Measure the offline experience
+
+Two numbers tell you whether your after-hours setup works: the reply rate on offline messages (what share got a real answer inside the promised window) and the message-to-first-reply time each morning. If the reply rate is low, the form is too long or the catch-up has no owner. If replies are late, the promised window is fiction — change the promise, not the clock. Review both monthly; they drift as teams and hours change.
+
+## The ten-minute after-hours checklist
+
+1. Set real office hours in the widget, including weekends.
+2. Write the offline greeting in plain language: offline, back-when, what-to-do.
+3. Reduce the message form to three fields.
+4. Add a holiday fallback line.
+5. Name one person who owns the morning catch-up.
+6. If you run a night bot, label it as automated.
+
+## The takeaway
+
+Offline hours are not dead time — they are the hours when your widget makes promises on your behalf. Make the promises honest, specific, and kept, and the 2 a.m. visitor becomes a morning conversation instead of a lost one.`,
+    tags: ['widget', 'workflow', 'conversion'],
+    author: 'Nadia Karim',
+    published: true,
+    reading_mins: 5,
+  },
+  {
+    slug: 'chat-reports-worth-reading',
+    title: 'Five chat reports worth reading every week',
+    excerpt:
+      'Most teams glance at chat volume and call it analytics. These five reports — missed chats, response time by hour, resolution without escalation, question topics, and agent load — are the ones that actually change what you do next.',
+    body: `## The short answer
+
+Your chat tool collects a mountain of data, and almost all of it is decoration. Five reports earn their keep: missed chats, first response time by hour, resolution without escalation, what visitors actually ask about, and how load is distributed across agents. Read them weekly, change one thing after each, and your support operation will look different in a quarter.
+
+## 1. Missed chats — the ones that got away
+
+A missed chat is a conversation that started and never got a human reply: the visitor typed, nobody answered, and they left. Every one of these is a person who did the hard part — reaching out — and was met with silence. Count them per week, and more importantly, note *when* they happened. Missed chats cluster: lunch breaks, shift changes, the hour after closing. The fix is usually scheduling, not staffing — move a break, stagger a shift, turn on an honest offline message for the uncovered hour. A missed chat you can see is a scheduling problem; a missed chat you never count is a churn problem.
+
+## 2. First response time, by hour of day
+
+Average response time is a vanity number: it hides the 4 p.m. disaster inside a respectable daily average. Break first response time into hourly buckets and the pattern jumps out — the hours where visitors wait are almost always the hours where staffing dips or a single agent is drowning. Set a target that matches your promise (if the widget says "we reply in minutes," minutes is the target, not hours), and treat every hour that misses it as a staffing decision to make. This report pairs naturally with missed chats: long response times in an hour usually precede the misses.
+
+## 3. Resolution without escalation
+
+Not every chat should need a human expert — the healthy question is what share of conversations get resolved by the first responder, the bot, or a help article, versus how many get escalated or turned into tickets. If escalation is climbing, do not blame the agents first; look at what is being escalated. A rising escalation rate usually means one of three things: the bot's answers are stale, a product change created a new question nobody documented, or the first line lacks the authority to do the obvious thing (refunds, plan changes, account fixes). Fix the cause and the rate falls. Track this monthly — it moves slowly, and that is fine.
+
+## 4. What visitors actually ask about
+
+Tag your conversations — even roughly — and the top topics will surprise you. Most teams discover that a handful of questions dominate: the same five topics, week after week. Each recurring topic is a to-do item in disguise: a confusing page to rewrite, a help article to write, a bot answer to add, a product rough edge to sand down. This is the report that pays for itself fastest, because every topic you eliminate is support work that never happens again. Review the top ten topics monthly and pick one to kill at the source.
+
+## 5. Agent load — who is drowning and who is idle
+
+Totals per agent, per week: conversations handled, average handle time, and chats handled simultaneously. You are looking for imbalance, not leaderboard winners. One agent quietly carrying twice the load of everyone else is a burnout risk and a quality risk — tired agents write worse replies. Persistent imbalance usually means routing is wrong (round-robin across unequal skill sets), or one person is the unofficial expert everyone escalates to. Rebalance the routing, document what the expert knows, and the load evens out. This report is also the fairest input to staffing decisions: hire when the whole team is loaded, not when one hero is.
+
+## What to ignore
+
+Total chat volume, on its own, tells you almost nothing — it moves with traffic, campaigns, and seasonality, and it never suggests an action. The same goes for average handle time in isolation: fast can mean efficient or rushed, slow can mean thorough or stuck. Any number that never changes a decision is decoration. If a report has not caused a single change in three months, stop reading it and give the slot to one of the five above.
+
+## The twenty-minute weekly routine
+
+1. **Missed chats** — count them, note the hours, fix the coverage.
+2. **Response time by hour** — find the slow hours, adjust staffing.
+3. **Topics** — pick the top repeat and kill it at the source.
+4. **Escalation** — check the trend, update one bot answer or help article.
+5. **Load** — spot the imbalance, rebalance.
+
+## The takeaway
+
+Analytics that do not change a decision are just numbers with good design. These five reports each end in an action — a schedule change, a rewritten page, a new help article, a routing fix. If a report never changes what you do, stop reading it and read one of these instead.`,
+    tags: ['analytics', 'metrics', 'workflow'],
+    author: 'Marco Reyes',
+    published: true,
+    reading_mins: 6,
+  },
+  {
+    slug: 'welcome-message-copy-that-converts',
+    title: 'Write a welcome message visitors actually answer',
+    excerpt:
+      "Nobody replies to ‘How can I help you?’ — it asks for effort without offering value. Welcome messages that earn replies are specific, short, and tied to the page: one question, under twenty words, about what the visitor is doing right now.",
+    body: `## The short answer
+
+The default chat greeting — "Hi! How can I help you?" — fails because it puts all the work on the visitor: they have to figure out what to ask, how to phrase it, and whether you can even help. Flip it. A greeting that names something specific about the page, asks one short question, and stays under twenty words will always outperform the generic hello. Copy is not the whole game — timing matters as much — but bad copy wastes good timing every time.
+
+## The specificity test
+
+Read your greeting out loud and ask: could this appear on any website on the internet? If yes, it says nothing. "Hi there! Need any help?" could be a shoe store, a bank, or a plumber. Compare: "Comparing the two plans? I can walk you through the difference." That sentence can only exist on a pricing page, which is exactly why it works — it proves someone is paying attention to *this* page, *right now*. Specificity is respect: it tells the visitor you noticed what they are doing instead of interrupting it.
+
+## One question, under twenty words
+
+Two rules that never backfire:
+
+- **Ask exactly one question.** Two questions split the visitor's attention and both go unanswered. Pick the single most likely doubt on the page.
+- **Stay under twenty words.** A greeting is an invitation, not a paragraph. If it needs a second sentence, it needs an edit.
+
+Good bones to steal: "Still deciding between the plans? Happy to compare them with you." (13 words, one question, page-specific.) "Is it the shipping cost or the delivery date holding up the order?" (14 words, names the two real doubts.) Notice what none of these do: no exclamation marks, no "Hi there!", no asking the visitor to do your job.
+
+## Borrow the page's context
+
+The best greetings are written per page, not per site. A pricing page gets a plan question; a product page gets a fit question; a checkout page gets a reassurance question; a help article gets "Did this answer your question?" Write three or four greetings for your highest-traffic pages and leave the generic one for everywhere else. This is also where triggers earn their keep: a greeting that appears 30 seconds into a pricing-page visit is a different message from the one in the launcher bubble — the first can assume interest, the second has to earn it.
+
+## Personalize lightly, never creepily
+
+Using the visitor's name (if they gave it) or referencing the page they are on feels attentive. Referencing their location, device, or browsing history feels like surveillance. The line is simple: personalize with what the visitor *chose to share* or what is *obviously public* on the current page. "Welcome back" to a returning customer is warm; "I see you were looking at the enterprise plan for 4 minutes" is a horror movie. When in doubt, leave the data out of the sentence.
+
+## Timing beats copy
+
+Even perfect copy fails at the wrong moment. Do not greet a visitor in their first five seconds — they have not looked at anything yet and your message is noise. Do not greet someone mid-checkout-typing — interrupting a payment is unforgivable. Do not send a second greeting when the first was ignored; silence is an answer. The reliable pattern: one greeting, timed 25–40 seconds into a high-intent page, worded as a question about that page. Everything else is the launcher bubble doing its quiet job.
+
+## Bad, better, best
+
+- **Bad:** "Hello! Welcome to our website! How may I assist you today?" (Could be anyone. Asks the visitor to do the work. Three pleasantries, zero information.)
+- **Better:** "Questions about pricing? I am here to help." (Page-specific, but still puts the work on the visitor — *they* have to formulate the question.)
+- **Best:** "Choosing between monthly and annual? The annual plan pays for itself in month seven." (Names the actual decision, offers a concrete fact, invites a reply without demanding one.)
+
+## Measure replies, not views
+
+A greeting's only metric is the reply rate: what share of visitors who saw it typed something back. Views are vanity; replies are conversations. Test one greeting at a time against the current one for a week or two, keep the winner, and write the next challenger. Most teams find their first rewrite beats the default by a wide margin — which tells you how low the default bar is, not how good the rewrite is. Keep iterating anyway.
+
+## The takeaway
+
+Visitors do not owe your widget a conversation. Earn the first message the way you would in person: notice what they are doing, ask one useful question about it, and keep it short. Specificity, brevity, timing — in that order.`,
+    tags: ['widget', 'triggers', 'conversion'],
+    author: 'Layla Haddad',
+    published: true,
+    reading_mins: 5,
+  },
 ];
 
 export const HELP_SEED: HelpSeed[] = [
@@ -543,12 +944,18 @@ Shortcuts work when the inbox list or a conversation is focused, not while typin
 // ---------------------------------------------------------------------------
 
 export async function seedBlogIfEmpty(p2: Phase2Api): Promise<number> {
+  // Backfill: seed only the slugs missing from the store, so new articles
+  // added to BLOG_SEED reach visitors whose store was seeded earlier too.
   const { data } = await p2.blog.list(true);
-  if (data.items.length > 0) return 0;
+  const existing = new Set(data.items.map((i) => i.slug));
+  let n = 0;
   for (const b of BLOG_SEED) {
-    await p2.blog.create(b);
+    if (!existing.has(b.slug)) {
+      await p2.blog.create(b);
+      n++;
+    }
   }
-  return BLOG_SEED.length;
+  return n;
 }
 
 export async function seedHelpIfEmpty(p2: Phase2Api): Promise<number> {
