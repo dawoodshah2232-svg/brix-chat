@@ -1,20 +1,12 @@
-# Brix Chat PHP API — clean URLs.
-# /api/<resource>  ->  index.php?route=<resource>
+<IfModule mod_rewrite.c>
+    RewriteEngine On
 
-RewriteEngine On
+    <Files ".env">
+        Require all denied
+    </Files>
 
-# Never serve these as static files
-<Files "config.php">
-    Require all denied
-</Files>
-<Files "config.sample.php">
-    Require all denied
-</Files>
-
-# Real files (cron scripts, assets) pass through untouched
-RewriteCond %{REQUEST_FILENAME} -f [OR]
-RewriteCond %{REQUEST_FILENAME} -d
-RewriteRule ^ - [L]
-
-# Everything else goes to the single-entry router
-RewriteRule ^(.*)$ index.php?route=$1 [QSA,L]
+    RewriteRule ^$ public/index.php [L]
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^(.*)$ public/index.php [L]
+</IfModule>

@@ -74,7 +74,34 @@ try {
 // ============================================================================
 function route_auth(string $method, array $seg, $r1, $r2, $r3): void {
     $db = brix_db();
-    if ($method === 'POST' && $r1 === 'login' && $r2 === null) {
+    if ($method === 'POST' && $r1 === 'signup' && $r2 === null) {
+        $b = req_body();
+        $name = v_str(v_required($b, 'workspace'), 'workspace', 255);
+        $display = v_str(v_required($b, 'display_name'), 'display_name', 60);
+        $email = isset($b['email']) && trim((string)$b['email']) !== '' ? v_email($b['email']) : '';
+        $passcode = v_passcode($b['passcode'] ?? null, 4, 128);
+        $created = workspace_create_with_member($name, $display, $email, $passcode, 'admin', false);
+        brix_json($created, 201);
+    }
+    if ($method === 'POST' && $r1 === 'lookup' && $r2 === null) {
+        $b = req_body();
+        $identity = mb_strtolower(trim((string)v_required($b, 'identity')));
+        if ($identity === '') brix_fail('validation', 'Email or username is required', 422);
+        $st = $db->prepare("SELECT w.id, w.name, w.slug, m.id AS member_id, m.display_name, m.email
+            FROM members m
+            JOIN workspaces w ON w.id = m.workspace_id
+            WHERE LOWER(m.email) = ? OR LOWER(m.display_name) = ?
+            ORDER BY m.email <> '', FIELD(m.role, 'owner', 'admin', 'agent', 'developer', 'viewer'), w.created_at DESC
+            LIMIT 1");
+        $st->execute([$identity, $identity]);
+        $row = $st->fetch();
+        if (!$row) brix_json(['found' => false]);
+        brix_json([
+            'found' => true,
+            'workspace' => ['id' => $row['id'], 'name' => $row['name'], 'slug' => $row['slug']],
+            'member' => ['id' => $row['member_id'], 'display_name' => $row['display_name'], 'email' => $row['email']],
+        ]);
+    }    if ($method === 'POST' && $r1 === 'login' && $r2 === null) {
         $b = req_body();
         $slug = mb_strtolower(trim((string)v_required($b, 'workspace')));
         $passcode = v_passcode($b['passcode'] ?? null, 4, 128);
@@ -84,12 +111,21 @@ function route_auth(string $method, array $seg, $r1, $r2, $r3): void {
         $ws = $st->fetch();
         if (!$ws) brix_fail('unauthorized', 'Invalid workspace or passcode', 401);
 
-        // Members of this workspace whose bcrypt hash verifies (admins first).
-        $st = $db->prepare("SELECT m.*, mc.passcode_hash FROM members m
+        // Members of this workspace whose bcrypt hash verifies. When an identity
+        // is supplied, it may be either display name or email.
+        $identity = mb_strtolower(trim((string)($b['display_name'] ?? $b['identity'] ?? '')));
+        $sql = "SELECT m.*, mc.passcode_hash FROM members m
             JOIN member_credentials mc ON mc.member_id = m.id
-            WHERE m.workspace_id = ?
-            ORDER BY FIELD(m.role, 'admin', 'agent', 'developer', 'viewer')");
-        $st->execute([$ws['id']]);
+            WHERE m.workspace_id = ?";
+        $params = [$ws['id']];
+        if ($identity !== '') {
+            $sql .= " AND (LOWER(m.display_name) = ? OR LOWER(m.email) = ?)";
+            $params[] = $identity;
+            $params[] = $identity;
+        }
+        $sql .= " ORDER BY FIELD(m.role, 'owner', 'admin', 'agent', 'developer', 'viewer')";
+        $st = $db->prepare($sql);
+        $st->execute($params);
         $member = null;
         foreach ($st->fetchAll() as $m) {
             if (isset($m['passcode_hash']) && str_starts_with((string)$m['passcode_hash'], '$2')
@@ -192,6 +228,43 @@ function route_workspaces(string $method, array $seg, $r1, $r2, $r3): void {
     }
 }
 
+
+function workspace_create_with_member(string $name, string $display, string $email, string $passcode, string $role = 'admin', bool $suffixOnConflict = false): array {
+    $db = brix_db();
+    $slug = trim((string)preg_replace('/[^a-z0-9]+/', '-', mb_strtolower($name)), '-');
+    if ($slug === '') $slug = 'workspace';
+    $base = $slug;
+    if ($suffixOnConflict) $slug .= '-' . substr(md5(random_bytes(16)), 0, 6);
+    else {
+        $st = $db->prepare('SELECT id FROM workspaces WHERE slug = ?');
+        $st->execute([$slug]);
+        if ($st->fetch()) brix_fail('conflict', 'A workspace with this name already exists', 409);
+    }
+    $wsId = new_uuid();
+    $mid = new_uuid();
+    $db->beginTransaction();
+    try {
+        $db->prepare('INSERT INTO workspaces (id, name, slug) VALUES (?, ?, ?)')
+           ->execute([$wsId, $name, $slug]);
+        $db->prepare("INSERT INTO members (id, workspace_id, display_name, initials, color, role, email, status, last_login_at)
+                      VALUES (?, ?, ?, ?, ?, ?, ?, 'online', UTC_TIMESTAMP())")
+           ->execute([$mid, $wsId, $display, member_initials($display), '#4f46e5', $role, $email]);
+        $db->prepare('INSERT INTO member_credentials (member_id, passcode_hash) VALUES (?, ?)')
+           ->execute([$mid, password_hash($passcode, PASSWORD_BCRYPT)]);
+        $db->commit();
+    } catch (Throwable $e) { $db->rollBack(); throw $e; }
+    $member = ['id' => $mid, 'workspace_id' => $wsId, 'display_name' => $display,
+               'initials' => member_initials($display), 'color' => '#4f46e5', 'role' => $role,
+               'email' => $email, 'job_title' => '', 'avatar_url' => null, 'status' => 'online',
+               'last_login_at' => gmdate('Y-m-d H:i:s'),
+               'created_at' => gmdate('Y-m-d H:i:s'), 'updated_at' => gmdate('Y-m-d H:i:s')];
+    audit_log($wsId, $member, 'workspace.created', 'workspace', $wsId, ['name' => $name, 'slug' => $slug]);
+    return [
+        'token' => token_issue($wsId, $mid),
+        'workspace' => ['id' => $wsId, 'name' => $name, 'slug' => $slug],
+        'member' => m_member($member, []),
+    ];
+}
 function member_initials(string $name): string {
     $parts = preg_split('/\s+/', trim($name));
     $in = '';
@@ -1662,7 +1735,7 @@ function route_members(string $method, array $seg, $r1, $r2, $r3): void {
     if ($method === 'POST' && $r1 !== null && $r2 === 'passcode' && $r3 === null) {
         $c = auth_ctx();
         $row = own('members', $r1, $c['wid']);
-        if ($c['role'] !== 'admin' && $c['mid'] !== $row['id']) brix_fail('forbidden', 'Insufficient permissions', 403);
+        if (!in_array($c['role'], ['admin', 'owner'], true) && $c['mid'] !== $row['id']) brix_fail('forbidden', 'Insufficient permissions', 403);
         $passcode = v_passcode(req_body()['passcode'] ?? null, 4, 128);
         $st = $db->prepare('SELECT member_id FROM member_credentials WHERE member_id = ?');
         $st->execute([$row['id']]);
@@ -1680,7 +1753,7 @@ function route_members(string $method, array $seg, $r1, $r2, $r3): void {
     if ($method === 'POST' && $r1 !== null && $r2 === 'status' && $r3 === null) {
         $c = auth_ctx();
         $row = own('members', $r1, $c['wid']);
-        if ($c['role'] !== 'admin' && $c['mid'] !== $row['id']) brix_fail('forbidden', 'Insufficient permissions', 403);
+        if (!in_array($c['role'], ['admin', 'owner'], true) && $c['mid'] !== $row['id']) brix_fail('forbidden', 'Insufficient permissions', 403);
         $status = v_in(req_body()['status'] ?? '', ['online', 'away', 'offline'], 'status');
         $db->prepare('UPDATE members SET status = ? WHERE id = ?')->execute([$status, $row['id']]);
         brix_json(['status' => $status]);
@@ -1698,7 +1771,7 @@ function route_members(string $method, array $seg, $r1, $r2, $r3): void {
 function member_create(array $c, array $b): string {
     $db = brix_db();
     $display = v_str(v_required($b, 'display_name'), 'display_name', 255);
-    $role = v_in($b['role'] ?? 'agent', ['admin', 'agent', 'developer', 'viewer'], 'role');
+    $role = v_in($b['role'] ?? 'agent', ['owner', 'admin', 'agent', 'developer', 'viewer'], 'role');
     $passcode = v_passcode($b['passcode'] ?? null, 4, 128);
     // Duplicate display name (case-insensitive) -> 409.
     $st = $db->prepare('SELECT id FROM members WHERE workspace_id = ? AND LOWER(display_name) = LOWER(?)');
@@ -1747,7 +1820,7 @@ function member_update(array $c, string $id, array $b): array {
         $sets[] = 'avatar_url = ?'; $params[] = $b['avatar_data_url'] === null ? null : v_str($b['avatar_data_url'], 'avatar_data_url', 65535);
     }
     if (array_key_exists('email', $b)) { $sets[] = 'email = ?'; $params[] = v_email($b['email']); }
-    if (array_key_exists('role', $b)) { $sets[] = 'role = ?'; $params[] = v_in($b['role'], ['admin', 'agent', 'developer', 'viewer'], 'role'); }
+    if (array_key_exists('role', $b)) { $sets[] = 'role = ?'; $params[] = v_in($b['role'], ['owner', 'admin', 'agent', 'developer', 'viewer'], 'role'); }
     if (array_key_exists('status', $b)) { $sets[] = 'status = ?'; $params[] = v_in($b['status'], ['online', 'away', 'offline'], 'status'); }
     if (array_key_exists('online', $b)) { $sets[] = 'status = ?'; $params[] = v_bool($b['online']) ? 'online' : 'offline'; }
     if ($sets) {
@@ -2561,7 +2634,7 @@ function route_invites(string $method, array $seg, $r1, $r2, $r3): void {
         $b = req_body();
         $display = v_str(v_required($b, 'display_name'), 'display_name', 60);
         if (mb_strlen($display) < 2) brix_fail('validation', 'display_name must be 2-60 characters', 422);
-        $role = v_in($b['role'] ?? 'agent', ['admin', 'agent', 'developer', 'viewer'], 'role');
+        $role = v_in($b['role'] ?? 'agent', ['owner', 'admin', 'agent', 'developer', 'viewer'], 'role');
         $email = isset($b['email']) && $b['email'] !== '' ? v_email($b['email']) : '';
         $token = '';
         for ($i = 0; $i < 16; $i++) $token .= INVITE_ALPHABET[random_int(0, strlen(INVITE_ALPHABET) - 1)];

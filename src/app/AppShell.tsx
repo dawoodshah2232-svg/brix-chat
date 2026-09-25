@@ -83,7 +83,7 @@ function useBadges() {
 
 /** Persistent banner shown when a platform owner is viewing a client workspace. */
 function ViewAsBanner() {
-  const { session, effectiveWorkspaceId, setViewingWorkspace } = useStore();
+  const { session, effectiveWorkspaceId } = useStore();
   const navigate = useNavigate();
   const [name, setName] = useState('');
 
@@ -97,8 +97,9 @@ function ViewAsBanner() {
 
   if (!session?.viewingWorkspaceId) return null;
   const exit = () => {
-    setViewingWorkspace(null);
-    navigate('/admin');
+    // The admin console ends the view-as session when it mounts; clearing it
+    // here first would make AuthGuard bounce to /login before the navigation.
+    navigate('/admin', { replace: true });
   };
   return (
     <div className="z-30 bg-gradient-to-r from-indigo-950 via-indigo-900 to-indigo-950 text-white">
@@ -174,16 +175,12 @@ export default function AppShell() {
     const name = session?.displayName;
     if (!name) return;
     applyTheme(getTheme(name));
-    if (location.pathname === '/app/welcome') return;
-    try {
-      if (!localStorage.getItem(`brixchat_onboarded_${effectiveWorkspaceId()}`)) {
-        navigate('/app/welcome', { replace: true });
-      }
-    } catch {
-      /* ignore */
-    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.displayName, location.pathname]);
+
+  // The dashboard theme is scoped to the workspace shell: drop the `dark`
+  // class on leave so marketing/login/admin pages always render light.
+  useEffect(() => () => applyTheme('light'), []);
 
   // Global keyboard shortcuts (ignored while typing, except ⌘K).
   useEffect(() => {

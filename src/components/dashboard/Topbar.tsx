@@ -143,7 +143,7 @@ function AgentMenu() {
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={close} />
-          <div className="absolute right-0 mt-2 w-80 max-w-[90vw] bg-white rounded-2xl border border-slate-200 shadow-2xl z-50 text-slate-900 overflow-hidden animate-fade-up">
+          <div className="fixed right-3 top-16 w-80 max-w-[calc(100vw-1.5rem)] max-h-[calc(100vh-5rem)] overflow-y-auto slim-scroll bg-white rounded-2xl border border-slate-200 shadow-2xl z-50 text-slate-900 animate-fade-up">
             <div className="flex items-center gap-3 p-4 pb-3 border-b border-slate-100">
               <Avatar name={member?.display_name ?? 'Agent'} color={member?.color} size="lg" />
               <div className="min-w-0">
@@ -463,7 +463,7 @@ export function Topbar({
   }, []);
 
   return (
-    <header className="h-16 shrink-0 bg-white/90 backdrop-blur border-b border-slate-200/80 flex items-center gap-2 sm:gap-3 px-3 sm:px-6">
+    <header className="relative z-30 h-16 shrink-0 bg-white border-b border-slate-200/80 flex items-center gap-2 sm:gap-3 px-3 sm:px-6">
       <button
         className="lg:hidden w-9 h-9 grid place-items-center rounded-lg text-slate-500 hover:bg-slate-100"
         onClick={onMenu}

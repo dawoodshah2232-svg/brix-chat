@@ -20,31 +20,29 @@ import type {
   Workspace,
 } from './types';
 import { getApi, ApiError, StorageQuotaError } from './api';
-import { isPhpApiEnabled, ensurePhpPolling, stopPhpPolling, clearPhpToken } from './php-client';
+import { isPhpApiEnabled, ensurePhpPolling, stopPhpPolling, clearPhpToken, getPhpApi, setPhpSession } from './php-client';
+import type { WorkspaceSessionPayload } from './admin-api';
 import type { ApiMember } from './api';
 import { fireIncomingMessage } from './sounds';
 import { seedData, seedDataForWorkspace, seedWorkspaces } from './seed';
-import { clientStatus } from '../components/admin/platform';
 import { detectDistress } from './quality';
 import { uid } from './utils';
+import { userErrorFromUnknown } from './userErrors';
 
 const LS_KEY = 'brixchat_v1';
 const SESSION_LS = 'brixchat_session_v1';
 const ALIVE_SS = 'brixchat_session_alive';
 
-// Session shape (client dashboard + platform admin):
-// { memberId, workspaceId, displayName, role, isPlatformAdmin, viewingWorkspaceId?,
-//   rememberMe, loggedInAt }.
-// effectiveWorkspaceId() = viewingWorkspaceId ?? workspaceId — every /app page
-// and API call must go through it so a client only ever sees their own data.
+// Workspace (client dashboard) session. The platform admin session is
+// separate — see src/auth/AdminAuth.tsx.
+// effectiveWorkspaceId() = viewingWorkspaceId ?? workspaceId — every
+// /workspace page and API call must go through it.
 export interface Session {
   workspaceId: string;
   memberId: string;
   displayName: string;
   role: MemberRole;
-  /** Platform admin (owner role). Only owners reach /admin. */
-  isPlatformAdmin: boolean;
-  /** Set by a platform admin to inspect a client workspace from /app. */
+  /** Set when a platform admin opened this workspace via view-as. */
   viewingWorkspaceId?: string;
   rememberMe: boolean;
   loggedInAt: number;
@@ -80,7 +78,6 @@ function loadSession(): Session | null {
       memberId: s.memberId ?? '',
       displayName: s.displayName,
       role: s.role,
-      isPlatformAdmin: s.isPlatformAdmin ?? (s.role === 'owner'),
       viewingWorkspaceId: s.viewingWorkspaceId,
       rememberMe: s.rememberMe ?? true,
       loggedInAt: s.loggedInAt ?? Date.now(),
@@ -117,7 +114,7 @@ function load(): Persisted {
   return { workspaces: workspaces ?? seedWorkspaces(), session, dataByWorkspace };
 }
 
-export type AuthResult = { ok: boolean; error?: string; role?: MemberRole; isPlatformAdmin?: boolean };
+export type AuthResult = { ok: boolean; error?: string; role?: MemberRole };
 
 interface Store {
   session: Session | null;
@@ -125,13 +122,15 @@ interface Store {
   data: ChatData;
   /** viewingWorkspaceId ?? workspaceId */
   effectiveWorkspaceId: () => string;
-  /** Platform admin: inspect a client workspace from /app. null = back to own. */
-  setViewingWorkspace: (id: string | null) => void;
+  /** Platform admin view-as: adopt the short-lived workspace session the admin API issued. */
+  startViewAs: (payload: WorkspaceSessionPayload) => void;
+  /** Leave view-as (drops the workspace session; the admin session is untouched). */
+  exitViewAs: () => void;
   knownWorkspaces: string[];
   currentMember: ApiMember | null;
 
   // auth (passcode-based, members live in the local API db)
-  signup: (workspace: string, displayName: string, passcode: string, opts?: { rememberMe?: boolean }) => Promise<AuthResult>;
+  signup: (workspace: string, displayName: string, passcode: string, opts?: { rememberMe?: boolean; email?: string }) => Promise<AuthResult>;
   login: (workspace: string, passcode: string, opts?: { displayName?: string; rememberMe?: boolean }) => Promise<AuthResult>;
   logout: () => void;
   resetDemo: () => void;
@@ -220,7 +219,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             const { data: all } = await api.members.list();
             const found = all.find((x) => x.display_name.toLowerCase() === s.displayName.toLowerCase()) ?? null;
             setCurrentMember(found);
-            if (found) setPersisted((p) => (p.session ? { ...p, session: { ...p.session!, memberId: found.id, role: found.role, isPlatformAdmin: found.role === 'owner' } } : p));
+            if (found) setPersisted((p) => (p.session ? { ...p, session: { ...p.session!, memberId: found.id, role: found.role } } : p));
           }
         }
       } catch {
@@ -270,39 +269,50 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
     const effectiveWorkspaceIdFn = () => effectiveWorkspaceId(persisted.session);
 
-    const setViewingWorkspace: Store['setViewingWorkspace'] = (id) => {
-      setPersisted((p) => (p.session ? { ...p, session: { ...p.session, viewingWorkspaceId: id ?? undefined } } : p));
-    };
-
-    const authError = (e: unknown): string =>
-      e instanceof ApiError ? e.message : 'Something went wrong.';
+    const authError = (e: unknown): string => userErrorFromUnknown(e).message;
 
     const signup: Store['signup'] = async (workspace, displayName, passcode, opts) => {
       const w = norm(workspace);
       if (!w) return { ok: false, error: 'Workspace name is required.' };
       if (!displayName.trim()) return { ok: false, error: 'Display name is required.' };
+      if (!opts?.email?.trim()) return { ok: false, error: 'Email is required.' };
       if (passcode.length < 4) return { ok: false, error: 'Passcode must be at least 4 characters.' };
-      if (clientStatus(w) === 'suspended') {
-        return { ok: false, error: 'This workspace is suspended. Contact the platform operator to reactivate it.' };
-      }
-      const api = getApi(w, displayName.trim());
       try {
+        if (isPhpApiEnabled()) {
+          const php = getPhpApi();
+          if (!php) throw new ApiError('not_configured', 'App server is not configured.', 501);
+          const { workspace: ws, member } = await php.auth.signup({
+            workspace: w,
+            display_name: displayName.trim(),
+            email: opts.email,
+            passcode,
+          });
+          const workspaceSlug = String(ws.slug ?? w);
+          const role = member.role as MemberRole;
+          const session: Session = {
+            workspaceId: workspaceSlug, memberId: String(member.id), displayName: String(member.display_name),
+            role,
+            rememberMe: opts?.rememberMe ?? true, loggedInAt: Date.now(),
+          };
+          setPersisted((p) => ({
+            ...p,
+            workspaces: { ...p.workspaces, [workspaceSlug]: { name: workspaceSlug, displayName: session.displayName, passcode: '', role, createdAt: Date.now() } },
+            dataByWorkspace: { ...p.dataByWorkspace, [workspaceSlug]: p.dataByWorkspace[workspaceSlug] ?? seedDataForWorkspace(workspaceSlug) },
+            session,
+          }));
+          setCurrentMember(member as ApiMember);
+          return { ok: true, role };
+        }
+        const api = getApi(w, displayName.trim());
         const existing = await api.members.list().catch(() => ({ data: [] as ApiMember[] }));
         if (existing.data.some((m) => m.display_name.toLowerCase() === displayName.trim().toLowerCase())) {
           return { ok: false, error: 'That name is taken in this workspace — try logging in.' };
         }
-        const { data: member } = await api.members.create(displayName.trim(), 'admin', passcode);
-        // Fresh workspace: drop the demo seed members so the owner starts clean.
-        const { data: all } = await api.members.list();
-        for (const m of all) {
-          if (m.id !== member.id && ['3456', '1111', '2222'].includes(m.passcode)) {
-            try { await api.members.remove(m.id); } catch { /* keep going */ }
-          }
-        }
+        const { data: member } = await api.members.create(displayName.trim(), 'admin', passcode, { email: opts.email });
         await api.members.touchLogin(member.id);
         const session: Session = {
           workspaceId: w, memberId: member.id, displayName: member.display_name,
-          role: member.role, isPlatformAdmin: member.role === 'owner',
+          role: member.role,
           rememberMe: opts?.rememberMe ?? true, loggedInAt: Date.now(),
         };
         setPersisted((p) => ({
@@ -311,26 +321,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           session,
         }));
         setCurrentMember(member);
-        return { ok: true, role: member.role, isPlatformAdmin: member.role === 'owner' };
+        return { ok: true, role: member.role };
       } catch (e) {
         return { ok: false, error: authError(e) };
       }
     };
-
     const login: Store['login'] = async (workspace, passcode, opts) => {
       const w = norm(workspace);
       if (!w) return { ok: false, error: 'Workspace name is required.' };
       if (!passcode) return { ok: false, error: 'Passcode is required.' };
-      if (clientStatus(w) === 'suspended') {
-        return { ok: false, error: 'This workspace is suspended. Contact the platform operator to reactivate it.' };
-      }
       const api = getApi(w, opts?.displayName?.trim() || 'agent');
       try {
         const { data: member } = await api.members.login(opts?.displayName ?? '', passcode);
         await api.members.touchLogin(member.id);
         const session: Session = {
           workspaceId: w, memberId: member.id, displayName: member.display_name,
-          role: member.role, isPlatformAdmin: member.role === 'owner',
+          role: member.role,
           rememberMe: opts?.rememberMe ?? false, loggedInAt: Date.now(),
         };
         setPersisted((p) => ({
@@ -339,10 +345,31 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           session,
         }));
         setCurrentMember(member);
-        return { ok: true, role: member.role, isPlatformAdmin: member.role === 'owner' };
+        return { ok: true, role: member.role };
       } catch (e) {
         return { ok: false, error: authError(e) };
       }
+    };
+
+    const startViewAs: Store['startViewAs'] = ({ token, workspace: ws, member }) => {
+      const slug = ws.slug.toLowerCase();
+      setPhpSession(token, slug);
+      const role = member.role as MemberRole;
+      setPersisted((p) => ({
+        ...p,
+        workspaces: { ...p.workspaces, [slug]: { name: slug, displayName: member.display_name, passcode: '', role, createdAt: Date.now() } },
+        session: {
+          workspaceId: slug, memberId: member.id, displayName: member.display_name, role,
+          viewingWorkspaceId: slug, rememberMe: false, loggedInAt: Date.now(),
+        },
+      }));
+      setCurrentMember(member as unknown as ApiMember);
+    };
+
+    const exitViewAs: Store['exitViewAs'] = () => {
+      clearPhpToken();
+      setPersisted((p) => ({ ...p, session: null }));
+      setCurrentMember(null);
     };
 
     const logout = () => {
@@ -612,7 +639,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       session: persisted.session,
       data,
       effectiveWorkspaceId: effectiveWorkspaceIdFn,
-      setViewingWorkspace,
+      startViewAs, exitViewAs,
       knownWorkspaces: Object.keys(persisted.workspaces).sort(),
       currentMember,
       signup, login, logout, resetDemo,
@@ -633,3 +660,7 @@ export function useStore(): Store {
   if (!s) throw new Error('useStore must be used inside StoreProvider');
   return s;
 }
+
+
+
+

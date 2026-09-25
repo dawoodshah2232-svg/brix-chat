@@ -6,12 +6,14 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useStore } from '../lib/store';
 import { Button, Card, Input, Label, PasswordInput } from '../components/ui';
 import Logo from '../components/Logo';
+import { userErrorMessage } from '../lib/userErrors';
 
 export default function Signup() {
   const { signup } = useStore();
   const navigate = useNavigate();
   const [workspace, setWorkspace] = useState('');
   const [displayName, setDisplayName] = useState('');
+  const [email, setEmail] = useState('');
   const [passcode, setPasscode] = useState('');
   const [confirm, setConfirm] = useState('');
   const [rememberMe, setRememberMe] = useState(true);
@@ -26,10 +28,10 @@ export default function Signup() {
     }
     setBusy(true);
     setError('');
-    const res = await signup(workspace, displayName, passcode, { rememberMe });
+    const res = await signup(workspace, displayName, passcode, { rememberMe, email });
     setBusy(false);
-    if (res.ok) navigate('/admin');
-    else setError(res.error ?? 'Something went wrong.');
+    if (res.ok) navigate('/app/welcome');
+    else setError(res.error ?? userErrorMessage('generic'));
   };
 
   return (
@@ -44,7 +46,7 @@ export default function Signup() {
         </Link>
         <Card className="p-8">
           <h1 className="font-display text-2xl font-extrabold text-slate-900 text-center">Create your workspace</h1>
-          <p className="mt-2 text-sm text-slate-500 text-center">Free forever. No email, no card — just pick a passcode.</p>
+          <p className="mt-2 text-sm text-slate-500 text-center">Create the workspace admin account. You can log in later with email or username.</p>
           <form onSubmit={submit} className="mt-6 space-y-4">
             <div>
               <Label>Workspace name</Label>
@@ -53,6 +55,10 @@ export default function Signup() {
             <div>
               <Label>Your display name</Label>
               <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Alex Rivera" autoComplete="name" required />
+            </div>
+            <div>
+              <Label>Email</Label>
+              <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="alex@example.com" autoComplete="email" required />
             </div>
             <div>
               <Label>Passcode (min 4 characters)</Label>
@@ -91,3 +97,6 @@ export default function Signup() {
     </main>
   );
 }
+
+
+

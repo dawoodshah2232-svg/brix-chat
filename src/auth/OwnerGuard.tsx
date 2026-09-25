@@ -1,13 +1,14 @@
-// Platform-admin-only guard. The platform console (/admin) is a separate
-// product from the client dashboard (/app): only owner-role sessions
-// (isPlatformAdmin) may enter.
+// Platform-admin-only guard for /admin. Uses the separate admin session
+// (AdminAuth), never the workspace session.
 import { Navigate } from 'react-router-dom';
 import type { ReactNode } from 'react';
-import { useStore } from '../lib/store';
+import { useAdminAuth } from './AdminAuth';
 
 export default function OwnerGuard({ children }: { children: ReactNode }) {
-  const { session } = useStore();
-  if (!session) return <Navigate to="/login" replace />;
-  if (!session.isPlatformAdmin) return <Navigate to="/app" replace />;
+  const { admin, ready } = useAdminAuth();
+  if (!ready) {
+    return <div className="min-h-screen grid place-items-center bg-slate-50 text-sm text-slate-500">Checking session…</div>;
+  }
+  if (!admin) return <Navigate to="/admin-login" replace />;
   return <>{children}</>;
 }

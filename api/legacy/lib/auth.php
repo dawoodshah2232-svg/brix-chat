@@ -44,13 +44,16 @@ function auth_ctx(): array {
     $d = token_verify(trim($m[1]));
     if (!$d) brix_fail('unauthorized', 'Invalid or expired token', 401);
     $db = brix_db();
-    $st = $db->prepare('SELECT id, name, slug FROM workspaces WHERE id = ?');
+    $st = $db->prepare('SELECT id, name, slug, status FROM workspaces WHERE id = ?');
     $st->execute([$d['wid']]);
     $ws = $st->fetch();
     $st = $db->prepare('SELECT * FROM members WHERE id = ? AND workspace_id = ?');
     $st->execute([$d['mid'], $d['wid']]);
     $mb = $st->fetch();
     if (!$ws || !$mb) brix_fail('unauthorized', 'Session is no longer valid', 401);
+    if (($ws['status'] ?? 'active') === 'suspended') {
+        brix_fail('suspended', 'This workspace is suspended. Contact the platform operator to reactivate it.', 403);
+    }
     $ctx = ['wid' => $ws['id'], 'mid' => $mb['id'], 'role' => $mb['role'], 'member' => $mb, 'workspace' => $ws];
     return $ctx;
 }
@@ -68,6 +71,7 @@ function can(string $role, string $table, string $op): bool {
     static $ADMIN_DEV = ['webhooks', 'webhook_deliveries', 'api_keys', 'integrations'];
     // member_credentials and member_invites: deny-all at the API layer (internal only).
 
+    if ($role === 'owner') return true;
     if (in_array($table, $A, true)) {
         return $op === 'read'
             ? in_array($role, ['admin', 'agent', 'viewer'], true)
@@ -88,7 +92,7 @@ function can(string $role, string $table, string $op): bool {
     if ($table === 'audit_log') {
         return $op === 'read' ? $role === 'admin' : false;
     }
-    return $role === 'admin';
+    return in_array($role, ['admin', 'owner'], true);
 }
 
 /** Enforce the matrix; returns the auth context. */

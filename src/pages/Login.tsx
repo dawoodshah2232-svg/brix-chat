@@ -1,44 +1,82 @@
-// Brix Chat — login: workspace name + passcode.
+// Brix Chat — login: email/username + passcode. Workspace is resolved from the account.
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useStore } from '../lib/store';
+import { getPhpApi, isPhpApiEnabled } from '../lib/php-client';
 import { Button, Card, Input, Label, PasswordInput } from '../components/ui';
+import { userErrorMessage } from '../lib/userErrors';
 import Logo from '../components/Logo';
+
+interface WorkspaceHit {
+  slug: string;
+  name: string;
+  displayName?: string;
+}
 
 export default function Login() {
   const { login } = useStore();
   const navigate = useNavigate();
   const location = useLocation();
-  const [workspace, setWorkspace] = useState('');
-  const [displayName, setDisplayName] = useState('');
+  const [identity, setIdentity] = useState('');
+  const [workspace, setWorkspace] = useState<WorkspaceHit | null>(null);
+  const [lookupState, setLookupState] = useState<'idle' | 'checking' | 'found' | 'missing' | 'error'>('idle');
   const [passcode, setPasscode] = useState('');
   const [rememberMe, setRememberMe] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
+  useEffect(() => {
+    const q = identity.trim();
+    setError('');
+    setWorkspace(null);
+    if (q.length < 2) {
+      setLookupState('idle');
+      return;
+    }
+    if (!isPhpApiEnabled()) {
+      setLookupState('error');
+      return;
+    }
+    setLookupState('checking');
+    const timer = window.setTimeout(async () => {
+      try {
+        const api = getPhpApi();
+        const res = api ? await api.auth.lookup(q) : { found: false };
+        if (!res.found || !res.workspace) {
+          setLookupState('missing');
+          return;
+        }
+        setWorkspace({
+          slug: String(res.workspace.slug ?? ''),
+          name: String(res.workspace.name ?? res.workspace.slug ?? ''),
+          displayName: res.member?.display_name ? String(res.member.display_name) : undefined,
+        });
+        setLookupState('found');
+      } catch {
+        setLookupState('error');
+      }
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [identity]);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
+    if (!workspace?.slug) {
+      setError(userErrorMessage('accountNotFound'));
+      return;
+    }
     setBusy(true);
     setError('');
-    const res = await login(workspace, passcode, { displayName, rememberMe });
+    const res = await login(workspace.slug, passcode, { displayName: identity, rememberMe });
     setBusy(false);
     if (!res.ok) {
-      setError(res.error ?? 'Something went wrong.');
+      setError(res.error ?? userErrorMessage('generic'));
       return;
     }
     const from = (location.state as { from?: string } | null)?.from;
-    if (res.isPlatformAdmin) {
-      navigate(from && from.startsWith('/admin') ? from : '/admin');
-      return;
-    }
-    if (from && from.startsWith('/app')) {
-      navigate(from);
-      return;
-    }
-    navigate('/app');
+    navigate(from && from.startsWith('/workspace') ? from : '/workspace/dashboard');
   };
 
   return (
@@ -53,22 +91,23 @@ export default function Login() {
         </Link>
         <Card className="p-8">
           <h1 className="font-display text-2xl font-extrabold text-slate-900 text-center">Welcome back</h1>
-          <p className="mt-2 text-sm text-slate-500 text-center">Log in with your workspace name and passcode.</p>
+          <p className="mt-2 text-sm text-slate-500 text-center">Log in with your email or username and passcode.</p>
 
           <form onSubmit={submit} className="mt-6 space-y-4">
             <div>
-              <Label>Workspace name</Label>
-              <Input
-                value={workspace}
-                onChange={(e) => setWorkspace(e.target.value)}
-                placeholder="your-workspace"
-                autoComplete="off"
-                required
-              />
-            </div>
-            <div>
-              <Label>Your name <span className="text-slate-400 font-normal">(optional — speeds up login)</span></Label>
-              <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Your name" autoComplete="name" />
+              <Label>Email or username</Label>
+              <Input value={identity} onChange={(e) => setIdentity(e.target.value)} placeholder="alex@example.com or Alex Rivera" autoComplete="username" required />
+              <div className="mt-2 min-h-7">
+                {lookupState === 'checking' && <span className="text-xs font-semibold text-slate-500">Checking workspace…</span>}
+                {lookupState === 'found' && workspace && (
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-bold text-emerald-700">
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                    Workspace: {workspace.name || workspace.slug}
+                  </span>
+                )}
+                {lookupState === 'missing' && <span className="text-xs font-semibold text-rose-600">{userErrorMessage('accountNotFound')}</span>}
+                {lookupState === 'error' && <span className="text-xs font-semibold text-amber-600">{userErrorMessage('accountLookupUnavailable')}</span>}
+              </div>
             </div>
             <div>
               <Label>Passcode</Label>
@@ -88,7 +127,7 @@ export default function Login() {
                 {error}
               </p>
             )}
-            <Button type="submit" size="lg" className="w-full" disabled={busy}>
+            <Button type="submit" size="lg" className="w-full" disabled={busy || lookupState !== 'found'}>
               {busy ? 'Logging in…' : 'Log in'}
             </Button>
           </form>
@@ -103,3 +142,8 @@ export default function Login() {
     </main>
   );
 }
+
+
+
+
+

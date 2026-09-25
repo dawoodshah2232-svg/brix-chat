@@ -160,6 +160,7 @@ export interface ApiContact {
 export interface ApiAgent {
   id: string;
   display_name: string;
+  email?: string;
   role: TeamRole;
   online: boolean;
   active: boolean; // deactivated members are locked out and excluded from the team list actions
@@ -381,6 +382,7 @@ export interface ApiStatusEntry {
 export interface ApiMember {
   id: string;
   display_name: string;
+  email?: string;
   initials: string;
   color: string;
   role: TeamRole;
@@ -2386,7 +2388,7 @@ export class BrixApi {
       return { data: m };
     },
     create: async (displayName: string, role: TeamRole, passcode: string, extras?: {
-      job_title?: string; avatar_data_url?: string | null; department_ids?: string[];
+      job_title?: string; avatar_data_url?: string | null; department_ids?: string[]; email?: string;
     }): Promise<Envelope<ApiMember>> => {
       const name = displayName.trim();
       if (!name) throw new ApiError('validation', 'Display name is required.', 422);
@@ -2398,7 +2400,7 @@ export class BrixApi {
       const m: ApiMember = {
         id: uid('mem'), display_name: name, initials: memberInitials(name),
         color: ['#4f46e5', '#0891b2', '#059669', '#f59e0b', '#8b5cf6'][db.members.length % 5],
-        role, passcode, last_login: null, status: 'offline',
+        role, passcode, email: extras?.email ?? '', last_login: null, status: 'offline',
         job_title: (extras?.job_title ?? '').trim(),
         avatar_data_url: extras?.avatar_data_url ?? null,
         department_ids: extras?.department_ids ?? [],
@@ -5029,7 +5031,7 @@ export class SupabaseBrixApi extends BrixApi {
           () => base_members.get(id),
         ),
       create: (displayName: string, role: TeamRole, passcode: string, extras?: {
-        job_title?: string; avatar_data_url?: string | null; department_ids?: string[];
+        job_title?: string; avatar_data_url?: string | null; department_ids?: string[]; email?: string;
       }) =>
         this.guard(
           async () => {
@@ -6202,9 +6204,12 @@ export class PhpBrixApi extends BrixApi {
           e.code === 'conflict' ||
           e.code === 'not_supported' ||
           e.code === 'unauthorized' ||
+          e.code === 'forbidden' ||
+          e.code === 'rate_limited' ||
+          e.code === 'suspended' ||
           e.code === 'auth_expired')
       ) {
-        if (e.code === 'auth_expired' && typeof window !== 'undefined') {
+        if ((e.code === 'auth_expired' || e.code === 'suspended') && typeof window !== 'undefined') {
           // The session lapsed (or the workspace changed): tell the app to
           // drop the session so the UI prompts for re-login.
           window.dispatchEvent(new CustomEvent('brix:auth-expired'));

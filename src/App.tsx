@@ -1,9 +1,10 @@
 import { useEffect } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { StoreProvider } from './lib/store';
 import { MarketingLayout } from './components/marketing';
 import AuthGuard from './auth/AuthGuard';
 import OwnerGuard from './auth/OwnerGuard';
+import { AdminAuthProvider } from './auth/AdminAuth';
 import Landing from './pages/Landing';
 import Features from './pages/Features';
 import Pricing from './pages/Pricing';
@@ -12,6 +13,7 @@ import Compare from './pages/Compare';
 import Changelog from './pages/Changelog';
 import Signup from './pages/Signup';
 import Login from './pages/Login';
+import AdminLogin from './pages/AdminLogin';
 import Blog from './pages/Blog';
 import BlogPost from './pages/BlogPost';
 import Help from './pages/Help';
@@ -67,6 +69,14 @@ function Titled({ title, children }: { title: string; children: React.ReactNode 
   return <>{children}</>;
 }
 
+/** Old /app/<page> links → /workspace/<page> (welcome → dashboard). */
+function LegacyAppRedirect() {
+  const { pathname, search } = useLocation();
+  const rest = pathname.replace(/^\/app\/?/, '');
+  const page = !rest || rest === 'welcome' ? 'dashboard' : rest;
+  return <Navigate to={`/workspace/${page}${search}`} replace />;
+}
+
 function NotFound() {
   return (
     <div className="min-h-screen grid place-items-center bg-ink-950 text-white px-6">
@@ -82,6 +92,7 @@ function NotFound() {
 export default function App() {
   return (
     <StoreProvider>
+      <AdminAuthProvider>
       <BrowserRouter>
         <Routes>
           <Route element={<MarketingLayout />}>
@@ -106,13 +117,16 @@ export default function App() {
           </Route>
           <Route path="signup" element={<Titled title="Create workspace"><Signup /></Titled>} />
           <Route path="login" element={<Titled title="Log in"><Login /></Titled>} />
+          <Route path="admin-login" element={<Titled title="Admin login"><AdminLogin /></Titled>} />
           <Route path="widget" element={<Titled title="Chat"><WidgetPage /></Titled>} />
           <Route path="kb/:propertyKey" element={<Titled title="Help center"><PropertyKb /></Titled>} />
           <Route path="admin" element={<OwnerGuard><Titled title="Platform admin"><Admin /></Titled></OwnerGuard>} />
-          <Route path="onboarding" element={<Navigate to="/app/welcome" replace />} />
-          <Route path="app" element={<AuthGuard><AppShell /></AuthGuard>}>
-            <Route index element={<Titled title="Inbox"><Inbox /></Titled>} />
-            <Route path="welcome" element={<Titled title="Welcome"><Welcome /></Titled>} />
+          <Route path="onboarding" element={<Navigate to="/workspace/dashboard" replace />} />
+          <Route path="app/*" element={<LegacyAppRedirect />} />
+          <Route path="workspace" element={<AuthGuard><AppShell /></AuthGuard>}>
+            <Route index element={<Navigate to="/workspace/dashboard" replace />} />
+            <Route path="dashboard" element={<Titled title="Dashboard"><Welcome /></Titled>} />
+            <Route path="inbox" element={<Titled title="Inbox"><Inbox /></Titled>} />
             <Route path="visitors" element={<Titled title="Live visitors"><Visitors /></Titled>} />
             <Route path="contacts" element={<Titled title="Contacts"><Contacts /></Titled>} />
             <Route path="analytics" element={<Titled title="Analytics"><Analytics /></Titled>} />
@@ -139,6 +153,8 @@ export default function App() {
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
+      </AdminAuthProvider>
     </StoreProvider>
   );
 }
+

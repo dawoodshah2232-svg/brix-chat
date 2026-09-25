@@ -1,4 +1,4 @@
-// Brix Chat — Plain-PHP REST API client (transport layer).
+// Brix Chat — Brix API client (transport layer).
 //
 // Mirrors src/lib/supabase-client.ts 1:1:
 //
@@ -92,10 +92,19 @@ export function configurePhpApi(baseUrl: string): void {
 function resolveBaseUrl(): string | null {
   if (baseUrlOverride) return baseUrlOverride;
   const v = readEnv(API_URL_ENV);
-  return v ? v.replace(/\/+$/, '') : null;
+  if (v) return v.replace(/\/+$/, '');
+  if (typeof window !== 'undefined' && /^localhost$|^127\.0\.0\.1$/.test(window.location.hostname)) {
+    return 'http://127.0.0.1:8099/api';
+  }
+  return null;
 }
 
-/** True only when a PHP backend is configured (build-time VITE_API_URL or test override). */
+/** API base URL (e.g. http://127.0.0.1:8099/api), or null when no backend is configured. */
+export function phpBaseUrl(): string | null {
+  return resolveBaseUrl();
+}
+
+/** True only when a API backend is configured (build-time VITE_API_URL or test override). */
 export function isPhpApiEnabled(): boolean {
   return resolveBaseUrl() !== null;
 }
@@ -148,6 +157,14 @@ function tokenExpiryMs(token: string): number | null {
   }
 }
 
+/** Adopt a workspace token issued elsewhere (platform admin view-as). */
+export function setPhpSession(token: string, workspace: string): void {
+  memToken = token;
+  memWorkspace = workspace.trim().toLowerCase();
+  writeStoredSession({ token, workspace: memWorkspace });
+  client?.forgetToken(); // fall through to memToken
+}
+
 /** Clear the stored PHP session (logout / expired token). */
 export function clearPhpToken(): void {
   memToken = null;
@@ -162,7 +179,7 @@ export function clearPhpToken(): void {
 // ---------------------------------------------------------------------------
 
 function phpError(status: number, code: string, message: string): ApiError {
-  const msg = message || 'PHP API request failed.';
+  const msg = message || 'App server request failed.';
   switch (code) {
     case 'validation':
       return new ApiError('validation', msg, 422);
@@ -176,6 +193,10 @@ function phpError(status: number, code: string, message: string): ApiError {
       return new ApiError('not_supported', msg, 501);
     case 'unauthorized':
       return new ApiError('unauthorized', msg, status || 401);
+    case 'suspended':
+    case 'rate_limited':
+    case 'forbidden':
+      return new ApiError(code, msg, status);
     default:
       if (status === 401) return new ApiError('unauthorized', msg, 401);
       if (status === 403) return new ApiError('unauthorized', msg, 403);
@@ -274,7 +295,7 @@ export class PhpApiClient {
         body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
       });
     } catch {
-      throw new ApiError('php_unreachable', `Cannot reach the PHP API at ${this.baseUrl}.`, 503);
+      throw new ApiError('php_unreachable', `Cannot reach the app server at ${this.baseUrl}.`, 503);
     }
 
     let json: unknown = null;
@@ -335,6 +356,29 @@ export class PhpApiClient {
       this.token = data.token;
       memToken = data.token;
       memWorkspace = workspace.trim().toLowerCase();
+      writeStoredSession({ token: data.token, workspace: memWorkspace });
+      return data;
+    },
+    lookup: (identity: string): Promise<{ found: boolean; workspace?: PhpRow; member?: PhpRow }> =>
+      this.request('/auth/lookup', {
+        method: 'POST',
+        auth: false,
+        body: { identity: identity.trim() },
+      }),
+    signup: async (input: { workspace: string; display_name: string; email?: string; passcode: string }): Promise<PhpLoginResult> => {
+      const data = await this.request<PhpLoginResult>('/auth/signup', {
+        method: 'POST',
+        auth: false,
+        body: {
+          workspace: input.workspace.trim(),
+          display_name: input.display_name.trim(),
+          email: input.email?.trim() || '',
+          passcode: input.passcode,
+        },
+      });
+      this.token = data.token;
+      memToken = data.token;
+      memWorkspace = String(data.workspace?.slug ?? input.workspace).trim().toLowerCase();
       writeStoredSession({ token: data.token, workspace: memWorkspace });
       return data;
     },
@@ -680,7 +724,7 @@ export class PhpApiClient {
 
 let client: PhpApiClient | null = null;
 
-/** Lazy singleton. Null when no PHP backend is configured. */
+/** Lazy singleton. Null when no API backend is configured. */
 export function getPhpApi(): PhpApiClient | null {
   const base = resolveBaseUrl();
   if (!base) return null;
@@ -700,10 +744,10 @@ const POLL_TABLES: ReadonlySet<string> = new Set(['conversations', 'messages', '
 
 /**
  * Start polling GET /updates?since= (idempotent). Mirrors
- * ensureBrixRealtime(): every ~5s the client asks the PHP API for
+ * ensureBrixRealtime(): every ~5s the client asks the API backend for
  * conversation/message/visitor changes since the last poll and forwards them
  * into the shared onRemoteChange bus. Called automatically by the PHP
- * transport; no-op when the PHP backend is not configured or no session
+ * transport; no-op when the API backend is not configured or no session
  * token exists yet (ticks are skipped quietly until login).
  */
 export function ensurePhpPolling(intervalMs = 5000): void {
@@ -744,3 +788,6 @@ export function stopPhpPolling(): void {
   pollingStarted = false;
   pollSince = null;
 }
+
+
+

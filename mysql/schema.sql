@@ -186,7 +186,7 @@ CREATE TABLE IF NOT EXISTS contacts (
     REFERENCES properties (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Members (workspace membership; roles admin/agent/developer/viewer) ------------
+-- Members (workspace membership; roles owner/admin/agent/developer/viewer) ------------
 CREATE TABLE IF NOT EXISTS members (
   id CHAR(36) NOT NULL PRIMARY KEY,
   workspace_id CHAR(36) NOT NULL,
@@ -207,7 +207,7 @@ CREATE TABLE IF NOT EXISTS members (
   KEY members_workspace_idx (workspace_id),
   CONSTRAINT fk_members_workspace FOREIGN KEY (workspace_id)
     REFERENCES workspaces (id) ON DELETE CASCADE,
-  CONSTRAINT members_role_check CHECK (role IN ('admin','agent','developer','viewer')),
+  CONSTRAINT members_role_check CHECK (role IN ('owner','admin','agent','developer','viewer')),
   CONSTRAINT members_status_check CHECK (status IN ('online','away','offline'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -875,7 +875,7 @@ CREATE TABLE IF NOT EXISTS member_invites (
     REFERENCES workspaces (id) ON DELETE CASCADE,
   CONSTRAINT fk_member_invites_created_by FOREIGN KEY (created_by)
     REFERENCES members (id) ON DELETE SET NULL,
-  CONSTRAINT member_invites_role_check CHECK (role IN ('admin','agent','developer','viewer'))
+  CONSTRAINT member_invites_role_check CHECK (role IN ('owner','admin','agent','developer','viewer'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 -- ============================================================================
 -- Triggers
@@ -1000,7 +1000,7 @@ DROP TRIGGER IF EXISTS trg_ws_messages_ins$$
 CREATE TRIGGER trg_ws_messages_ins BEFORE INSERT ON messages
 FOR EACH ROW
 BEGIN
-  DECLARE v_ws_0 CHAR(36) DEFAULT NULL;
+  DECLARE v_ws_0 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   IF NEW.conversation_id IS NOT NULL THEN
     SELECT workspace_id INTO v_ws_0 FROM conversations WHERE id = NEW.conversation_id;
     IF v_ws_0 IS NULL THEN
@@ -1015,7 +1015,7 @@ DROP TRIGGER IF EXISTS trg_ws_messages_upd$$
 CREATE TRIGGER trg_ws_messages_upd BEFORE UPDATE ON messages
 FOR EACH ROW
 BEGIN
-  DECLARE v_ws_0 CHAR(36) DEFAULT NULL;
+  DECLARE v_ws_0 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   IF NEW.conversation_id IS NOT NULL THEN
     SELECT workspace_id INTO v_ws_0 FROM conversations WHERE id = NEW.conversation_id;
     IF v_ws_0 IS NULL THEN
@@ -1030,7 +1030,7 @@ DROP TRIGGER IF EXISTS trg_ws_conversation_notes_ins$$
 CREATE TRIGGER trg_ws_conversation_notes_ins BEFORE INSERT ON conversation_notes
 FOR EACH ROW
 BEGIN
-  DECLARE v_ws_0 CHAR(36) DEFAULT NULL;
+  DECLARE v_ws_0 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   IF NEW.conversation_id IS NOT NULL THEN
     SELECT workspace_id INTO v_ws_0 FROM conversations WHERE id = NEW.conversation_id;
     IF v_ws_0 IS NULL THEN
@@ -1045,7 +1045,7 @@ DROP TRIGGER IF EXISTS trg_ws_conversation_notes_upd$$
 CREATE TRIGGER trg_ws_conversation_notes_upd BEFORE UPDATE ON conversation_notes
 FOR EACH ROW
 BEGIN
-  DECLARE v_ws_0 CHAR(36) DEFAULT NULL;
+  DECLARE v_ws_0 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   IF NEW.conversation_id IS NOT NULL THEN
     SELECT workspace_id INTO v_ws_0 FROM conversations WHERE id = NEW.conversation_id;
     IF v_ws_0 IS NULL THEN
@@ -1060,7 +1060,7 @@ DROP TRIGGER IF EXISTS trg_ws_contact_events_ins$$
 CREATE TRIGGER trg_ws_contact_events_ins BEFORE INSERT ON contact_events
 FOR EACH ROW
 BEGIN
-  DECLARE v_ws_0 CHAR(36) DEFAULT NULL;
+  DECLARE v_ws_0 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   IF NEW.contact_id IS NOT NULL THEN
     SELECT workspace_id INTO v_ws_0 FROM contacts WHERE id = NEW.contact_id;
     IF v_ws_0 IS NULL THEN
@@ -1075,7 +1075,7 @@ DROP TRIGGER IF EXISTS trg_ws_contact_events_upd$$
 CREATE TRIGGER trg_ws_contact_events_upd BEFORE UPDATE ON contact_events
 FOR EACH ROW
 BEGIN
-  DECLARE v_ws_0 CHAR(36) DEFAULT NULL;
+  DECLARE v_ws_0 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   IF NEW.contact_id IS NOT NULL THEN
     SELECT workspace_id INTO v_ws_0 FROM contacts WHERE id = NEW.contact_id;
     IF v_ws_0 IS NULL THEN
@@ -1090,7 +1090,7 @@ DROP TRIGGER IF EXISTS trg_ws_goal_events_ins$$
 CREATE TRIGGER trg_ws_goal_events_ins BEFORE INSERT ON goal_events
 FOR EACH ROW
 BEGIN
-  DECLARE v_ws_0 CHAR(36) DEFAULT NULL;
+  DECLARE v_ws_0 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   IF NEW.goal_id IS NOT NULL THEN
     SELECT workspace_id INTO v_ws_0 FROM goals WHERE id = NEW.goal_id;
     IF v_ws_0 IS NULL THEN
@@ -1105,7 +1105,7 @@ DROP TRIGGER IF EXISTS trg_ws_goal_events_upd$$
 CREATE TRIGGER trg_ws_goal_events_upd BEFORE UPDATE ON goal_events
 FOR EACH ROW
 BEGIN
-  DECLARE v_ws_0 CHAR(36) DEFAULT NULL;
+  DECLARE v_ws_0 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   IF NEW.goal_id IS NOT NULL THEN
     SELECT workspace_id INTO v_ws_0 FROM goals WHERE id = NEW.goal_id;
     IF v_ws_0 IS NULL THEN
@@ -1120,9 +1120,9 @@ DROP TRIGGER IF EXISTS trg_ws_tickets_ins$$
 CREATE TRIGGER trg_ws_tickets_ins BEFORE INSERT ON tickets
 FOR EACH ROW
 BEGIN
-  DECLARE v_ws_0 CHAR(36) DEFAULT NULL;
-  DECLARE v_ws_1 CHAR(36) DEFAULT NULL;
-  DECLARE v_ws_2 CHAR(36) DEFAULT NULL;
+  DECLARE v_ws_0 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
+  DECLARE v_ws_1 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
+  DECLARE v_ws_2 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   IF NEW.conversation_id IS NOT NULL THEN
     SELECT workspace_id INTO v_ws_0 FROM conversations WHERE id = NEW.conversation_id;
     IF v_ws_0 IS NULL THEN
@@ -1153,9 +1153,9 @@ DROP TRIGGER IF EXISTS trg_ws_tickets_upd$$
 CREATE TRIGGER trg_ws_tickets_upd BEFORE UPDATE ON tickets
 FOR EACH ROW
 BEGIN
-  DECLARE v_ws_0 CHAR(36) DEFAULT NULL;
-  DECLARE v_ws_1 CHAR(36) DEFAULT NULL;
-  DECLARE v_ws_2 CHAR(36) DEFAULT NULL;
+  DECLARE v_ws_0 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
+  DECLARE v_ws_1 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
+  DECLARE v_ws_2 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   IF NEW.conversation_id IS NOT NULL THEN
     SELECT workspace_id INTO v_ws_0 FROM conversations WHERE id = NEW.conversation_id;
     IF v_ws_0 IS NULL THEN
@@ -1186,9 +1186,9 @@ DROP TRIGGER IF EXISTS trg_ws_ratings_ins$$
 CREATE TRIGGER trg_ws_ratings_ins BEFORE INSERT ON ratings
 FOR EACH ROW
 BEGIN
-  DECLARE v_ws_0 CHAR(36) DEFAULT NULL;
-  DECLARE v_ws_1 CHAR(36) DEFAULT NULL;
-  DECLARE v_ws_2 CHAR(36) DEFAULT NULL;
+  DECLARE v_ws_0 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
+  DECLARE v_ws_1 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
+  DECLARE v_ws_2 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   IF NEW.conversation_id IS NOT NULL THEN
     SELECT workspace_id INTO v_ws_0 FROM conversations WHERE id = NEW.conversation_id;
     IF v_ws_0 IS NULL THEN
@@ -1219,9 +1219,9 @@ DROP TRIGGER IF EXISTS trg_ws_ratings_upd$$
 CREATE TRIGGER trg_ws_ratings_upd BEFORE UPDATE ON ratings
 FOR EACH ROW
 BEGIN
-  DECLARE v_ws_0 CHAR(36) DEFAULT NULL;
-  DECLARE v_ws_1 CHAR(36) DEFAULT NULL;
-  DECLARE v_ws_2 CHAR(36) DEFAULT NULL;
+  DECLARE v_ws_0 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
+  DECLARE v_ws_1 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
+  DECLARE v_ws_2 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   IF NEW.conversation_id IS NOT NULL THEN
     SELECT workspace_id INTO v_ws_0 FROM conversations WHERE id = NEW.conversation_id;
     IF v_ws_0 IS NULL THEN
@@ -1252,8 +1252,8 @@ DROP TRIGGER IF EXISTS trg_ws_unanswered_questions_ins$$
 CREATE TRIGGER trg_ws_unanswered_questions_ins BEFORE INSERT ON unanswered_questions
 FOR EACH ROW
 BEGIN
-  DECLARE v_ws_0 CHAR(36) DEFAULT NULL;
-  DECLARE v_ws_1 CHAR(36) DEFAULT NULL;
+  DECLARE v_ws_0 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
+  DECLARE v_ws_1 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   IF NEW.conversation_id IS NOT NULL THEN
     SELECT workspace_id INTO v_ws_0 FROM conversations WHERE id = NEW.conversation_id;
     IF v_ws_0 IS NULL THEN
@@ -1276,8 +1276,8 @@ DROP TRIGGER IF EXISTS trg_ws_unanswered_questions_upd$$
 CREATE TRIGGER trg_ws_unanswered_questions_upd BEFORE UPDATE ON unanswered_questions
 FOR EACH ROW
 BEGIN
-  DECLARE v_ws_0 CHAR(36) DEFAULT NULL;
-  DECLARE v_ws_1 CHAR(36) DEFAULT NULL;
+  DECLARE v_ws_0 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
+  DECLARE v_ws_1 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   IF NEW.conversation_id IS NOT NULL THEN
     SELECT workspace_id INTO v_ws_0 FROM conversations WHERE id = NEW.conversation_id;
     IF v_ws_0 IS NULL THEN
@@ -1300,8 +1300,8 @@ DROP TRIGGER IF EXISTS trg_ws_kb_articles_ins$$
 CREATE TRIGGER trg_ws_kb_articles_ins BEFORE INSERT ON kb_articles
 FOR EACH ROW
 BEGIN
-  DECLARE v_ws_0 CHAR(36) DEFAULT NULL;
-  DECLARE v_ws_1 CHAR(36) DEFAULT NULL;
+  DECLARE v_ws_0 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
+  DECLARE v_ws_1 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   IF NEW.category_id IS NOT NULL THEN
     SELECT workspace_id INTO v_ws_0 FROM kb_categories WHERE id = NEW.category_id;
     IF v_ws_0 IS NULL THEN
@@ -1324,8 +1324,8 @@ DROP TRIGGER IF EXISTS trg_ws_kb_articles_upd$$
 CREATE TRIGGER trg_ws_kb_articles_upd BEFORE UPDATE ON kb_articles
 FOR EACH ROW
 BEGIN
-  DECLARE v_ws_0 CHAR(36) DEFAULT NULL;
-  DECLARE v_ws_1 CHAR(36) DEFAULT NULL;
+  DECLARE v_ws_0 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
+  DECLARE v_ws_1 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   IF NEW.category_id IS NOT NULL THEN
     SELECT workspace_id INTO v_ws_0 FROM kb_categories WHERE id = NEW.category_id;
     IF v_ws_0 IS NULL THEN
@@ -1348,9 +1348,9 @@ DROP TRIGGER IF EXISTS trg_ws_canned_responses_ins$$
 CREATE TRIGGER trg_ws_canned_responses_ins BEFORE INSERT ON canned_responses
 FOR EACH ROW
 BEGIN
-  DECLARE v_ws_0 CHAR(36) DEFAULT NULL;
-  DECLARE v_ws_1 CHAR(36) DEFAULT NULL;
-  DECLARE v_ws_2 CHAR(36) DEFAULT NULL;
+  DECLARE v_ws_0 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
+  DECLARE v_ws_1 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
+  DECLARE v_ws_2 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   IF NEW.category_id IS NOT NULL THEN
     SELECT workspace_id INTO v_ws_0 FROM canned_categories WHERE id = NEW.category_id;
     IF v_ws_0 IS NULL THEN
@@ -1381,9 +1381,9 @@ DROP TRIGGER IF EXISTS trg_ws_canned_responses_upd$$
 CREATE TRIGGER trg_ws_canned_responses_upd BEFORE UPDATE ON canned_responses
 FOR EACH ROW
 BEGIN
-  DECLARE v_ws_0 CHAR(36) DEFAULT NULL;
-  DECLARE v_ws_1 CHAR(36) DEFAULT NULL;
-  DECLARE v_ws_2 CHAR(36) DEFAULT NULL;
+  DECLARE v_ws_0 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
+  DECLARE v_ws_1 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
+  DECLARE v_ws_2 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   IF NEW.category_id IS NOT NULL THEN
     SELECT workspace_id INTO v_ws_0 FROM canned_categories WHERE id = NEW.category_id;
     IF v_ws_0 IS NULL THEN
@@ -1414,8 +1414,8 @@ DROP TRIGGER IF EXISTS trg_ws_campaigns_ins$$
 CREATE TRIGGER trg_ws_campaigns_ins BEFORE INSERT ON campaigns
 FOR EACH ROW
 BEGIN
-  DECLARE v_ws_0 CHAR(36) DEFAULT NULL;
-  DECLARE v_ws_1 CHAR(36) DEFAULT NULL;
+  DECLARE v_ws_0 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
+  DECLARE v_ws_1 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   IF NEW.goal_id IS NOT NULL THEN
     SELECT workspace_id INTO v_ws_0 FROM goals WHERE id = NEW.goal_id;
     IF v_ws_0 IS NULL THEN
@@ -1438,8 +1438,8 @@ DROP TRIGGER IF EXISTS trg_ws_campaigns_upd$$
 CREATE TRIGGER trg_ws_campaigns_upd BEFORE UPDATE ON campaigns
 FOR EACH ROW
 BEGIN
-  DECLARE v_ws_0 CHAR(36) DEFAULT NULL;
-  DECLARE v_ws_1 CHAR(36) DEFAULT NULL;
+  DECLARE v_ws_0 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
+  DECLARE v_ws_1 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   IF NEW.goal_id IS NOT NULL THEN
     SELECT workspace_id INTO v_ws_0 FROM goals WHERE id = NEW.goal_id;
     IF v_ws_0 IS NULL THEN
@@ -1462,7 +1462,7 @@ DROP TRIGGER IF EXISTS trg_ws_departments_ins$$
 CREATE TRIGGER trg_ws_departments_ins BEFORE INSERT ON departments
 FOR EACH ROW
 BEGIN
-  DECLARE v_ws_0 CHAR(36) DEFAULT NULL;
+  DECLARE v_ws_0 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   IF NEW.property_id IS NOT NULL THEN
     SELECT workspace_id INTO v_ws_0 FROM properties WHERE id = NEW.property_id;
     IF v_ws_0 IS NULL THEN
@@ -1477,7 +1477,7 @@ DROP TRIGGER IF EXISTS trg_ws_departments_upd$$
 CREATE TRIGGER trg_ws_departments_upd BEFORE UPDATE ON departments
 FOR EACH ROW
 BEGIN
-  DECLARE v_ws_0 CHAR(36) DEFAULT NULL;
+  DECLARE v_ws_0 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   IF NEW.property_id IS NOT NULL THEN
     SELECT workspace_id INTO v_ws_0 FROM properties WHERE id = NEW.property_id;
     IF v_ws_0 IS NULL THEN
@@ -1492,7 +1492,7 @@ DROP TRIGGER IF EXISTS trg_ws_triggers_ins$$
 CREATE TRIGGER trg_ws_triggers_ins BEFORE INSERT ON triggers
 FOR EACH ROW
 BEGIN
-  DECLARE v_ws_0 CHAR(36) DEFAULT NULL;
+  DECLARE v_ws_0 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   IF NEW.property_id IS NOT NULL THEN
     SELECT workspace_id INTO v_ws_0 FROM properties WHERE id = NEW.property_id;
     IF v_ws_0 IS NULL THEN
@@ -1507,7 +1507,7 @@ DROP TRIGGER IF EXISTS trg_ws_triggers_upd$$
 CREATE TRIGGER trg_ws_triggers_upd BEFORE UPDATE ON triggers
 FOR EACH ROW
 BEGIN
-  DECLARE v_ws_0 CHAR(36) DEFAULT NULL;
+  DECLARE v_ws_0 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   IF NEW.property_id IS NOT NULL THEN
     SELECT workspace_id INTO v_ws_0 FROM properties WHERE id = NEW.property_id;
     IF v_ws_0 IS NULL THEN
@@ -1522,7 +1522,7 @@ DROP TRIGGER IF EXISTS trg_ws_webhooks_ins$$
 CREATE TRIGGER trg_ws_webhooks_ins BEFORE INSERT ON webhooks
 FOR EACH ROW
 BEGIN
-  DECLARE v_ws_0 CHAR(36) DEFAULT NULL;
+  DECLARE v_ws_0 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   IF NEW.property_id IS NOT NULL THEN
     SELECT workspace_id INTO v_ws_0 FROM properties WHERE id = NEW.property_id;
     IF v_ws_0 IS NULL THEN
@@ -1537,7 +1537,7 @@ DROP TRIGGER IF EXISTS trg_ws_webhooks_upd$$
 CREATE TRIGGER trg_ws_webhooks_upd BEFORE UPDATE ON webhooks
 FOR EACH ROW
 BEGIN
-  DECLARE v_ws_0 CHAR(36) DEFAULT NULL;
+  DECLARE v_ws_0 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   IF NEW.property_id IS NOT NULL THEN
     SELECT workspace_id INTO v_ws_0 FROM properties WHERE id = NEW.property_id;
     IF v_ws_0 IS NULL THEN
@@ -1552,7 +1552,7 @@ DROP TRIGGER IF EXISTS trg_ws_webhook_deliveries_ins$$
 CREATE TRIGGER trg_ws_webhook_deliveries_ins BEFORE INSERT ON webhook_deliveries
 FOR EACH ROW
 BEGIN
-  DECLARE v_ws_0 CHAR(36) DEFAULT NULL;
+  DECLARE v_ws_0 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   IF NEW.webhook_id IS NOT NULL THEN
     SELECT workspace_id INTO v_ws_0 FROM webhooks WHERE id = NEW.webhook_id;
     IF v_ws_0 IS NULL THEN
@@ -1567,7 +1567,7 @@ DROP TRIGGER IF EXISTS trg_ws_webhook_deliveries_upd$$
 CREATE TRIGGER trg_ws_webhook_deliveries_upd BEFORE UPDATE ON webhook_deliveries
 FOR EACH ROW
 BEGIN
-  DECLARE v_ws_0 CHAR(36) DEFAULT NULL;
+  DECLARE v_ws_0 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   IF NEW.webhook_id IS NOT NULL THEN
     SELECT workspace_id INTO v_ws_0 FROM webhooks WHERE id = NEW.webhook_id;
     IF v_ws_0 IS NULL THEN
@@ -1582,8 +1582,8 @@ DROP TRIGGER IF EXISTS trg_ws_visitors_ins$$
 CREATE TRIGGER trg_ws_visitors_ins BEFORE INSERT ON visitors
 FOR EACH ROW
 BEGIN
-  DECLARE v_ws_0 CHAR(36) DEFAULT NULL;
-  DECLARE v_ws_1 CHAR(36) DEFAULT NULL;
+  DECLARE v_ws_0 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
+  DECLARE v_ws_1 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   IF NEW.property_id IS NOT NULL THEN
     SELECT workspace_id INTO v_ws_0 FROM properties WHERE id = NEW.property_id;
     IF v_ws_0 IS NULL THEN
@@ -1606,8 +1606,8 @@ DROP TRIGGER IF EXISTS trg_ws_visitors_upd$$
 CREATE TRIGGER trg_ws_visitors_upd BEFORE UPDATE ON visitors
 FOR EACH ROW
 BEGIN
-  DECLARE v_ws_0 CHAR(36) DEFAULT NULL;
-  DECLARE v_ws_1 CHAR(36) DEFAULT NULL;
+  DECLARE v_ws_0 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
+  DECLARE v_ws_1 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   IF NEW.property_id IS NOT NULL THEN
     SELECT workspace_id INTO v_ws_0 FROM properties WHERE id = NEW.property_id;
     IF v_ws_0 IS NULL THEN
@@ -1630,7 +1630,7 @@ DROP TRIGGER IF EXISTS trg_ws_contacts_ins$$
 CREATE TRIGGER trg_ws_contacts_ins BEFORE INSERT ON contacts
 FOR EACH ROW
 BEGIN
-  DECLARE v_ws_0 CHAR(36) DEFAULT NULL;
+  DECLARE v_ws_0 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   IF NEW.property_id IS NOT NULL THEN
     SELECT workspace_id INTO v_ws_0 FROM properties WHERE id = NEW.property_id;
     IF v_ws_0 IS NULL THEN
@@ -1645,7 +1645,7 @@ DROP TRIGGER IF EXISTS trg_ws_contacts_upd$$
 CREATE TRIGGER trg_ws_contacts_upd BEFORE UPDATE ON contacts
 FOR EACH ROW
 BEGIN
-  DECLARE v_ws_0 CHAR(36) DEFAULT NULL;
+  DECLARE v_ws_0 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   IF NEW.property_id IS NOT NULL THEN
     SELECT workspace_id INTO v_ws_0 FROM properties WHERE id = NEW.property_id;
     IF v_ws_0 IS NULL THEN
@@ -1660,10 +1660,10 @@ DROP TRIGGER IF EXISTS trg_ws_conversations_ins$$
 CREATE TRIGGER trg_ws_conversations_ins BEFORE INSERT ON conversations
 FOR EACH ROW
 BEGIN
-  DECLARE v_ws_0 CHAR(36) DEFAULT NULL;
-  DECLARE v_ws_1 CHAR(36) DEFAULT NULL;
-  DECLARE v_ws_2 CHAR(36) DEFAULT NULL;
-  DECLARE v_ws_3 CHAR(36) DEFAULT NULL;
+  DECLARE v_ws_0 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
+  DECLARE v_ws_1 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
+  DECLARE v_ws_2 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
+  DECLARE v_ws_3 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   IF NEW.property_id IS NOT NULL THEN
     SELECT workspace_id INTO v_ws_0 FROM properties WHERE id = NEW.property_id;
     IF v_ws_0 IS NULL THEN
@@ -1702,10 +1702,10 @@ DROP TRIGGER IF EXISTS trg_ws_conversations_upd$$
 CREATE TRIGGER trg_ws_conversations_upd BEFORE UPDATE ON conversations
 FOR EACH ROW
 BEGIN
-  DECLARE v_ws_0 CHAR(36) DEFAULT NULL;
-  DECLARE v_ws_1 CHAR(36) DEFAULT NULL;
-  DECLARE v_ws_2 CHAR(36) DEFAULT NULL;
-  DECLARE v_ws_3 CHAR(36) DEFAULT NULL;
+  DECLARE v_ws_0 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
+  DECLARE v_ws_1 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
+  DECLARE v_ws_2 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
+  DECLARE v_ws_3 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   IF NEW.property_id IS NOT NULL THEN
     SELECT workspace_id INTO v_ws_0 FROM properties WHERE id = NEW.property_id;
     IF v_ws_0 IS NULL THEN
@@ -1744,7 +1744,7 @@ DROP TRIGGER IF EXISTS trg_ws_goals_ins$$
 CREATE TRIGGER trg_ws_goals_ins BEFORE INSERT ON goals
 FOR EACH ROW
 BEGIN
-  DECLARE v_ws_0 CHAR(36) DEFAULT NULL;
+  DECLARE v_ws_0 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   IF NEW.property_id IS NOT NULL THEN
     SELECT workspace_id INTO v_ws_0 FROM properties WHERE id = NEW.property_id;
     IF v_ws_0 IS NULL THEN
@@ -1759,7 +1759,7 @@ DROP TRIGGER IF EXISTS trg_ws_goals_upd$$
 CREATE TRIGGER trg_ws_goals_upd BEFORE UPDATE ON goals
 FOR EACH ROW
 BEGIN
-  DECLARE v_ws_0 CHAR(36) DEFAULT NULL;
+  DECLARE v_ws_0 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   IF NEW.property_id IS NOT NULL THEN
     SELECT workspace_id INTO v_ws_0 FROM properties WHERE id = NEW.property_id;
     IF v_ws_0 IS NULL THEN
@@ -1774,7 +1774,7 @@ DROP TRIGGER IF EXISTS trg_ws_branding_ins$$
 CREATE TRIGGER trg_ws_branding_ins BEFORE INSERT ON branding
 FOR EACH ROW
 BEGIN
-  DECLARE v_ws_0 CHAR(36) DEFAULT NULL;
+  DECLARE v_ws_0 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   IF NEW.property_id IS NOT NULL THEN
     SELECT workspace_id INTO v_ws_0 FROM properties WHERE id = NEW.property_id;
     IF v_ws_0 IS NULL THEN
@@ -1789,7 +1789,7 @@ DROP TRIGGER IF EXISTS trg_ws_branding_upd$$
 CREATE TRIGGER trg_ws_branding_upd BEFORE UPDATE ON branding
 FOR EACH ROW
 BEGIN
-  DECLARE v_ws_0 CHAR(36) DEFAULT NULL;
+  DECLARE v_ws_0 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   IF NEW.property_id IS NOT NULL THEN
     SELECT workspace_id INTO v_ws_0 FROM properties WHERE id = NEW.property_id;
     IF v_ws_0 IS NULL THEN
@@ -1804,7 +1804,7 @@ DROP TRIGGER IF EXISTS trg_ws_property_settings_ins$$
 CREATE TRIGGER trg_ws_property_settings_ins BEFORE INSERT ON property_settings
 FOR EACH ROW
 BEGIN
-  DECLARE v_ws_0 CHAR(36) DEFAULT NULL;
+  DECLARE v_ws_0 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   IF NEW.property_id IS NOT NULL THEN
     SELECT workspace_id INTO v_ws_0 FROM properties WHERE id = NEW.property_id;
     IF v_ws_0 IS NULL THEN
@@ -1819,7 +1819,7 @@ DROP TRIGGER IF EXISTS trg_ws_property_settings_upd$$
 CREATE TRIGGER trg_ws_property_settings_upd BEFORE UPDATE ON property_settings
 FOR EACH ROW
 BEGIN
-  DECLARE v_ws_0 CHAR(36) DEFAULT NULL;
+  DECLARE v_ws_0 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   IF NEW.property_id IS NOT NULL THEN
     SELECT workspace_id INTO v_ws_0 FROM properties WHERE id = NEW.property_id;
     IF v_ws_0 IS NULL THEN
@@ -1834,7 +1834,7 @@ DROP TRIGGER IF EXISTS trg_ws_notifications_ins$$
 CREATE TRIGGER trg_ws_notifications_ins BEFORE INSERT ON notifications
 FOR EACH ROW
 BEGIN
-  DECLARE v_ws_0 CHAR(36) DEFAULT NULL;
+  DECLARE v_ws_0 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   IF NEW.member_id IS NOT NULL THEN
     SELECT workspace_id INTO v_ws_0 FROM members WHERE id = NEW.member_id;
     IF v_ws_0 IS NULL THEN
@@ -1849,7 +1849,7 @@ DROP TRIGGER IF EXISTS trg_ws_notifications_upd$$
 CREATE TRIGGER trg_ws_notifications_upd BEFORE UPDATE ON notifications
 FOR EACH ROW
 BEGIN
-  DECLARE v_ws_0 CHAR(36) DEFAULT NULL;
+  DECLARE v_ws_0 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   IF NEW.member_id IS NOT NULL THEN
     SELECT workspace_id INTO v_ws_0 FROM members WHERE id = NEW.member_id;
     IF v_ws_0 IS NULL THEN
@@ -1864,7 +1864,7 @@ DROP TRIGGER IF EXISTS trg_ws_saved_views_ins$$
 CREATE TRIGGER trg_ws_saved_views_ins BEFORE INSERT ON saved_views
 FOR EACH ROW
 BEGIN
-  DECLARE v_ws_0 CHAR(36) DEFAULT NULL;
+  DECLARE v_ws_0 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   IF NEW.member_id IS NOT NULL THEN
     SELECT workspace_id INTO v_ws_0 FROM members WHERE id = NEW.member_id;
     IF v_ws_0 IS NULL THEN
@@ -1879,7 +1879,7 @@ DROP TRIGGER IF EXISTS trg_ws_saved_views_upd$$
 CREATE TRIGGER trg_ws_saved_views_upd BEFORE UPDATE ON saved_views
 FOR EACH ROW
 BEGIN
-  DECLARE v_ws_0 CHAR(36) DEFAULT NULL;
+  DECLARE v_ws_0 CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   IF NEW.member_id IS NOT NULL THEN
     SELECT workspace_id INTO v_ws_0 FROM members WHERE id = NEW.member_id;
     IF v_ws_0 IS NULL THEN
@@ -1894,8 +1894,8 @@ DROP TRIGGER IF EXISTS trg_dept_member_ws_ins$$
 CREATE TRIGGER trg_dept_member_ws_ins BEFORE INSERT ON department_members
 FOR EACH ROW
 BEGIN
-  DECLARE v_d_ws CHAR(36) DEFAULT NULL;
-  DECLARE v_m_ws CHAR(36) DEFAULT NULL;
+  DECLARE v_d_ws CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
+  DECLARE v_m_ws CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   SELECT workspace_id INTO v_d_ws FROM departments WHERE id = NEW.department_id;
   SELECT workspace_id INTO v_m_ws FROM members WHERE id = NEW.member_id;
   IF v_d_ws IS NULL OR v_m_ws IS NULL THEN
@@ -1909,8 +1909,8 @@ DROP TRIGGER IF EXISTS trg_dept_member_ws_upd$$
 CREATE TRIGGER trg_dept_member_ws_upd BEFORE UPDATE ON department_members
 FOR EACH ROW
 BEGIN
-  DECLARE v_d_ws CHAR(36) DEFAULT NULL;
-  DECLARE v_m_ws CHAR(36) DEFAULT NULL;
+  DECLARE v_d_ws CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
+  DECLARE v_m_ws CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL;
   SELECT workspace_id INTO v_d_ws FROM departments WHERE id = NEW.department_id;
   SELECT workspace_id INTO v_m_ws FROM members WHERE id = NEW.member_id;
   IF v_d_ws IS NULL OR v_m_ws IS NULL THEN
@@ -2005,7 +2005,7 @@ seed_block: BEGIN
   INSERT INTO members
     (id, workspace_id, display_name, initials, color, role, job_title, status)
   VALUES
-    (c_admin, c_ws, 'Demo Agent', 'DA', '#4f46e5', 'admin',  'Support Lead', 'online'),
+    (c_admin, c_ws, 'Platform Owner', 'PO', '#4f46e5', 'owner',  'Platform Owner', 'online'),
     (c_sara,  c_ws, 'Sara',       'S',  '#0891b2', 'agent',  '',             'offline'),
     (c_omar,  c_ws, 'Omar',       'O',  '#f59e0b', 'viewer', '',             'offline');
 
@@ -2252,3 +2252,5 @@ COMMIT;
 DROP PROCEDURE brix_seed_acme;
 
 -- End of Brix Chat MySQL/MariaDB schema.
+
+
