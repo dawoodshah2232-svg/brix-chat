@@ -82,7 +82,7 @@ function NotFound() {
 export default function App() {
   return (
     <StoreProvider>
-      <BrowserRouter basename="/brix-chat">
+      <BrowserRouter>
         <Routes>
           <Route element={<MarketingLayout />}>
             <Route index element={<Titled title="Live chat software for modern teams"><Landing /></Titled>} />

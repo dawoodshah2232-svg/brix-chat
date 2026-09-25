@@ -45,6 +45,39 @@ export function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
   return <input {...props} className={cx('w-full px-3.5 py-2.5 rounded-xl border border-slate-200 bg-white text-sm text-slate-900 placeholder:text-slate-400 outline-none focus:ring-2 focus:ring-brix-500/40 focus:border-brix-500 transition', props.className)} />;
 }
 
+export function PasswordInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
+  const [visible, setVisible] = useState(false);
+  const { className, ...rest } = props;
+  return (
+    <div className="relative">
+      <input
+        {...rest}
+        type={visible ? 'text' : 'password'}
+        className={cx('w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 pr-11 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-brix-500 focus:ring-2 focus:ring-brix-500/40', className)}
+      />
+      <button
+        type="button"
+        onClick={() => setVisible((v) => !v)}
+        className="absolute right-2 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+        aria-label={visible ? 'Hide password' : 'Show password'}
+      >
+        {visible ? (
+          <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M3 3l18 18" />
+            <path d="M10.6 10.6a2.8 2.8 0 0 0 3.9 3.9" />
+            <path d="M7.2 7.5C4.5 9.2 2.8 12 2.8 12s3.4 6.2 9.2 6.2c1.7 0 3.2-.5 4.5-1.2" />
+            <path d="M12.7 5.8c5.4.4 8.5 6.2 8.5 6.2a15.3 15.3 0 0 1-2.3 3.1" />
+          </svg>
+        ) : (
+          <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M2.8 12S6.2 5.8 12 5.8 21.2 12 21.2 12 17.8 18.2 12 18.2 2.8 12 2.8 12Z" />
+            <circle cx="12" cy="12" r="2.8" />
+          </svg>
+        )}
+      </button>
+    </div>
+  );
+}
 export function Textarea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
   return <textarea {...props} className={cx('w-full px-3.5 py-2.5 rounded-xl border border-slate-200 bg-white text-sm text-slate-900 placeholder:text-slate-400 outline-none focus:ring-2 focus:ring-brix-500/40 focus:border-brix-500 transition', props.className)} />;
 }

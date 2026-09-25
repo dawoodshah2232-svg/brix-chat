@@ -27,7 +27,7 @@ const PRACTICES = [
   },
   {
     title: 'Data retention on your terms',
-    body: 'Set automatic purging of history older than N days, export everything as JSON any time, or wipe the demo dataset with one confirmed click.',
+    body: 'Set automatic purging of history older than N days, export everything as JSON any time, or wipe the workspace dataset with one confirmed click.',
   },
 ];
 

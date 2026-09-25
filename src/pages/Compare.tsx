@@ -15,7 +15,7 @@ const ROWS: Row[] = [
   {
     feature: 'Setup time',
     traditional: 'Script install plus account tiers and per-seat provisioning.',
-    brix: 'One script tag; workspace, widget and demo data ready in minutes.',
+    brix: 'One script tag; workspace, widget and starter data ready in minutes.',
   },
   {
     feature: 'Pricing model',

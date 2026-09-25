@@ -9,8 +9,8 @@ let html = readFileSync('dist/404.html', 'utf8');
 
 const redirect = `<script>
 (function () {
-  // Keep 1 path segment (/brix-chat) then encode the rest into ?/
-  var pathSegmentsToKeep = 1;
+  // Root deployment: encode the full path into ?/ for static-host SPA fallback.
+  var pathSegmentsToKeep = 0;
   var l = window.location;
   l.replace(
     l.protocol + '//' + l.hostname + (l.port ? ':' + l.port : '') +

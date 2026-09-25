@@ -1,4 +1,4 @@
-// Brix Chat — chat queue bar (Conversation Operations pack, local demo).
+// Brix Chat — chat queue bar (Conversation Operations pack, local queue tools).
 // Shows waiting visitors with position numbers, estimated wait and
 // department, plus an agent capacity control ("max concurrent chats per agent").
 
@@ -13,16 +13,16 @@ export default function QueueBar() {
   const ws = effectiveWorkspaceId();
   const openChats = data.conversations.filter((c) => c.status === 'open').length;
   const { cfg, atCapacity, setMax, pushWaiting, dropWaiting } = useQueue(ws, openChats);
-  const [demoName, setDemoName] = useState('');
-  const [demoDept, setDemoDept] = useState(data.settings.departments[0] ?? 'Sales');
+  const [visitorName, setVisitorName] = useState('');
+  const [visitorDept, setVisitorDept] = useState(data.settings.departments[0] ?? 'Sales');
   const [showSettings, setShowSettings] = useState(false);
 
   const wait = estimatedWaitMins(cfg.waiting, cfg.maxConcurrent);
 
-  const addDemoVisitor = () => {
-    const name = demoName.trim() || 'Demo visitor';
-    pushWaiting({ id: uid('queue'), name, department: demoDept, waitingSince: Date.now() });
-    setDemoName('');
+  const addTestVisitor = () => {
+    const name = visitorName.trim() || 'Test visitor';
+    pushWaiting({ id: uid('queue'), name, department: visitorDept, waitingSince: Date.now() });
+    setVisitorName('');
   };
 
   return (
@@ -44,12 +44,12 @@ export default function QueueBar() {
         </span>
         <div className="ml-auto flex items-center gap-2">
           <div className="hidden sm:flex items-center gap-1.5">
-            <Input value={demoName} onChange={(e) => setDemoName(e.target.value)} placeholder="Add demo visitor…"
-              className="py-1 text-xs w-32" onKeyDown={(e) => { if (e.key === 'Enter') addDemoVisitor(); }} />
-            <Select value={demoDept} onChange={(e) => setDemoDept(e.target.value)} className="py-1 text-xs max-w-24">
+            <Input value={visitorName} onChange={(e) => setVisitorName(e.target.value)} placeholder="Add test visitor…"
+              className="py-1 text-xs w-32" onKeyDown={(e) => { if (e.key === 'Enter') addTestVisitor(); }} />
+            <Select value={visitorDept} onChange={(e) => setVisitorDept(e.target.value)} className="py-1 text-xs max-w-24">
               {data.settings.departments.map((d) => <option key={d} value={d}>{d}</option>)}
             </Select>
-            <Button size="sm" variant="secondary" onClick={addDemoVisitor}>+ Queue</Button>
+            <Button size="sm" variant="secondary" onClick={addTestVisitor}>+ Queue</Button>
           </div>
           <button
             onClick={() => setShowSettings((v) => !v)}
@@ -77,7 +77,7 @@ export default function QueueBar() {
             </div>
           </div>
           <p className="text-xs text-slate-500 max-w-sm">
-            When open chats reach this number, the bar shows an honest <strong>at capacity</strong> state and new visitors wait in line. Local demo — saved in this browser.
+            When open chats reach this number, the bar shows an honest <strong>at capacity</strong> state and new visitors wait in line. Saved in this browser.
           </p>
         </div>
       )}

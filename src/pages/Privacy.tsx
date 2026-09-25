@@ -14,7 +14,7 @@ const SECTIONS: Array<{ h: string; body: string[] }> = [
     h: 'What we store in local mode',
     body: [
       'Workspace data you create: websites, conversations and messages, contacts, tickets, knowledge-base articles, canned responses, triggers, campaigns, analytics derived from that data.',
-      'Access data: member names, roles, passcodes (stored in your browser so the demo login works), and session state.',
+      'Access data: member names, roles, passcodes (stored in your browser so local login works), and session state.',
       'Configuration and secrets you enter: widget settings, business hours, API keys, webhook secrets, third-party integration credentials. These are stored locally and displayed obfuscated.',
       'None of this leaves your device in local mode. There is no analytics beacon, no tracking pixel, and no account system on our side to receive it.',
     ],
@@ -41,7 +41,7 @@ const SECTIONS: Array<{ h: string; body: string[] }> = [
   {
     h: 'Data rights',
     body: [
-      'Because your data lives in your browser, you can exercise your rights directly: export everything (Admin \u2192 Data \u2192 Export), delete it (Reset demo data), or clear site data in your browser settings. For backend-phase accounts, deletion and portability requests will be handled through the dashboard and support.',
+      'Because your data lives in your browser, you can exercise your rights directly: export everything (Admin \u2192 Data \u2192 Export), delete it (Reset workspace data), or clear site data in your browser settings. For backend-phase accounts, deletion and portability requests will be handled through the dashboard and support.',
     ],
   },
   {

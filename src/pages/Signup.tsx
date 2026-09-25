@@ -4,7 +4,7 @@ import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useStore } from '../lib/store';
-import { Button, Card, Input, Label } from '../components/ui';
+import { Button, Card, Input, Label, PasswordInput } from '../components/ui';
 import Logo from '../components/Logo';
 
 export default function Signup() {
@@ -48,7 +48,7 @@ export default function Signup() {
           <form onSubmit={submit} className="mt-6 space-y-4">
             <div>
               <Label>Workspace name</Label>
-              <Input value={workspace} onChange={(e) => setWorkspace(e.target.value)} placeholder="acme" autoComplete="off" required />
+              <Input value={workspace} onChange={(e) => setWorkspace(e.target.value)} placeholder="your-workspace" autoComplete="off" required />
             </div>
             <div>
               <Label>Your display name</Label>
@@ -56,11 +56,11 @@ export default function Signup() {
             </div>
             <div>
               <Label>Passcode (min 4 characters)</Label>
-              <Input type="password" value={passcode} onChange={(e) => setPasscode(e.target.value)} placeholder="••••" minLength={4} autoComplete="new-password" required />
+              <PasswordInput value={passcode} onChange={(e) => setPasscode(e.target.value)} placeholder="••••" minLength={4} autoComplete="new-password" required />
             </div>
             <div>
               <Label>Confirm passcode</Label>
-              <Input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} placeholder="••••" minLength={4} autoComplete="new-password" required />
+              <PasswordInput value={confirm} onChange={(e) => setConfirm(e.target.value)} placeholder="••••" minLength={4} autoComplete="new-password" required />
             </div>
             <label className="flex items-center gap-2.5 text-sm text-slate-600 cursor-pointer select-none">
               <input

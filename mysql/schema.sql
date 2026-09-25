@@ -126,7 +126,8 @@
 --   explicit transaction (START TRANSACTION ... COMMIT).
 -- ============================================================================
 
-SET NAMES utf8mb4;
+SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci;
+SET collation_connection = 'utf8mb4_unicode_ci';
 SET time_zone = '+00:00';
 
 -- ============================================================================
@@ -1984,7 +1985,7 @@ seed_block: BEGIN
   DECLARE c_branding  CHAR(36) DEFAULT '114af841-627b-4fc7-ae3c-aa6a412f2802';
   DECLARE c_psettings CHAR(36) DEFAULT '9406428f-9831-4eba-a157-4d5e06eb916b';
 
-  IF EXISTS (SELECT 1 FROM workspaces WHERE slug = 'demo') THEN
+  IF EXISTS (SELECT 1 FROM workspaces WHERE slug COLLATE utf8mb4_unicode_ci = 'demo') THEN
     LEAVE seed_block;
   END IF;
 
@@ -2156,7 +2157,7 @@ seed_block: BEGIN
   DECLARE a_psettings CHAR(36) DEFAULT '2a3b4c5d-6e7f-4890-a1b2-c3d4e5f60718';
   DECLARE a_audit1    CHAR(36) DEFAULT '3b4c5d6e-7f80-49a1-b2c3-d4e5f6071829';
 
-  IF EXISTS (SELECT 1 FROM workspaces WHERE slug = 'acme') THEN
+  IF EXISTS (SELECT 1 FROM workspaces WHERE slug COLLATE utf8mb4_unicode_ci = 'acme') THEN
     LEAVE seed_block;
   END IF;
 

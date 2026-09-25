@@ -520,7 +520,7 @@ const LS_KEY = 'brixchat_api_v1';
 /** Thrown when a localStorage write fails because the browser quota is full. */
 export class StorageQuotaError extends Error {
   constructor() {
-    super('Browser storage is full — your change was not saved. Try deleting old voice notes, removing logos, or exporting and resetting demo data.');
+    super('Browser storage is full — your change was not saved. Try deleting old voice notes, removing logos, or exporting and resetting workspace data.');
     this.name = 'StorageQuotaError';
   }
 }
@@ -2642,7 +2642,7 @@ export class BrixApi {
     saveAll(all);
     return { data: { imported: true } };
   };
-  /** Reseed the workspace with demo data. */
+  /** Rebuild the workspace with seed data. */
   dataReset = async (): Promise<Envelope<{ reset: true }>> => {
     const db = seedWorkspace(this.workspace);
     db.audit = [{ id: uid('aud'), actor: this.actor, action: 'data.reset', entity: 'workspace', entity_id: this.workspace, meta: {}, created_at: isoNow() }];

@@ -6,7 +6,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useStore } from '../../lib/store';
 import { getApi } from '../../lib/api';
 import type { ApiNotification } from '../../lib/api';
-import { Avatar, Badge, Button, Input, Label, SearchInput, Toggle } from '../ui';
+import { Avatar, Badge, Button, Input, Label, PasswordInput, SearchInput, Toggle } from '../ui';
 import { cx, timeAgo } from '../../lib/utils';
 import { getTheme, setTheme, type Theme } from '../../lib/theme';
 import { BellIcon, ChevronDownIcon, CommandIcon, MenuIcon } from './icons';
@@ -217,11 +217,11 @@ function AgentMenu() {
               <div className="p-4 space-y-3 border-b border-slate-100">
                 <div>
                   <Label>Current passcode</Label>
-                  <Input type="password" value={currentPw} onChange={(e) => setCurrentPw(e.target.value)} />
+                  <PasswordInput value={currentPw} onChange={(e) => setCurrentPw(e.target.value)} />
                 </div>
                 <div>
                   <Label>New passcode (min 4)</Label>
-                  <Input type="password" value={newPw} onChange={(e) => setNewPw(e.target.value)} minLength={4} />
+                  <PasswordInput value={newPw} onChange={(e) => setNewPw(e.target.value)} minLength={4} />
                 </div>
                 {pwError && <p className="text-xs font-medium text-rose-600">{pwError}</p>}
                 {pwOk && <p className="text-xs font-medium text-emerald-600">✓ Passcode changed</p>}

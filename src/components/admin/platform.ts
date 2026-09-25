@@ -8,8 +8,8 @@
 // side are owned by the dashboard worker):
 //   session = { memberId, workspaceId, displayName, role,
 //               isPlatformAdmin, viewingWorkspaceId?, rememberMe, loggedInAt }
-//   - demo / 3456 → primary member has role 'owner' → isPlatformAdmin → /admin
-//   - acme / 7890 → normal client member → /app scoped to the acme workspace
+//   - platform owner workspace → isPlatformAdmin → /admin
+//   - client workspace member → /app scoped to that workspace
 //   - view-as: setViewingWorkspace(slug) then navigate to /app. The /app
 //     shell renders a "Viewing as <name> — Exit view-as" banner (dashboard
 //     worker). Exit clears viewingWorkspaceId (back in the admin topbar).

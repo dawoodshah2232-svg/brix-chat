@@ -22,7 +22,7 @@ const MEMBER_COLORS = ['#4f46e5', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#
 const EMBED_CODE = `<script>
   window.Brix_API = window.Brix_API || {};
 </script>
-<script async src="https://dawoodshah2232-svg.github.io/brix-chat/widget.js" data-property="bx_demo_7f3a9c1e"></script>`;
+<script async src="/widget.js" data-property="YOUR_PROPERTY_KEY"></script>`;
 
 const BUBBLE_CLASS: Record<SettingsData['widget']['bubble'], string> = {
   round: 'rounded-full',
@@ -389,7 +389,7 @@ function SoundNotifications({ agent }: { agent: string }) {
               <Button
                 size="sm"
                 variant="secondary"
-                onClick={() => fireIncomingMessage(agent, 'Demo visitor', 'Hi! Is anyone there? This is a simulated incoming message to test your sound + desktop settings.', '/app', { preview: true, messageId: `demo-${Date.now()}` })}
+                onClick={() => fireIncomingMessage(agent, 'Test visitor', 'Hi! Is anyone there? This is a simulated incoming message to test your sound + desktop settings.', '/app', { preview: true, messageId: `test-${Date.now()}` })}
               >
                 ✉ Simulate incoming message
               </Button>
@@ -777,14 +777,14 @@ export default function Settings() {
         <Textarea readOnly rows={2} value={EMBED_CODE} className="font-mono text-xs" />
         <div className="flex items-center gap-3 mt-3">
           <Button variant="secondary" onClick={copyEmbed}>{copied ? '✓ Copied' : 'Copy code'}</Button>
-          <span className="text-xs text-slate-500">Widget loads from GitHub Pages · key <code className="font-mono bg-slate-100 px-1 rounded">demo</code></span>
+          <span className="text-xs text-slate-500">Use your property key from Properties → Install</span>
         </div>
       </Card>
 
       {/* Advanced: copilot, security, data */}
       {store.session && <AdvancedSettings workspace={store.effectiveWorkspaceId()} actor={store.session.displayName} />}
 
-      {/* Conversation Operations: profanity filter (local demo) */}
+      {/* Conversation Operations: profanity filter */}
       <ProfanitySection />
 
       {/* Danger zone */}
@@ -792,12 +792,12 @@ export default function Settings() {
         <h2 className="text-base font-display font-bold text-rose-700">Danger zone</h2>
         <div className="flex items-center justify-between mt-3">
           <div>
-            <div className="text-sm font-semibold text-slate-900">Reset demo data</div>
-            <div className="text-xs text-slate-500">Restore all conversations, visitors and settings to the seed demo state.</div>
+            <div className="text-sm font-semibold text-slate-900">Reset workspace data</div>
+            <div className="text-xs text-slate-500">Restore conversations, visitors and settings to the initial seed state.</div>
           </div>
           <Button variant="danger" onClick={() => confirm({
-            title: 'Reset demo data',
-            body: 'All demo data will be replaced with the seed state. Your login stays. Continue?',
+            title: 'Reset workspace data',
+            body: 'All workspace data will be replaced with the initial seed state. Your login stays. Continue?',
             action: () => store.resetDemo(),
           })}>Reset</Button>
         </div>

@@ -1,6 +1,6 @@
 // Brix Chat — PLATFORM ADMIN console (/admin).
 // Two products, two logins: /admin is the operator console (platform admin,
-// role 'owner', demo / 3456). It sees EVERYTHING across all client workspaces.
+// role 'owner'). It sees platform-level workspace controls.
 // /app is the client dashboard, scoped to one workspace (dashboard worker).
 // Session model: { memberId, workspaceId, isPlatformAdmin, viewingWorkspaceId? }.
 // View-as: a platform admin sets viewingWorkspaceId and jumps to /app; the
@@ -13,7 +13,7 @@ import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStore, effectiveWorkspaceId } from '../lib/store';
 import { getApi, ApiError } from '../lib/api';
-import { Badge, Button, Card, EmptyState, Input, Label, Modal, Select, StatCard, Textarea, Toggle, useConfirm } from '../components/ui';
+import { Badge, Button, Card, EmptyState, Input, Label, Modal, PasswordInput, Select, StatCard, Textarea, Toggle, useConfirm } from '../components/ui';
 import { cx } from '../lib/utils';
 // Phase-4 admin elevation kit (all local, no new deps).
 import { ToastProvider, useToast } from '../components/admin/toast';
@@ -1060,8 +1060,8 @@ function SystemTab() {
 
   const doReset = () => {
     confirm({
-      title: 'Reset all demo data?',
-      body: 'Every workspace DB, the client registry, plans, settings and the error log in THIS browser will be wiped and reseeded on reload. This cannot be undone.',
+      title: 'Reset all workspace data?',
+      body: 'Every workspace DB, the client registry, plans, settings and the error log in THIS browser will be wiped and rebuilt on reload. This cannot be undone.',
       action: () => { resetAllData(); window.location.reload(); },
     });
   };
@@ -1097,7 +1097,7 @@ function SystemTab() {
           <p className="text-xs text-slate-500 mb-4">Everything lives in this browser's localStorage.</p>
           <div className="flex flex-wrap gap-2">
             <Button variant="secondary" size="sm" onClick={doExport}>Export all (JSON)</Button>
-            <Button variant="danger" size="sm" onClick={doReset}>Reset demo data…</Button>
+            <Button variant="danger" size="sm" onClick={doReset}>Reset workspace data…</Button>
           </div>
           <dl className="mt-4 space-y-2 text-sm">
             <div className="flex justify-between"><dt className="text-slate-500">localStorage used</dt><dd className="font-bold">{(storage.bytes / 1048576).toFixed(2)} MB</dd></div>
@@ -1140,13 +1140,7 @@ function SystemTab() {
                   </div>
                   {saved && <div className="text-xs font-mono text-slate-500 mt-0.5">{masked(saved)}</div>}
                 </div>
-                <Input
-                  type="password"
-                  className="w-56"
-                  placeholder={saved ? 'Replace key…' : 'Paste key…'}
-                  value={drafts[def.id] ?? ''}
-                  onChange={(e) => setDrafts((d) => ({ ...d, [def.id]: e.target.value }))}
-                />
+                <PasswordInput className="w-56" placeholder={saved ? 'Replace key…' : 'Paste key…'} value={drafts[def.id] ?? ''} onChange={(e) => setDrafts((d) => ({ ...d, [def.id]: e.target.value }))} />
                 <Button size="sm" variant="secondary" onClick={() => saveKey(def.id)} disabled={!(drafts[def.id] ?? '').trim() && !saved}>
                   {saved ? 'Update' : 'Save'}
                 </Button>
@@ -1427,8 +1421,7 @@ function AdminInner() {
           <div className="text-4xl mb-3">🛡️</div>
           <h1 className="text-lg font-extrabold text-slate-900 mb-2">Platform admin only</h1>
           <p className="text-sm text-slate-500 mb-5">
-            The operator console needs a platform-admin session. Sign in as the owner
-            (workspace <span className="font-mono font-bold">demo</span>) to continue.
+            The operator console needs a platform-admin session to continue.
           </p>
           <div className="flex justify-center gap-2">
             <Button variant="secondary" onClick={() => navigate('/login')}>Go to login</Button>
