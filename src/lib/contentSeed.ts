@@ -21,6 +21,8 @@ export interface BlogSeed {
   published: boolean;
   reading_mins: number;
   category_id?: string;
+  /** Relative path under public/, e.g. 'images/blog/my-post.jpg'. Rendered as the article cover. */
+  cover_image?: string;
 }
 
 export interface HelpSeed {
@@ -699,6 +701,84 @@ Visitors do not owe your widget a conversation. Earn the first message the way y
     published: true,
     reading_mins: 5,
   },
+  {
+    slug: 'multilingual-support-chat',
+    title: 'One chat window, five languages: multilingual support without a multilingual team',
+    excerpt:
+      'Your customers already write in Arabic, Hindi, Urdu, and Tagalog — especially when something goes wrong. You do not need a polyglot team to answer them. Here is the practical setup: one knowledge base in your team\u2019s language, translation in the chat flow, and honest guardrails where accuracy matters.',
+    body: `## The short answer
+
+Write your answers once, in the language your team can actually review. Then put translation where it belongs — inside the chat flow, on both sides — with clear guardrails where accuracy matters. That is the whole setup. Everything below is what goes wrong when teams skip a piece of it.
+
+## Your customers already chat in five languages
+
+Check the transcripts of any store serving the Gulf, South Asia, or a decent share of Europe. The pattern is always the same: customers browse in English and write in whatever language they think fastest in, the moment something goes wrong. Stress makes people switch to their strongest language. A chat widget that only really works in English is a widget that works worst exactly when the customer needs it most.
+
+The instinct is to hire for it: one Arabic-speaking agent, one Hindi-speaking agent, coverage for Urdu, Tagalog, French. Do the math on night shifts and weekends and the hiring plan collapses. Multilingual support is not a staffing problem. It is a workflow problem.
+
+## The one-language knowledge base
+
+This is the decision everything else hangs on. Your knowledge base — the answers your bot draws from and your agents copy from — exists in exactly one language: the one your team reads well enough to review, approve, and fix.
+
+Resist the urge to translate the whole knowledge base. A translated KB is a maintenance trap: every edit now exists in two (or five) versions, they drift apart within a quarter, and nobody can tell you which language holds the current answer. One source of truth, reviewed by people who understand it, translated on the way out.
+
+One exception: legal and policy pages. Refund terms, warranty language, data policies. If you have these in the customer's language, link them. Never let a bot paraphrase a translation of a policy.
+
+## Where translation actually lives
+
+There are three translation points in a chat, and they do three different jobs.
+
+**Inbound — customer to team.** The visitor writes in Arabic; your agent reads it in English. The agent works at full speed in their strongest language, which is the only language that matters for their side of the keyboard.
+
+**Outbound — team to customer.** The agent writes in English; the visitor reads it in Arabic. Your agent never has to doubt their phrasing in a language they half-remember from school.
+
+**Bot answers.** The bot draws from your one-language knowledge base and delivers the answer in the visitor's language. This is the piece that has quietly become table stakes: the major chat platforms all ship some form of this in 2026, and customers have started assuming it exists.
+
+Keep those three separate in your head, because they fail in different ways and you will debug them differently.
+
+## The honesty guardrails
+
+Translation is good enough for conversation and not good enough for commitments. Draw the line explicitly:
+
+- **Numbers, dates, prices, order numbers.** Never trust these to translation alone. An order number survives translation fine; a translated sentence *about* an order number does not. When it matters, show the original alongside the translation.
+- **Refunds, cancellations, legal answers.** The bot links the source text in the customer's language when you have it, or hands to a human. It does not paraphrase a translation of a policy. Ever.
+- **Low confidence.** When the translation layer is unsure — mixed languages in one message, heavy dialect, a garbled paste — the honest move is for the bot to say so and offer a human. Customers forgive "I want to make sure I get this exactly right, let me bring in a teammate" far faster than they forgive a confident wrong answer.
+
+> A bot that admits uncertainty is a trust feature. A bot that translates badly with confidence is a churn feature.
+
+## The details that break naive translation
+
+**Formality and register.** Getting the *tu/vous* distinction wrong in French, the formal register wrong in Arabic, or dropping honorifics a customer expects — these read as rudeness, not as minor errors. Set the tone per language once, with a native speaker, and lock it in.
+
+**Dialects.** Your customers do not write textbook Arabic. They write Gulf dialect, Egyptian slang, romanized Urdu. Translation handles standard language well and dialects poorly. Log what fails, and add the real phrasing to your canned replies in the customer's own words. Your weekly unanswered-questions review is a dialect goldmine.
+
+**Right-to-left layouts.** Arabic and Urdu flip the reading direction. Mixed messages — an Arabic sentence containing an order number and a Latin product name — render in the wrong order if your widget assumes left-to-right. Test it with real RTL messages. Do not assume.
+
+**The do-not-translate list.** Product names, plan names, brand terms, and the customer's own name must never pass through translation. Keep an explicit list. "Premium Plan" becoming a translated phrase in the middle of an English checkout flow is the kind of bug that costs real money and looks absurd in a screenshot.
+
+## Running it day to day
+
+- **Detect, don't ask.** Read the visitor's language from their first message. A "select your language" gate before the first message is a pre-chat form with extra steps, and it loses the same way.
+- **Set a default per property.** Your UAE storefront defaults to a different pair of languages than your European one. Configure that at the property level, not globally.
+- **Tag conversations with the detected language.** This is how you learn which languages actually show up, instead of the ones you guessed in a meeting. Review the distribution monthly and staff your human backup accordingly.
+- **Keep one canned-response set per language you actually serve.** Written by a native speaker, reviewed yearly. A machine-translated canned reply that nobody re-reads is worse than no canned reply — it is a wrong answer delivered instantly, with confidence.
+- **Review failed translations weekly.** The unanswered-questions log shows you exactly where the layer broke. Each fix compounds.
+
+## What to measure
+
+Resolution rate by language. If Arabic chats resolve worse than English ones, you do not have a customer problem — you have a translation or knowledge-base problem, and now you know where to look. First-response time by language tells you whether the translation layer is adding latency your agents are quietly working around.
+
+And skip the vanity version: nobody's customers are impressed that you "support 40 languages." Support the five your customers actually use, properly, with humans behind the bot where it counts.
+
+## The takeaway
+
+Multilingual support was never really a hiring plan. It is a workflow: one reviewed knowledge base, translation living in the chat layer on both sides, hard guardrails where accuracy matters, and a human on standby for the moments translation can't carry. The customers who needed help in their own language were always there. Now they can actually reach you.`,
+    tags: ['ai', 'agents', 'workflow'],
+    author: 'Tariq Aziz',
+    published: true,
+    reading_mins: 6,
+    cover_image: 'images/blog/multilingual-support-chat.jpg',
+  },
 ];
 
 export const HELP_SEED: HelpSeed[] = [
@@ -981,6 +1061,7 @@ export interface ApiTicket2 {
 export interface ApiBlogPost2 {
   id: string; slug: string; title: string; excerpt: string; body: string; tags: string[];
   author: string; published: boolean; reading_mins: number; created_at: number; updated_at: number;
+  cover_image?: string;
 }
 export interface ApiHelpArticle2 {
   id: string; slug: string; title: string; body: string; category: string; order: number; updated_at: number;

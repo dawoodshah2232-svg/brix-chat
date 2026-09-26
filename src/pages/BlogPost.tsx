@@ -170,6 +170,16 @@ export default function BlogPost() {
             <span key={t} className="text-[11px] font-semibold bg-brix-50 text-brix-700 rounded-full px-2.5 py-1">{t}</span>
           ))}
         </div>
+        {post.cover_image && (
+          <figure className="mt-8 overflow-hidden rounded-3xl border border-slate-200">
+            <img
+              src={`${import.meta.env.BASE_URL}${post.cover_image}`}
+              alt={post.title}
+              className="w-full h-auto"
+              loading="lazy"
+            />
+          </figure>
+        )}
         <hr className="my-10 border-slate-200" />
         <RichText body={post.body} />
         <AuthorBox author={post.author} />
