@@ -647,7 +647,75 @@ And skip the vanity version: nobody's customers are impressed that you "support 
 
 ## The takeaway
 
-Multilingual support was never really a hiring plan. It is a workflow: one reviewed knowledge base, translation living in the chat layer on both sides, hard guardrails where accuracy matters, and a human on standby for the moments translation can't carry. The customers who needed help in their own language were always there. Now they can actually reach you.`,tags:[`ai`,`agents`,`workflow`],author:`Tariq Aziz`,published:!0,reading_mins:6,cover_image:`images/blog/multilingual-support-chat.jpg`}],ym=[{slug:`create-workspace`,title:`Create your workspace`,body:`## What a workspace is
+Multilingual support was never really a hiring plan. It is a workflow: one reviewed knowledge base, translation living in the chat layer on both sides, hard guardrails where accuracy matters, and a human on standby for the moments translation can't carry. The customers who needed help in their own language were always there. Now they can actually reach you.`,tags:[`ai`,`agents`,`workflow`],author:`Tariq Aziz`,published:!0,reading_mins:6,cover_image:`images/blog/multilingual-support-chat.jpg`},{slug:`chat-transcripts-product-roadmap`,title:`Your chat transcripts are a product roadmap: how to read them like one`,excerpt:`Your next product decision is already written down — phrased by the people who trip over the gaps. Surveys ask for opinions; chat transcripts hand you behavior, captured mid-frustration. Here is how to read them like a researcher.`,body:`## The short answer
+
+Your chat history is the most honest research material your company owns. Not your surveys, not your feature-request box, not your analytics dashboard. The chat window is where a confused person explains, in their own words, exactly where your product failed them — while it is still happening. Most teams file that material away as "support" and never read it twice. Read it like a product researcher and it starts telling you what to build next.
+
+## Surveys ask; transcripts show
+
+A survey collects opinions after the fact. A transcript captures behavior while it is happening. The difference matters more than it sounds.
+
+Nobody in a survey writes "I clicked the green button because I thought the blue one was the ad." In a chat they write exactly that, at minute two, before they have thought about how it sounds. That is the difference between a rated experience and an observed one — and it is why teams that run voice-of-customer programs keep expanding them beyond surveys into direct interaction analysis. Enthu.AI's survey of VoC practice found that by 2025, 60% of organizations with VoC programs had moved beyond surveys to analyzing voice and text interactions directly.
+
+Your chat channel is also where the volume lives. Live chat remains the preferred support channel for a large share of customers — Kayako's survey data puts it at 41%, ahead of phone at 32% and email at 23% — and it resolves issues roughly 2.5x faster than email or phone (Gitnux benchmarks). Fast, high-volume, and written in the customer's own words: that is a research feed, not a cost center.
+
+## Why feature-request boxes cannot compete
+
+A feature-request box collects the wishes of your most motivated 1%. They are the power users, the complainers, the ones with time. The other 99% never visit it — they just get confused, work around the problem, and quietly churn.
+
+Chat captures the confused majority at the moment of confusion. The shopper who abandons the request box but opens chat to ask "does this work with my model?" is telling you that your compatibility page failed. The trial user asking "is this included in my plan?" is telling you your pricing page failed. These are not feature requests. They are usability verdicts, delivered unprompted, in plain language. No survey question could have been phrased well enough to catch them, because you did not know to ask.
+
+## The sorting problem: four buckets
+
+Reading transcripts one by one does not scale, and themes that "feel frequent" are a trap. Before you read a single transcript, define four buckets and sort every finding into one of them:
+
+**Bug.** The product does not do what it says. An error page, a broken link, a discount that does not apply. These are support's job to escalate, not yours to debate — but the product lesson is the same: count them, fix the cluster, watch the count drop.
+
+**Confusion.** The product works, but the customer cannot tell how. "Where do I find the invoice?" for an invoice button three menus deep. Confusion is the most valuable bucket and the most ignored: the product is fine, the communication around it is not, and every confused customer is a doc page, an empty state, or a label rewrite waiting to happen.
+
+**Missing feature.** "Can I export this as PDF?" They understood the product; they want it to do more. This is the roadmap signal — but only when it repeats across many customers, not when one power user is insistent.
+
+**Expectation mismatch.** The customer expected something the product never promised. "I thought the trial included the API." This is a marketing and onboarding problem: your homepage, your onboarding emails, or your sales demo set an expectation the product does not meet. Fix the promise or fix the product, but do not fix the wrong one.
+
+Separate these explicitly, because they fail in different ways and get fixed by different people. A missing feature is not a bug, and treating a confusion cluster as a feature request builds the wrong thing.
+
+## How to actually read them: the monthly sample
+
+You do not need tooling to start. You need one afternoon a month and fifty transcripts.
+
+1. **Sample, don't skim.** Pull 50 conversations from the last month — a random slice, not the memorable ones. Your memory of "the big complaints" is biased toward the loud ones.
+2. **Tag each one with a bucket and a theme.** Themes are short: "invoice location," "plan limits unclear," "export PDF." Keep the customer's exact words next to the tag. Exact quotes are evidence; your paraphrase is not.
+3. **Count customers, not messages.** One angry customer who mentions a theme eight times is one data point, not eight. Rank themes by how many *different people* raised them.
+4. **Separate explicit from implied.** "Please add PDF export" is explicit. "I had to copy everything into a document" is implied — and often the richer signal, because it describes the workaround the product forced.
+5. **Flag the churn language.** Comparing you to a competitor, "considering canceling," escalating tone across messages from the same person. These are early warnings, not roadmap items — they go to customer success today, not the backlog next quarter.
+
+That is the whole method. A team of two can run it in an afternoon. The five-stage version of this — export, filter, build a theme taxonomy, classify, score by business impact — is what formal VoC programs do, but the informal version catches most of the value.
+
+## The watch-list rule
+
+Not every theme is an action. Be explicit about thresholds or everything becomes "feedback."
+
+- **One mention:** put it on the watch list. Say so out loud: "one mention, weak signal." Do not build on it; do check whether it repeats next month.
+- **Five mentions:** investigate. Talk to one of the customers, try the flow yourself, reproduce the confusion. Often the fix is a sentence, not a sprint.
+- **Twenty mentions:** it belongs in the backlog with a real rank. Twenty different customers tripping over the same thing is not an opinion. It is data.
+
+The trap to avoid is the loud one: the customer who writes a three-page email is not twenty customers. Frequency across people is the metric; volume of words is not.
+
+## Closing the loop: the compounding part
+
+The teams that get value from this do one thing the rest skip: they check whether the theme's share shrank after the fix.
+
+Ship the label rewrite, then count how many of next month's fifty transcripts still land in that theme. If it went from nine to two, you just proved your product team can read. If it stayed at nine, your fix missed and you learned something before spending more. This is the difference between "we listen to customers" and an actual feedback loop — the second one has a denominator.
+
+Share the trend, too. Support teams that see their transcripts move the roadmap start tagging conversations properly without being asked. Nothing improves your research feed like the people producing it knowing it gets read.
+
+## What to do Monday morning
+
+Pull fifty transcripts from last month. Tag them into the four buckets. Rank themes by customers, not messages. Take the top theme and reproduce it yourself, live, in your own product. If you trip over the same thing, you have your first roadmap item — sourced, evidenced, and quoted in the customer's own words. Total time: an afternoon. Cost: zero.
+
+## The takeaway
+
+Your customers have been writing your product roadmap for years, one chat at a time. They phrased it plainly, stamped it with their frustration, and left it in a folder labeled "support" that nobody reads twice. The product teams that read it are not doing anything exotic — they are just treating the chat window as what it is: the largest unedited interview study a company will ever run, handed to them for free, every single day.`,tags:[`analytics`,`product`],author:`Nadia Rahman`,published:!0,reading_mins:6,cover_image:`images/blog/chat-transcripts-product-roadmap.jpg`}],ym=[{slug:`create-workspace`,title:`Create your workspace`,body:`## What a workspace is
 
 A workspace holds everything for one business: websites, chats, team members, settings. Most teams need exactly one.
 
