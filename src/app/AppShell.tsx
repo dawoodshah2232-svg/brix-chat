@@ -374,7 +374,7 @@ export default function AppShell() {
           onPalette={() => setPaletteOpen(true)}
           onHelp={() => setHelpOpen(true)}
         />
-        <main className="flex-1 min-h-0 overflow-y-auto slim-scroll pb-20 lg:pb-0">
+        <main data-scroll-root className="flex-1 min-h-0 overflow-y-auto slim-scroll pb-20 lg:pb-0">
           <Outlet />
         </main>
 

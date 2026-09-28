@@ -69,6 +69,28 @@ function Titled({ title, children }: { title: string; children: React.ReactNode 
   return <>{children}</>;
 }
 
+/**
+ * Every page change starts at the top: the window (public pages) and any
+ * [data-scroll-root] panel (the workspace content area scrolls on its own).
+ * Links with a #hash scroll to that element instead.
+ */
+function ScrollToTop() {
+  const { pathname, hash } = useLocation();
+  useEffect(() => {
+    if (hash) {
+      const target = document.getElementById(decodeURIComponent(hash.slice(1)));
+      if (target) {
+        target.scrollIntoView();
+        return;
+      }
+    }
+    // 'instant': the page CSS sets smooth scrolling, which would visibly glide up.
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+    document.querySelectorAll('[data-scroll-root]').forEach((el) => el.scrollTo({ top: 0, left: 0, behavior: 'instant' }));
+  }, [pathname, hash]);
+  return null;
+}
+
 /** Old /app/<page> links → /workspace/<page> (welcome → dashboard). */
 function LegacyAppRedirect() {
   const { pathname, search } = useLocation();
@@ -89,11 +111,15 @@ function NotFound() {
   );
 }
 
+// Routes follow the build's base path: '/' locally, '/brixchat/' on bridgingfx.com.
+const ROUTER_BASENAME = import.meta.env.BASE_URL.replace(/\/+$/, '') || undefined;
+
 export default function App() {
   return (
     <StoreProvider>
       <AdminAuthProvider>
-      <BrowserRouter>
+      <BrowserRouter basename={ROUTER_BASENAME}>
+        <ScrollToTop />
         <Routes>
           <Route element={<MarketingLayout />}>
             <Route index element={<Titled title="Live chat software for modern teams"><Landing /></Titled>} />
