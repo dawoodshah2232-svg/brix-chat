@@ -1,0 +1,151 @@
+name: Deploy to cPanel
+
+# Deploys Brix Chat to bridgingfx.com/brixchat on every push to main.
+#
+#   ~/brixchat/api/                          Laravel API (outside public_html; .env lives here)
+#   ~/brixchat/mysql/schema.sql              base schema, installed once into an empty database
+#   public_html/bridgingfx.com/brixchat/     dashboard (built React app)
+#   public_html/bridgingfx.com/brixchat/backend -> ~/brixchat/api/public   (API entry)
+#
+# One-time server setup (database, .env, SSH key, cron): docs/CPANEL_DEPLOY.md.
+#
+# Secrets (same names as the BridgingFX-Website repo): CPANEL_HOST, CPANEL_PORT,
+# CPANEL_USER, CPANEL_SSH_KEY. Optional repository variables override the defaults
+# below: BRIXCHAT_URL, BRIXCHAT_BASE_PATH, BRIXCHAT_APP_DIR, BRIXCHAT_WEB_DIR, CPANEL_PHP.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-brixchat
+  cancel-in-progress: false
+
+env:
+  BRIXCHAT_URL: ${{ vars.BRIXCHAT_URL || 'https://bridgingfx.com/brixchat' }}
+  BASE_PATH: ${{ vars.BRIXCHAT_BASE_PATH || '/brixchat/' }}
+  APP_DIR: ${{ vars.BRIXCHAT_APP_DIR || 'brixchat' }}
+  WEB_DIR: ${{ vars.BRIXCHAT_WEB_DIR || 'public_html/bridgingfx.com/brixchat' }}
+  CPANEL_PHP: ${{ vars.CPANEL_PHP || 'php' }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Build dashboard
+        env:
+          VITE_API_URL: ${{ env.BRIXCHAT_URL }}/backend/api
+        run: |
+          npm ci
+          npx tsc -b
+          npx vite build --base "$BASE_PATH"
+          test -f dist/.htaccess   # public/.htaccess: Apache routing for the dashboard
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.1'   # matches the server (Laravel 10 on PHP 8.1)
+          tools: composer:v2
+
+      - name: Install API dependencies
+        working-directory: api
+        run: composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction --no-progress
+
+      - name: Prepare SSH
+        env:
+          CPANEL_HOST: ${{ secrets.CPANEL_HOST }}
+          CPANEL_PORT: ${{ secrets.CPANEL_PORT || '22' }}
+          CPANEL_SSH_KEY: ${{ secrets.CPANEL_SSH_KEY }}
+        run: |
+          test -n "$CPANEL_HOST"
+          test -n "$CPANEL_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$CPANEL_SSH_KEY" > ~/.ssh/cpanel_key
+          chmod 600 ~/.ssh/cpanel_key
+          ssh-keyscan -p "$CPANEL_PORT" "$CPANEL_HOST" >> ~/.ssh/known_hosts
+
+      - name: Upload API
+        env:
+          CPANEL_HOST: ${{ secrets.CPANEL_HOST }}
+          CPANEL_PORT: ${{ secrets.CPANEL_PORT || '22' }}
+          CPANEL_USER: ${{ secrets.CPANEL_USER }}
+        run: |
+          test -n "$CPANEL_USER"
+          SSH="ssh -i ~/.ssh/cpanel_key -p $CPANEL_PORT"
+          $SSH "$CPANEL_USER@$CPANEL_HOST" "mkdir -p '$APP_DIR/api' '$APP_DIR/mysql'"
+          # .env, storage/ (logs, sessions, uploads) and compiled caches stay on the server.
+          rsync -az --delete -e "$SSH" \
+            --exclude '/.env' --exclude '/.env.*' \
+            --exclude '/storage/' --exclude '/bootstrap/cache/*.php' \
+            --exclude '/public/storage' --exclude '/tests/' --exclude '/node_modules/' \
+            api/ "$CPANEL_USER@$CPANEL_HOST:$APP_DIR/api/"
+          rsync -az -e "$SSH" mysql/schema.sql "$CPANEL_USER@$CPANEL_HOST:$APP_DIR/mysql/schema.sql"
+
+      - name: Update database and caches
+        env:
+          CPANEL_HOST: ${{ secrets.CPANEL_HOST }}
+          CPANEL_PORT: ${{ secrets.CPANEL_PORT || '22' }}
+          CPANEL_USER: ${{ secrets.CPANEL_USER }}
+        run: |
+          ssh -i ~/.ssh/cpanel_key -p "$CPANEL_PORT" "$CPANEL_USER@$CPANEL_HOST" \
+            "APP_DIR='$APP_DIR' WEB_DIR='$WEB_DIR' PHP='$CPANEL_PHP' bash -s" <<'REMOTE'
+          set -euo pipefail
+          APP="$HOME/$APP_DIR/api"
+          WEB="$HOME/$WEB_DIR"
+          cd "$APP"
+
+          if [ ! -f .env ]; then
+            echo "::error::$APP/.env is missing. Create it once on the server (docs/CPANEL_DEPLOY.md, step 4)."
+            exit 1
+          fi
+          if ! "$PHP" -r 'exit(version_compare(PHP_VERSION, "8.1.0", ">=") ? 0 : 1);'; then
+            echo "::error::PHP 8.1+ is required on the server, found: $("$PHP" -r 'echo PHP_VERSION;'). Set the CPANEL_PHP repository variable (docs/CPANEL_DEPLOY.md)."
+            exit 1
+          fi
+
+          mkdir -p storage/app/public storage/framework/cache/data storage/framework/sessions \
+                   storage/framework/views storage/framework/testing storage/logs bootstrap/cache
+
+          # Maintenance mode while the database changes; always lifted, even on failure.
+          "$PHP" artisan down --retry=15 || true
+          trap '"$PHP" artisan up >/dev/null 2>&1 || true' EXIT
+
+          "$PHP" artisan config:clear
+          "$PHP" artisan brix:install-schema   # no-op once the tables exist
+          "$PHP" artisan migrate --force
+          "$PHP" artisan db:seed --force        # idempotent: plans (+ admin from .env on first run)
+          "$PHP" artisan config:cache
+          "$PHP" artisan route:cache
+
+          # Public entry for the API: $WEB/backend -> $APP/public
+          mkdir -p "$WEB"
+          ln -sfn "$APP/public" "$WEB/backend"
+          REMOTE
+
+      - name: Upload dashboard
+        env:
+          CPANEL_HOST: ${{ secrets.CPANEL_HOST }}
+          CPANEL_PORT: ${{ secrets.CPANEL_PORT || '22' }}
+          CPANEL_USER: ${{ secrets.CPANEL_USER }}
+        run: |
+          rsync -az --delete -e "ssh -i ~/.ssh/cpanel_key -p $CPANEL_PORT" \
+            --exclude '/backend' \
+            dist/ "$CPANEL_USER@$CPANEL_HOST:$WEB_DIR/"
+
+      - name: Check the live site
+        run: |
+          curl -fsS "$BRIXCHAT_URL/backend/api/health" | grep -q '"ok":true'
+          curl -fsS -o /dev/null "$BRIXCHAT_URL/"
+          curl -fsS -o /dev/null "$BRIXCHAT_URL/login"
+          echo "Live: $BRIXCHAT_URL"
