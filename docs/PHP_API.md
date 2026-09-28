@@ -1,16 +1,14 @@
-# Brix Chat — Plain-PHP REST API
+# Brix Chat — Workspace REST API
 
-Single-entry PHP 8 + PDO (MySQL/MariaDB) port of the Brix Chat backend. No
-framework, no Composer — deployable on plain cPanel shared hosting.
+The workspace (client dashboard) API, served by Laravel 10 in `api/`
+(`app/Http/Controllers/Workspace/*`). It was converted from the original
+plain-PHP API with the same URLs, request bodies, responses and error codes,
+so this reference is unchanged.
 
-- Entry point: `api/index.php` (clean URLs via `api/.htaccess`:
-  `/api/<route>` → `index.php?route=<route>`).
-- Dev/test: `php -S 127.0.0.1:8099 api/router.php` (the `.htaccess` does not
-  apply to PHP's built-in server; `router.php` performs the same
-  `/api/<route>` → `?route=` translation and never serves `config.php` raw).
-- Config: copy `api/config.sample.php` to `api/config.php` (git-ignored) and
-  fill in DB credentials + `APP_SECRET`.
-- Schema: `mysql/schema.sql` (35 tables). The API follows it exactly.
+- Dev: `cd api && php artisan serve --port=8099` (see `api/README.md`).
+- Config: `api/.env` (DB credentials, `APP_SECRET`, `SITE_ORIGIN`, AI keys,
+  mail); `api/config/brix.php` lists every setting.
+- Schema: `mysql/schema.sql` plus the Laravel migrations in `api/database/migrations`.
 
 ## 1. Envelopes
 
@@ -20,7 +18,7 @@ Success: `{ "data": <T> }`. Lists: `{ "data": { "items": [...],
 Errors: `{ "error": { "code": "<code>", "message": "<msg>" } }` with HTTP
 status. Codes: `validation` (422), `not_found` (404), `conflict` (409),
 `unauthorized` (401), `gone` (410), `not_supported` (501), `not_configured`
-(501), `supabase_error` (500), plus `ai_*` / `email_failed` for the AI and
+(501), `server_error` (500), plus `ai_*` / `email_failed` for the AI and
 email endpoints.
 
 ## 2. Pagination
@@ -404,10 +402,12 @@ account) and embed its token in the widget bundle — or front the widget
 paths with public-key-scoped tokens (not implemented; `secure_mode` on the
 property is reserved for it).
 
-## 10. Deviations from the Supabase transport (documented)
+## 10. Server-side limitations (documented)
 
 - `webhooks.property_id` is `NOT NULL` (FK) in `mysql/schema.sql`, so webhook
   create requires `property_id`; workspace-wide webhooks are not representable.
+- `triggers.property_id` is `NOT NULL`, so trigger create requires
+  `property_id` (422 without it).
 - `unanswered_questions` requires `conversation_id` (schema NOT NULL
   `property_id`); without one the API returns 501 `not_supported`.
 - Ticket merge/split links live in `audit_log` (no `parent_id` column).
@@ -419,9 +419,8 @@ property is reserved for it).
 
 ## 11. Frontend transport (`VITE_API_URL`)
 
-The React frontend (`src/lib/`) can use this PHP API as a drop-in transport
-behind the same `BrixApi` interface the localStorage and Supabase transports
-implement. Wiring lives in three files:
+The React frontend (`src/lib/`) uses this API as a drop-in transport behind
+the same `BrixApi` interface the localStorage transport implements. Wiring lives in three files:
 
 - `src/lib/php-client.ts` — low-level `fetch()` client: `{data}` unwrapping,
   `{items,next_cursor}` pagination, error mapping, Bearer <redacted> handling,
@@ -436,11 +435,10 @@ implement. Wiring lives in three files:
 
 `getTransport(workspace, actor)` picks, in order:
 
-1. **Supabase** — when `VITE_SUPABASE_URL` **and** `VITE_SUPABASE_ANON_KEY`
-   are both set.
-2. **PHP API** — when `VITE_API_URL` is set (e.g.
-   `VITE_API_URL=https://example.com/api`).
-3. **localStorage** — the default when neither is set. The GitHub Pages /
+1. **Laravel API** — when `VITE_API_URL` is set (e.g.
+   `VITE_API_URL=https://example.com/api`), or on localhost (defaults to
+   `http://127.0.0.1:8099/api`).
+2. **localStorage** — otherwise. The GitHub Pages /
    local demo behaves exactly as before; no `VITE_API_URL` means no network
    calls, no token, no polling.
 
@@ -449,9 +447,8 @@ implement. Wiring lives in three files:
 PHP has no realtime transport, so `ensurePhpPolling()` (started by the
 `PhpBrixApi` constructor and armed by the store while a session exists)
 polls `GET /updates?since=<ISO-8601>` roughly every **5 seconds** and feeds
-`conversations` / `messages` / `visitors` events into the shared
-`onRemoteChange` bus — the same callback behavior as the Supabase transport
-(`api.ts` merges both buses into one `onRemoteChange()` export). Ticks are
+`conversations` / `messages` / `visitors` events into the
+`onRemoteChange()` bus exported by `api.ts`. Ticks are
 skipped quietly until login (no token yet) and polling never throws: a failed
 tick is retried on the next interval.
 
@@ -476,7 +473,7 @@ tick is retried on the next interval.
 
 `PhpBrixApi` wraps every remote call in `guardPhp()`: transport failures
 (server unreachable, 5xx, …) fall back to the localStorage implementation
-with a `console.warn`, exactly like the Supabase transport. Data errors
+with a `console.warn`. Data errors
 propagate — `validation` / `not_found` / `conflict` / `not_supported` /
 `unauthorized` / `auth_expired` — never silently. Login is remote-first:
 bad credentials (401/403) never fall back to the local demo.
@@ -484,14 +481,13 @@ bad credentials (401/403) never fall back to the local demo.
 ### Known limitations of this transport
 
 - Ticket `setParent` / `related` / `split` keep the localStorage
-  implementation (parent/relation links are not representable server-side),
-  exactly like the Supabase transport. `split` exists server-side but is not
-  wired, to keep the override set identical across transports.
+  implementation (parent/relation links are not representable server-side).
+  `split` exists server-side but is not wired.
 - `unanswered.add()` without a conversation throws 501 `not_supported`
   (the API requires `conversation_id`).
 - `properties.enabled` is a local-only flag (no server column); updates strip
   it before PATCH.
 - `ratings.summary()` is computed client-side from the remote ratings list
-  (same math as the Supabase transport).
+  (same math as the server endpoint).
 - `conversations.sendMessage()` maps the `ai` sender to `system` to match the
   server's rewrite.

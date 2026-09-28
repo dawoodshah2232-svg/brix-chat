@@ -12,7 +12,9 @@ class Kernel extends ConsoleKernel
      */
     protected function schedule(Schedule $schedule): void
     {
-        // $schedule->command('inspire')->hourly();
+        // Run `php artisan schedule:work` (dev) or call `schedule:run` every minute from cron.
+        $schedule->command('brix:webhooks-retry')->everyFiveMinutes()->withoutOverlapping();
+        $schedule->command('brix:sla-check')->everyFiveMinutes()->withoutOverlapping();
     }
 
     /**

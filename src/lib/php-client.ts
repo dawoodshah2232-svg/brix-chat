@@ -1,15 +1,9 @@
-// Brix Chat — Brix API client (transport layer).
+// Brix Chat — Brix API client (transport layer, Laravel API in api/).
 //
-// Mirrors src/lib/supabase-client.ts 1:1:
-//
-//   isSupabaseEnabled()  ->  isPhpApiEnabled()
-//   getSupabase()         ->  getPhpApi()
-//   ensureBrixRealtime()  ->  ensurePhpPolling()
-//   onRemoteChange / RemoteChange / RemoteChangeListener — the same event
-//     shape as supabase-client (types shared); the PHP poller emits into a
-//     transport-local bus and api.ts merges both buses into one
-//     onRemoteChange() so UI subscribers never care which transport
-//     produced the event.
+//   isPhpApiEnabled()  — true when an API base URL is configured
+//   getPhpApi()        — the singleton client
+//   ensurePhpPolling() — realtime: polls GET /updates and emits RemoteChange
+//                        events that api.ts exposes as onRemoteChange()
 //
 // The client speaks the contract in docs/PHP_API.md: fetch() against
 // VITE_API_URL (e.g. https://example.com/api), Bearer token from
@@ -22,10 +16,20 @@
 // ApiError('auth_expired') so the UI can prompt for re-login.
 
 import { ApiError } from './api';
-import type { RemoteChange, RemoteChangeListener } from './supabase-client';
 
-/** Transport-local remote-change bus for the PHP poller. api.ts merges this
- *  with the Supabase bus into the single exported onRemoteChange(). */
+/** A server-side change picked up by the poller (realtime -> UI refresh). */
+export interface RemoteChange {
+  /** The table that changed. */
+  table: 'conversations' | 'messages' | 'visitors';
+  /** INSERT | UPDATE | DELETE */
+  type: string;
+  /** The new row (for INSERT/UPDATE) or old row (for DELETE). */
+  row: Record<string, unknown>;
+}
+
+export type RemoteChangeListener = (change: RemoteChange) => void;
+
+/** Remote-change bus fed by the poller; api.ts exports it as onRemoteChange(). */
 const phpListeners = new Set<RemoteChangeListener>();
 export function onPhpRemoteChange(cb: RemoteChangeListener): () => void {
   phpListeners.add(cb);
@@ -42,7 +46,6 @@ function emitPhpRemoteChange(change: RemoteChange): void {
     }
   });
 }
-export type { RemoteChange, RemoteChangeListener };
 
 /** Loose PHP row — the transport maps these to the api.ts domain types. */
 export type PhpRow = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any

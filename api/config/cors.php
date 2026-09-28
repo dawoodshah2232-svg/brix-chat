@@ -19,7 +19,15 @@ return [
 
     'allowed_methods' => ['*'],
 
-    'allowed_origins' => ['*'],
+    // The dashboard origin, plus local dev servers while APP_DEBUG is on.
+    'allowed_origins' => array_values(array_unique(array_filter(array_merge(
+        [rtrim((string) env('SITE_ORIGIN', env('FRONTEND_URL', 'http://localhost:5173')), '/')],
+        env('APP_DEBUG', false) ? [
+            'http://localhost:5173', 'http://127.0.0.1:5173',
+            'http://localhost:3000', 'http://127.0.0.1:3000',
+            'http://localhost:8099', 'http://127.0.0.1:8099',
+        ] : [],
+    )))),
 
     'allowed_origins_patterns' => [],
 

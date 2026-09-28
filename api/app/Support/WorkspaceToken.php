@@ -5,7 +5,7 @@ namespace App\Support;
 use RuntimeException;
 
 /**
- * Workspace member bearer token, shared with the legacy API (api/legacy/lib/auth.php):
+ * Workspace member bearer token:
  *   base64url(json {wid, mid, exp}) . '.' . hex hmac_sha256(payload, APP_SECRET)
  */
 class WorkspaceToken
@@ -42,19 +42,11 @@ class WorkspaceToken
         return (int) $data['exp'] < time() ? null : $data;
     }
 
-    /** Legacy config wins so tokens stay valid across both API layers. */
     private static function secret(): string
     {
-        $legacy = base_path('legacy/config.php');
-        if (is_file($legacy)) {
-            $config = require $legacy;
-            if (is_array($config) && !empty($config['APP_SECRET'])) {
-                return (string) $config['APP_SECRET'];
-            }
-        }
-        $secret = (string) env('APP_SECRET', '');
+        $secret = (string) config('brix.secret');
         if ($secret === '') {
-            throw new RuntimeException('APP_SECRET is not configured (api/.env or api/legacy/config.php).');
+            throw new RuntimeException('APP_SECRET is not configured in api/.env.');
         }
 
         return $secret;

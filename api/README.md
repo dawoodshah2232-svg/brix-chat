@@ -14,9 +14,13 @@ php artisan migrate
 php artisan db:seed           # plans (+ admin if PLATFORM_ADMIN_* set)
 php artisan brix:admin you@example.com   # create/reset a platform admin
 php artisan serve --port=8099
+php artisan schedule:work     # optional: webhook retries + SLA checks every 5 minutes
 ```
 
 The SPA reads `VITE_API_URL` (default `http://127.0.0.1:8099/api`).
+
+In production, run `php artisan schedule:run` every minute from cron. It runs
+`brix:webhooks-retry` and `brix:sla-check` (both can also be run by hand).
 
 ## Two kinds of accounts
 
@@ -33,7 +37,11 @@ platform admin.
 - `routes/api.php`: all routes
 - `app/Http/Controllers/AuthController.php`: workspace signup/login/me
 - `app/Http/Controllers/Admin/*`: operator console API
+- `app/Http/Controllers/Workspace/*`: the workspace (client dashboard) API,
+  one controller per area; the endpoint contract is in `../docs/PHP_API.md`
+- `app/Http/Middleware/AuthenticateMember.php`: workspace bearer-token auth
+- `app/Support/Api/*`: role matrix (`Member`), input validation, row
+  serializers, cursor pagination, audit/notifications, webhooks
 - `app/Support/*`: tokens, workspace creation, stats, platform settings/audit
-- `legacy/`: the original plain-PHP workspace API, reached through
-  `LegacyApiController` for any route not matched above. Areas are being
-  moved out of it into proper controllers one at a time.
+- `app/Console/Commands/*`: `brix:webhooks-retry`, `brix:sla-check`
+- `config/brix.php`: app settings (token secret, dashboard origin, AI keys, mail, rate limit)

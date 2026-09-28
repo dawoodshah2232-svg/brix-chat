@@ -3,8 +3,7 @@
 // Local-only: each entry describes a third-party service. Providers marked
 // phase 'local' store their keys in this browser (Admin → Integrations);
 // providers marked 'backend' activate with the backend phase. Nothing here
-// makes network calls — see src/lib/integrationClient.ts for the honest
-// local-stub vs Edge Function test path.
+// makes network calls.
 
 export interface IntegrationKeyFormat {
   /** expected prefix, e.g. 'sk-' */
@@ -34,11 +33,6 @@ export interface IntegrationDef {
   enabled: boolean;
   /** one original sentence: where this provider plugs into Brix Chat */
   wiresInto: string;
-  /** Edge Function name for live calls, per supabase/README.md (Worker B);
-   *  null when no function is documented for the provider yet. */
-  edgeFunction: string | null;
-  /** honest one-liner: what the backend will do with the credential once live */
-  liveCall: string;
 }
 
 export const INTEGRATION_REGISTRY: IntegrationDef[] = [
@@ -49,9 +43,7 @@ export const INTEGRATION_REGISTRY: IntegrationDef[] = [
     keyFields: [{ name: 'api_key', label: 'API key', placeholder: 'sk-…', secret: true, format: { prefix: 'sk-', minLen: 20, note: 'Starts with sk-, at least 20 characters.' } }],
     status: 'local',
     enabled: false,
-    wiresInto: 'Wires into AI Copilot — drafts agent replies and one-click conversation summaries inside the inbox.',
-    edgeFunction: 'ai-copilot',
-    liveCall: 'Live drafts call POST /functions/v1/ai-copilot with { provider: \'openai\' }; usage bills to the OpenAI key stored as a Supabase secret.'
+    wiresInto: 'Wires into AI Copilot — drafts agent replies and one-click conversation summaries inside the inbox.'
   },
   {
     id: 'anthropic',
@@ -60,9 +52,7 @@ export const INTEGRATION_REGISTRY: IntegrationDef[] = [
     keyFields: [{ name: 'api_key', label: 'API key', placeholder: 'sk-ant-…', secret: true, format: { prefix: 'sk-ant-', minLen: 20, note: 'Starts with sk-ant-, at least 20 characters.' } }],
     status: 'local',
     enabled: false,
-    wiresInto: 'Wires into AI Copilot as the fallback model — takes over reply drafts and summaries if the primary AI provider is unreachable.',
-    edgeFunction: 'ai-copilot',
-    liveCall: 'Live drafts call POST /functions/v1/ai-copilot with { provider: \'anthropic\' }; usage bills to the Anthropic key stored as a Supabase secret.'
+    wiresInto: 'Wires into AI Copilot as the fallback model — takes over reply drafts and summaries if the primary AI provider is unreachable.'
   },
   {
     id: 'whatsapp',
@@ -74,9 +64,7 @@ export const INTEGRATION_REGISTRY: IntegrationDef[] = [
     ],
     status: 'backend',
     enabled: false,
-    wiresInto: 'Wires into the backend send path — agents continue a web chat over WhatsApp from the same inbox thread.',
-    edgeFunction: null,
-    liveCall: 'No Edge Function is documented for WhatsApp yet — live messaging lands with the backend phase.'
+    wiresInto: 'Wires into the backend send path — agents continue a web chat over WhatsApp from the same inbox thread.'
   },
   {
     id: 'twilio',
@@ -89,9 +77,7 @@ export const INTEGRATION_REGISTRY: IntegrationDef[] = [
     ],
     status: 'backend',
     enabled: false,
-    wiresInto: 'Wires into ticket and campaign flows — sends follow-up SMS such as ticket updates and review requests.',
-    edgeFunction: null,
-    liveCall: 'No Edge Function is documented for Twilio yet — live SMS sending lands with the backend phase.'
+    wiresInto: 'Wires into ticket and campaign flows — sends follow-up SMS such as ticket updates and review requests.'
   },
   {
     id: 'resend',
@@ -100,9 +86,7 @@ export const INTEGRATION_REGISTRY: IntegrationDef[] = [
     keyFields: [{ name: 'api_key', label: 'API key', placeholder: 're_…', secret: true, format: { prefix: 're_', minLen: 10, note: 'Starts with re_, created in the Resend dashboard.' } }],
     status: 'backend',
     enabled: false,
-    wiresInto: 'Wires into transactional email — delivers chat transcripts, ticket updates, and campaign digests to visitors.',
-    edgeFunction: 'send-email',
-    liveCall: 'Live mail calls POST /functions/v1/send-email; the sender domain must be verified in Resend.'
+    wiresInto: 'Wires into transactional email — delivers chat transcripts, ticket updates, and campaign digests to visitors.'
   },
   {
     id: 'slack',
@@ -111,9 +95,7 @@ export const INTEGRATION_REGISTRY: IntegrationDef[] = [
     keyFields: [{ name: 'webhook_url', label: 'Incoming webhook URL', placeholder: 'https://hooks.slack.com/…', secret: true, format: { prefix: 'https://hooks.slack.com/', minLen: 30, note: 'Paste the full incoming-webhook URL from your Slack app.' } }],
     status: 'backend',
     enabled: false,
-    wiresInto: 'Wires into conversation notifications — posts new chats, missed chats, and SLA breaches to a Slack channel.',
-    edgeFunction: null,
-    liveCall: 'No Edge Function is documented for Slack yet — live posting lands with the backend phase.'
+    wiresInto: 'Wires into conversation notifications — posts new chats, missed chats, and SLA breaches to a Slack channel.'
   },
   {
     id: 'shopify',
@@ -125,9 +107,7 @@ export const INTEGRATION_REGISTRY: IntegrationDef[] = [
     ],
     status: 'backend',
     enabled: false,
-    wiresInto: 'Wires into the chat context panel — shows the visitor’s live cart to the agent and triggers abandonment flows.',
-    edgeFunction: null,
-    liveCall: 'No Edge Function is documented for Shopify yet — live sync lands with the backend phase.'
+    wiresInto: 'Wires into the chat context panel — shows the visitor’s live cart to the agent and triggers abandonment flows.'
   },
   {
     id: 'wordpress',
@@ -139,9 +119,7 @@ export const INTEGRATION_REGISTRY: IntegrationDef[] = [
     ],
     status: 'backend',
     enabled: false,
-    wiresInto: 'Wires into one-click install — injects the widget snippet into a WordPress site and syncs help-center articles.',
-    edgeFunction: null,
-    liveCall: 'No Edge Function is documented for WordPress yet — live sync lands with the backend phase.'
+    wiresInto: 'Wires into one-click install — injects the widget snippet into a WordPress site and syncs help-center articles.'
   },
   {
     id: 'zapier',
@@ -150,9 +128,7 @@ export const INTEGRATION_REGISTRY: IntegrationDef[] = [
     keyFields: [{ name: 'webhook_url', label: 'Zap webhook URL', placeholder: 'https://hooks.zapier.com/…', secret: true, format: { prefix: 'https://hooks.zapier.com/', minLen: 30, note: 'Paste the “Catch Hook” trigger URL from your Zap.' } }],
     status: 'backend',
     enabled: false,
-    wiresInto: 'Wires into event webhooks — forwards chat, ticket, and goal events into 6,000+ apps through your Zap.',
-    edgeFunction: 'webhook-dispatcher',
-    liveCall: 'Live event fan-out calls POST /functions/v1/webhook-dispatcher (service-role, server-side only).'
+    wiresInto: 'Wires into event webhooks — forwards chat, ticket, and goal events into 6,000+ apps through your Zap.'
   },
   {
     id: 'google-calendar',
@@ -161,9 +137,7 @@ export const INTEGRATION_REGISTRY: IntegrationDef[] = [
     keyFields: [{ name: 'client_id', label: 'OAuth client ID', placeholder: '…apps.googleusercontent.com', secret: false, format: { contains: '.apps.googleusercontent.com', note: 'From Google Cloud → Credentials → OAuth client ID.' } }],
     status: 'backend',
     enabled: false,
-    wiresInto: 'Wires into the widget booking block — lets visitors pick a real meeting slot without leaving the chat.',
-    edgeFunction: null,
-    liveCall: 'No Edge Function is documented for Google Calendar yet — live booking lands with the backend phase.'
+    wiresInto: 'Wires into the widget booking block — lets visitors pick a real meeting slot without leaving the chat.'
   },
 ];
 

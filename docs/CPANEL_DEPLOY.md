@@ -77,7 +77,7 @@ VITE_API_URL=https://YOURDOMAIN/api npm run build
 Upload the contents of `dist/` to `public_html/` (so `index.html` sits next to the
 `api/` folder). The app now talks to your MySQL backend.
 
-- The transport priority is: Supabase env vars → `VITE_API_URL` → localStorage.
+- The transport priority is: `VITE_API_URL` (or localhost) → localStorage.
   With `VITE_API_URL` baked in, the PHP/MySQL backend is used.
 - The public demo at `dawoodshah2232-svg.github.io/brix-chat` is built **without**
   `VITE_API_URL`, so it keeps working on localStorage — untouched by this.

@@ -61,7 +61,7 @@ export function userErrorFromUnknown(error: unknown): UserErrorCopy {
     if (error.code === 'auth_expired') return USER_ERRORS.sessionExpired;
     if (error.code === 'unauthorized') return USER_ERRORS.invalidLogin;
     if (error.code === 'not_found') return USER_ERRORS.accountNotFound;
-    if (['php_unreachable', 'php_unavailable', 'not_configured', 'supabase_unavailable'].includes(error.code)) {
+    if (['php_unreachable', 'php_unavailable', 'not_configured'].includes(error.code)) {
       return USER_ERRORS.serverUnavailable;
     }
     if (error.code === 'conflict') return USER_ERRORS.workspaceCreateFailed;
