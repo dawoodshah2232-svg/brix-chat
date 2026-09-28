@@ -715,7 +715,60 @@ Pull fifty transcripts from last month. Tag them into the four buckets. Rank the
 
 ## The takeaway
 
-Your customers have been writing your product roadmap for years, one chat at a time. They phrased it plainly, stamped it with their frustration, and left it in a folder labeled "support" that nobody reads twice. The product teams that read it are not doing anything exotic — they are just treating the chat window as what it is: the largest unedited interview study a company will ever run, handed to them for free, every single day.`,tags:[`analytics`,`product`],author:`Nadia Rahman`,published:!0,reading_mins:6,cover_image:`images/blog/chat-transcripts-product-roadmap.jpg`}],ym=[{slug:`create-workspace`,title:`Create your workspace`,body:`## What a workspace is
+Your customers have been writing your product roadmap for years, one chat at a time. They phrased it plainly, stamped it with their frustration, and left it in a folder labeled "support" that nobody reads twice. The product teams that read it are not doing anything exotic — they are just treating the chat window as what it is: the largest unedited interview study a company will ever run, handed to them for free, every single day.`,tags:[`analytics`,`product`],author:`Nadia Rahman`,published:!0,reading_mins:6,cover_image:`images/blog/chat-transcripts-product-roadmap.jpg`},{slug:`whatsapp-vs-website-chat`,title:`WhatsApp vs website chat: pick the channel by the conversation, not the customer`,excerpt:`The WhatsApp-vs-website-chat debate asks the wrong question. The two channels are not rivals — they win at different moments of the customer journey. Here is a practical rule for routing each conversation to the right one.`,body:`## The short answer
+
+Every few months someone asks whether WhatsApp has killed website chat, or whether a chat widget makes WhatsApp redundant. The question is wrong on both sides. Website chat and WhatsApp are not competing for the same job — one is a storefront counter and the other is a thread that lives in your pocket. They win at different moments of the customer journey, and the companies getting the best results from either one stopped asking "which channel" and started asking "which conversation."
+
+The numbers make the case for both. Kantar's State of Business Messaging research — 11,056 adults across 22 markets including the UAE — found 72.4% of consumers are more likely to buy from a brand that offers messaging, 74.6% trust a business more when they can exchange messages with it, and 66.8% feel frustrated when messaging is not offered at all. Meanwhile the website chat case is just as strong: 44% of online consumers call having a live person answer questions mid-purchase one of the most important features a site can offer, and 53% abandon a purchase when they cannot get a quick answer. Customers want messaging *and* they want your website chat. The winning setup runs both, routed well.
+
+## What website chat is actually good at
+
+Website chat has one unfair advantage: it is there at the exact moment of intent. The visitor is on your pricing page, mid-checkout, staring at a spec sheet. The chat widget is one tap away, and — critically — it knows what page they are on, what is in their cart, and often who they are if they are logged in. That context is free. A "which plan covers API access?" question on the pricing page needs no backstory.
+
+It is also synchronous by nature. When someone opens your widget, they are expecting a reply now, which makes it the right place for high-urgency, high-value moments: pre-sale questions, cart rescue, checkout troubleshooting. And it keeps the whole exchange attached to the web session where the money changes hands.
+
+## What WhatsApp is actually good at
+
+WhatsApp has the opposite strength: the conversation survives. Website chats die when the tab closes. A WhatsApp thread persists for weeks, across devices, and the customer carries it in their pocket. That makes it the natural channel for everything that is asynchronous by nature: order updates, delivery coordination, appointment reminders, follow-ups days after the first contact.
+
+The engagement numbers explain why retailers are leaning into it. Infobip and Retail Economics' 2026 research found WhatsApp message open rates running 85–95%, against 32.7% for email in e-commerce. WhatsApp is also the rare channel whose engagement holds steady across age groups, while preferences otherwise fragment — Gen Z skews toward WhatsApp and SMS for things like delivery updates, Boomers toward email. One caution worth naming: those open rates are real for service and utility messages. Broadcast-style marketing on WhatsApp performs very differently, and Meta's policies and per-conversation pricing are designed to keep it that way.
+
+## Five routing rules
+
+Stop assigning channels to customer segments and assign them to conversation types instead:
+
+1. **First touch happens on the website.** The visitor is already there; adding friction with "message us on WhatsApp instead" is a conversion killer. Keep the widget prominent on high-intent pages: pricing, checkout, product pages.
+2. **Pre-sale questions stay on the website.** "Is this in stock?", "does this integrate with X?" — short, urgent, context-rich. Website chat wins every time.
+3. **Post-purchase follow-ups move to WhatsApp.** Shipping updates, delivery coordination, "your appointment is tomorrow" — things the customer wants to read three hours from now, on their phone. This is also where opt-in matters most: ask for it at checkout, in one line.
+4. **Multi-day issues migrate with their transcript.** A warranty claim, a custom order, an installation that needs scheduling — these outlive any browser tab. When the chat goes past about ten minutes without resolution, offer to continue on WhatsApp and carry the full transcript over. The cardinal sin is making the customer repeat themselves in the new channel.
+5. **Marketing never initiates a support thread.** WhatsApp templates are for things the customer asked about or opted into: back-in-stock alerts for a watched item, a reminder about an abandoned cart they started. The moment promotional messages outnumber useful ones, the channel burns. Meta charges for business-initiated conversations by category — marketing templates cost more than utility ones, and that pricing is a feature, not a bug.
+
+## The guardrails that make it work
+
+**Opt-in is the law and the business model.** WhatsApp requires it, but the deeper reason is economic: a channel that reaches into someone's pocket only works while it is welcome. Make the opt-in specific — "order updates and delivery alerts" — and honor the wording literally.
+
+**Respect the 24-hour window.** Meta's rule: once 24 hours pass since the customer's last message, you can only reopen the conversation with an approved template. Build your follow-up flows around this instead of fighting it. It is also a decent proxy for good manners.
+
+**One queue, not two teams.** The biggest failure mode in multichannel support is the channel silo: WhatsApp messages go to one team, website chat to another, and neither sees the other thread. Run one shared queue with channel as a tag, and put the customer's full cross-channel history on every agent's screen. A customer who asked about sizing on your website last Tuesday should not get treated like a stranger on WhatsApp on Friday.
+
+**Write channel-native replies.** WhatsApp messages should be short, conversational, and emoji-tolerant — they render on a phone. Website chat replies can carry more structure: bullet points, links, screenshots. The same knowledge base can feed both, but the delivery has to match the medium.
+
+## What to measure
+
+Channel health is not message volume. Watch these instead:
+
+- **Resolution rate by channel.** If WhatsApp chats resolve worse than website chats, you have a training or staffing problem, not a channel problem.
+- **Channel-switch rate.** How often does a conversation start in one channel and finish in another? Occasional migration is healthy; constant migration means your routing rules are wrong.
+- **Repeat-contact rate within 7 days.** The customer who asks the same question on WhatsApp two days after a website chat is the clearest signal your threads are not connected.
+- **Opt-in and opt-out rates per template type.** Your back-in-stock alert and your promotional blast should have wildly different opt-out rates. If they don't, your "useful" messages aren't.
+
+## What to do Monday morning
+
+Audit your last month of conversations and tag each one with the channel it *should* have used under the five rules. Count the mismatches — those are your quick wins. Then check two things: whether agents can see cross-channel history in one view, and whether your WhatsApp opt-in asks for something specific. Most teams find the routing is 80% right and the history view is where the real pain lives. Fix that first.
+
+## The takeaway
+
+WhatsApp did not replace website chat, and website chat does not make WhatsApp pointless. One catches the customer at the moment of decision, with full context of where they are and what they are doing. The other keeps the conversation alive for days, in the place the customer actually reads messages. Route each conversation to the channel that fits it, carry the transcript across the boundary, and run it all through one queue. That is the whole strategy — and it is worth more than picking a side in a channel war that was never real.`,tags:[`channels`,`strategy`],author:`Marco Reyes`,published:!0,reading_mins:6,cover_image:`images/blog/whatsapp-vs-website-chat.jpg`}],ym=[{slug:`create-workspace`,title:`Create your workspace`,body:`## What a workspace is
 
 A workspace holds everything for one business: websites, chats, team members, settings. Most teams need exactly one.
 
