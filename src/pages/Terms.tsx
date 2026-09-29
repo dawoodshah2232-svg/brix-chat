@@ -7,7 +7,7 @@ const SECTIONS: Array<{ h: string; body: string[] }> = [
   {
     h: '1. What Brix Chat is',
     body: [
-      'Brix Chat (“the Service”) is a live-chat platform comprising an embeddable website widget, an agent dashboard, and an admin console. In the current local phase, the Service runs entirely in your browser; a backend phase will add server-side features later. These terms apply to the marketing site and the product together.',
+      'Brix Chat (“the Service”) is a live-chat platform comprising an embeddable website widget, an agent dashboard, and an admin console. Your workspace data is stored on our servers (bridgingfx.com) so your team can collaborate in real time. These terms apply to the marketing site and the product together.',
     ],
   },
   {
@@ -22,13 +22,13 @@ const SECTIONS: Array<{ h: string; body: string[] }> = [
     body: [
       'You are responsible for the content sent through your workspace — by your team and by your visitors — and for complying with the laws that apply to you (including privacy and marketing-consent laws in your jurisdiction).',
       'Do not use the Service for spam, phishing, fraud, harassment, or any unlawful purpose. Do not attempt to disrupt the Service or other users\u2019 workspaces. We may suspend workspaces used abusively, with notice where practical.',
-      'In local mode, your data lives in your browser: keep your device and passcodes secure. Treat invite passcodes like temporary passwords.',
+      'Your workspace data lives on our servers: keep your passcodes and API keys secure and treat invite passcodes like temporary passwords. You remain responsible for the content sent through your workspace — by your team and by your visitors — and for complying with the laws that apply to you (including privacy and marketing-consent laws in your jurisdiction).',
     ],
   },
   {
-    h: '4. Local phase: no warranties on persistence',
+    h: '4. Accounts: availability and your backups',
     body: [
-      'The local phase stores data in browser localStorage, which browsers can clear (private-mode exits, storage quotas, manual clears). Use Export regularly for anything you cannot afford to lose. The Service is provided “as is”, without warranties of any kind, to the maximum extent permitted by law.',
+      'We work to keep the Service available, but we do not guarantee uninterrupted uptime. Use Export regularly (Admin → Data → Export) for anything you cannot afford to lose. The Service is provided “as is”, without warranties of any kind, to the maximum extent permitted by law.',
     ],
   },
   {
@@ -47,7 +47,7 @@ const SECTIONS: Array<{ h: string; body: string[] }> = [
   {
     h: '7. Changes',
     body: [
-      'We may update these terms as the product evolves — most notably when the backend phase launches, which will add sections on accounts, billing, SLAs, and data processing. Material changes will be announced on the blog and, for logged-in workspaces, inside the product. Continued use after a change takes effect means you accept it.',
+      'We may update these terms as the product evolves — for example when paid add-ons launch, which will add sections on billing, SLAs, and data processing. Material changes will be announced on the blog and, for logged-in workspaces, inside the product. Continued use after a change takes effect means you accept it.',
     ],
   },
   {
@@ -63,11 +63,11 @@ export default function Terms() {
     <main>
       <Seo
         title="Terms of service — Brix Chat"
-        description="Brix Chat's terms of service: the free core, add-on billing, your responsibilities, local-phase data notes, IP, liability, and changes."
+        description="Brix Chat's terms of service: the free core, add-on billing, your responsibilities, accounts, IP, liability, and changes."
         path="/terms"
         jsonLd={jsonLdBreadcrumb([{ name: 'Home', path: '/' }, { name: 'Terms of service', path: '/terms' }])}
       />
-      <PageHero kicker="Legal" title="Terms of service." sub="Last updated: September 23, 2026." />
+      <PageHero kicker="Legal" title="Terms of service." sub="Last updated: September 29, 2026." />
 
       <div className="mx-auto max-w-3xl px-4 sm:px-6 py-16">
         {SECTIONS.map((s) => (

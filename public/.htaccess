@@ -7,6 +7,11 @@ DirectoryIndex index.html
 
 RewriteEngine On
 
+# Force HTTPS (cPanel/Apache). Preserves the sub-folder path and query string.
+RewriteCond %{HTTPS} off
+RewriteCond %{HTTP:X-Forwarded-Proto} !https
+RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
+
 # API entry (brixchat/backend -> Laravel): Laravel's own .htaccess handles it.
 RewriteRule ^backend(/|$) - [L]
 

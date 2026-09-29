@@ -395,6 +395,12 @@ export class PhpApiClient {
     me: (): Promise<{ member: PhpRow; workspace: PhpRow }> => this.getData('/auth/me'),
   };
 
+  // ---- public contact form (no auth; server validates + honeypot + throttle) --
+  contact = {
+    create: (input: { name: string; email: string; subject: string; message: string; website?: string }): Promise<PhpRow> =>
+      this.request<PhpRow>('/contact', { method: 'POST', auth: false, body: input }),
+  };
+
   // ---- workspaces ----------------------------------------------------------
   workspaces = {
     current: (): Promise<PhpRow> => this.getData('/workspaces/current'),

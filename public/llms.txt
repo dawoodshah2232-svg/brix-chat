@@ -14,22 +14,22 @@
 
 ## Key pages
 
-- Home: https://brixchat.com/
-- Features: https://brixchat.com/features
-- Pricing: https://brixchat.com/pricing
-- ROI calculator: https://brixchat.com/roi
-- Compare: https://brixchat.com/compare
-- Changelog: https://brixchat.com/changelog
-- Blog: https://brixchat.com/blog
-- Help center: https://brixchat.com/help
-- About: https://brixchat.com/about
-- Contact: https://brixchat.com/contact
-- Security: https://brixchat.com/security
-- Status: https://brixchat.com/status
-- Privacy: https://brixchat.com/privacy
-- Terms: https://brixchat.com/terms
-- Support (customer ticket portal): https://brixchat.com/support — submit a support request and track it by ticket ID, no account needed.
-- HTML sitemap: https://brixchat.com/sitemap
+- Home: https://bridgingfx.com/brixchat/
+- Features: https://bridgingfx.com/brixchat/features
+- Pricing: https://bridgingfx.com/brixchat/pricing
+- ROI calculator: https://bridgingfx.com/brixchat/roi
+- Compare: https://bridgingfx.com/brixchat/compare
+- Changelog: https://bridgingfx.com/brixchat/changelog
+- Blog: https://bridgingfx.com/brixchat/blog
+- Help center: https://bridgingfx.com/brixchat/help
+- About: https://bridgingfx.com/brixchat/about
+- Contact: https://bridgingfx.com/brixchat/contact
+- Security: https://bridgingfx.com/brixchat/security
+- Status: https://bridgingfx.com/brixchat/status
+- Privacy: https://bridgingfx.com/brixchat/privacy
+- Terms: https://bridgingfx.com/brixchat/terms
+- Support (customer ticket portal): https://bridgingfx.com/brixchat/support — submit a support request and track it by ticket ID, no account needed.
+- HTML sitemap: https://bridgingfx.com/brixchat/sitemap
 
 ## Feature list
 
@@ -39,7 +39,7 @@ Live chat widget, real-time agent inbox, visitor monitoring, contacts, canned re
 
 - REST-shaped local API: conversations, visitors, contacts, tickets, campaigns, plays, goals, blog, help docs, contact messages, status entries, members, property settings, copilot/security/data settings, integrations, unanswered questions, audit search, data export/import/reset.
 - Webhook events include: message.created, conversation.*, ticket.created, ticket.sla_breached, campaign.sent, goal.completed, contact.created, widget.rating, and more. Payloads are HMAC-signed (X-Brix-Signature); the admin console shows a delivery log and can test-fire the exact signed payload.
-- Docs: https://brixchat.com/help/api-keys, https://brixchat.com/help/webhooks
+- Docs: https://bridgingfx.com/brixchat/help/api-keys, https://bridgingfx.com/brixchat/help/webhooks
 
 ## What Brix Chat is not
 
