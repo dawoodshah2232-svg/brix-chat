@@ -7,11 +7,11 @@
 import { useEffect } from 'react';
 
 /**
- * Canonical base for every page. The owner replaces this with the real
- * production domain before launch (e.g. https://brixchat.com). Everything
- * SEO-related (canonical links, og:url, sitemap.xml, llms.txt) derives from it.
+ * Canonical base for every page. The production deployment lives at
+ * https://bridgingfx.com/brixchat (cPanel). Everything SEO-related
+ * (canonical links, og:url, sitemap.xml, llms.txt) derives from it.
  */
-export const SEO_CANONICAL_BASE = 'https://brixchat.com';
+export const SEO_CANONICAL_BASE = 'https://bridgingfx.com/brixchat';
 
 const OG_IMAGE = `${SEO_CANONICAL_BASE}/og-cover.png`;
 

@@ -2319,7 +2319,7 @@ export class BrixApi {
 
   // ---- contact form messages ----------------------------------------------------------
   contactMessages = {
-    create: async (input: { name: string; email: string; subject: string; message: string }): Promise<Envelope<ApiContactMessage>> => {
+    create: async (input: { name: string; email: string; subject: string; message: string; website?: string }): Promise<Envelope<ApiContactMessage>> => {
       if (!input.name.trim() || !input.message.trim()) throw new ApiError('validation', 'Name and message are required.', 422);
       if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(input.email.trim())) throw new ApiError('validation', 'A valid email is required.', 422);
       const db = this.db();
@@ -3239,6 +3239,16 @@ const mapPhpNotification = (r: PhpRow): ApiNotification => ({
   title: r.title ?? '',
   body: r.body ?? '',
   link: r.link ?? null,
+  read: !!r.read,
+  created_at: isoOf(r.created_at),
+});
+
+const mapPhpContactMessage = (r: PhpRow): ApiContactMessage => ({
+  id: r.id,
+  name: r.name ?? '',
+  email: r.email ?? '',
+  subject: r.subject ?? 'Website contact',
+  message: r.message ?? '',
   read: !!r.read,
   created_at: isoOf(r.created_at),
 });
@@ -4437,6 +4447,20 @@ export class PhpBrixApi extends BrixApi {
           const { items, next_cursor } = await this.php().auditLog.list({ cursor: opts.cursor, limit: opts.limit });
           return { data: { items: items.map(mapPhpAudit), next_cursor } };
         }, () => base_auditLog.list(opts)),
+    };
+
+    // ---- public contact form --------------------------------------------------
+    // In production the contact page posts to the Laravel /contact endpoint
+    // (validated + honeypot + throttled server-side). Demo mode keeps the
+    // localStorage implementation.
+    const base_contactMessages = this.contactMessages;
+    this.contactMessages = {
+      ...base_contactMessages,
+      create: (input: { name: string; email: string; subject: string; message: string; website?: string }) =>
+        this.guardPhp(
+          async () => ({ data: mapPhpContactMessage(await this.php().contact.create(input)) }),
+          () => base_contactMessages.create(input),
+        ),
     };
   }
 

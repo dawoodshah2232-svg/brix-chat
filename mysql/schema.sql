@@ -186,6 +186,21 @@ CREATE TABLE IF NOT EXISTS contacts (
     REFERENCES properties (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Contact form inbox (public marketing-site inquiries; also created by migration
+-- 2026_09_29_000000_create_contact_messages_table) -------------------------------
+CREATE TABLE IF NOT EXISTS contact_messages (
+  id CHAR(36) NOT NULL PRIMARY KEY,
+  name VARCHAR(120) NOT NULL,
+  email VARCHAR(190) NOT NULL,
+  subject VARCHAR(190) NOT NULL DEFAULT 'Website contact',
+  message TEXT NOT NULL,
+  ip VARCHAR(45) NULL,
+  user_agent VARCHAR(512) NULL,
+  `read` BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY contact_messages_created_idx (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- Members (workspace membership; roles owner/admin/agent/developer/viewer) ------------
 CREATE TABLE IF NOT EXISTS members (
   id CHAR(36) NOT NULL PRIMARY KEY,

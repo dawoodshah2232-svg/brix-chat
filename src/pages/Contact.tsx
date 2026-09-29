@@ -15,6 +15,7 @@ export default function Contact() {
   const [email, setEmail] = useState('');
   const [subject, setSubject] = useState('General question');
   const [message, setMessage] = useState('');
+  const [website, setWebsite] = useState(''); // honeypot — humans never fill this
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [sent, setSent] = useState(false);
@@ -25,7 +26,7 @@ export default function Contact() {
     setError('');
     try {
       const p2 = asP2(getApi(session?.workspaceId ?? 'demo', name || 'web'));
-      await p2.contactMessages.create({ name: name.trim(), email: email.trim(), subject, message: message.trim() });
+      await p2.contactMessages.create({ name: name.trim(), email: email.trim(), subject, message: message.trim(), website: website.trim() });
       setSent(true);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Something went wrong sending your message.');
@@ -86,6 +87,12 @@ export default function Contact() {
               <textarea id="ct-message" value={message} onChange={(e) => setMessage(e.target.value)} required rows={6}
                 placeholder="How can we help?"
                 className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-brix-500/40 focus:border-brix-500" />
+            </div>
+            {/* Honeypot: hidden from humans and assistive tech; bots that fill it are silently dropped server-side. */}
+            <div className="hidden" aria-hidden="true">
+              <label htmlFor="ct-website">Website</label>
+              <input id="ct-website" name="website" type="text" value={website} onChange={(e) => setWebsite(e.target.value)}
+                tabIndex={-1} autoComplete="off" />
             </div>
             {error && <p className="text-sm text-rose-600" role="alert">{error}</p>}
             <button type="submit" disabled={busy}

@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Admin;
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\ContactController;
 use App\Http\Controllers\Workspace;
 use Illuminate\Support\Facades\Route;
 
@@ -54,6 +55,9 @@ foreach ($paths('invites', 'member-invites') as $p) {
     Route::post("$p/accept", [Workspace\InviteController::class, 'accept'])->middleware('throttle:20,1');
 }
 Route::get('ai/copilot', [Workspace\AssistController::class, 'copilotInfo']);
+
+// Public contact form: server-side validation + honeypot + throttle.
+Route::post('contact', [ContactController::class, 'store'])->middleware('throttle:5,1');
 
 Route::middleware('member')->group(function () use ($paths) {
     Route::controller(Workspace\WorkspaceController::class)->group(function () {

@@ -1338,7 +1338,7 @@ export interface Phase2Api {
     delete(id: string): Promise<Envelope<void>>;
   };
   contactMessages: {
-    create(input: { name: string; email: string; subject: string; message: string }): Promise<Envelope<ApiContactMessage2>>;
+    create(input: { name: string; email: string; subject: string; message: string; website?: string }): Promise<Envelope<ApiContactMessage2>>;
     list(): Promise<Envelope<Page<ApiContactMessage2>>>;
     markRead(id: string): Promise<Envelope<ApiContactMessage2>>;
   };

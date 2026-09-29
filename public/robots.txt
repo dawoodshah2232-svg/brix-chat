@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://brixchat.com/sitemap.xml
+Sitemap: https://bridgingfx.com/brixchat/sitemap.xml
