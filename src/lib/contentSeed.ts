@@ -924,6 +924,72 @@ WhatsApp did not replace website chat, and website chat does not make WhatsApp p
     reading_mins: 6,
     cover_image: 'images/blog/whatsapp-vs-website-chat.jpg',
   },
+  {
+    slug: 'recover-stalled-chats',
+    title: 'When the visitor goes quiet: how to recover chats that stall mid-conversation',
+    excerpt:
+      'The most common way a live chat dies is not anger — it is silence. A practical playbook for nudging stalled conversations, setting sane idle rules, and turning the ones you lose into fixes.',
+    body: `## The short answer
+
+Every support team knows the scene: a conversation is going fine, you send a reply, and then... nothing. No rage-quit, no frustrated farewell — just a chat window sitting open, waiting. Chats rarely die loudly. They die in silence, somewhere around the third unanswered agent message.
+
+The two instincts most teams reach for are both wrong: either pepper the visitor with "Are you still there?" every couple of minutes, or let the chat sit open for days until the queue fills with ghosts. There is a middle way, and it starts with understanding why the silence happened at all.
+
+## Why visitors go quiet
+
+Three reasons cover nearly every stall.
+
+**1. They got what they needed and left.** The agent answered the question, the visitor read it, and they moved on. No goodbye, no rating. This is the most common reason and the least dangerous — but only if you record it correctly instead of logging it as a failure.
+
+**2. They are doing something else.** Your chat competes with the rest of their day: a meeting starting, a doorbell, another tab with a comparison table. Chat is interruptible by nature. A visitor who goes quiet for six minutes has not abandoned you; they have paused you.
+
+**3. Your reply was too slow and the window died.** This is the one that hurts. Benchmark roundups of Zendesk, Freshworks and HubSpot data put the live chat industry average at around two minutes for a first response, while customers expect a reply inside thirty seconds — and waits of three to five minutes correlate with sharply higher abandonment. If an agent takes four minutes to reply mid-conversation, many visitors are already gone. Forrester's research found one in five customers stops using a product entirely because of slow live chat responses. A stalled chat is often just a slow chat wearing a polite face.
+
+## The nudge, done well
+
+One well-written re-engagement message brings a surprising number of silent visitors back. The rules:
+
+- **Send exactly one.** The first nudge is welcome; the second is nagging. If they have not answered after one, they are not going to answer to another.
+- **Give them something, don't ask for something.** "Still here if you need me" is dead air. Forward momentum wins: "While you were away I checked — the medium ships in 2 days and the blue is in stock. Want me to hold one?"
+- **Acknowledge the interruption, don't punish it.** "Looks like you got pulled away — no problem" beats "Are you still there?" every time. Nobody wants to be scolded by a chat widget.
+- **Make it skimmable.** One or two short lines. If your nudge needs scrolling, nobody will scroll for it.
+
+Send the nudge two to three minutes after the last agent message — slightly later on mobile, where people dip in and out of sessions constantly. And when the visitor replies, pick up exactly where you left off: Twilio's 2026 customer insights research found that seven in ten APAC consumers walked away from an AI service chat because it failed to remember basic details about them, and 65% had to repeat information after being handed from a bot to a human. A re-engagement that asks the visitor to repeat themselves is worse than silence.
+
+## The idle-timeout rule your team needs
+
+Silence is fine until it clogs the queue. Ghost chats occupying agent capacity are a real cost — the industry handle-time benchmark sits at six to eight minutes, and a chat left open indefinitely blows that up. Write the timeout policy down and give it to the team:
+
+1. **Nudge once at 2–3 minutes of visitor silence.**
+2. **Summarise and park at 10–15 minutes.** Send a final message: "I'm going to close this one for now so it doesn't sit open — here's what we covered [one-line summary], plus the link to [resource]. Just reopen chat any time if you need anything else." The summary is the whole point: it means the visitor can resume without retelling their story.
+3. **Close the conversation in the dashboard at the same moment.** Do not leave it open "just in case". An open ghost chat is a lie your reports will believe.
+
+Teams sometimes worry that closing a silent chat looks rude. It isn't — leaving someone staring at an abandoned conversation is what is rude. A clean close with a summary is the respectful version.
+
+## Turn stalls into fixes
+
+Every stall has a cause, and the causes pattern-match fast once you tag them. When an agent closes a stalled chat, have them pick one reason: answered-and-left, distracted, slow-reply, or wrong-department. After a month you will know exactly which problem to fix:
+
+- **Answered-and-left dominating?** The chat is doing its job and your "resolved" detection is fine. Consider whether your nudge timing is too aggressive.
+- **Slow-reply stalling?** That is a staffing or concurrency problem, not a visitor problem. Agents juggling too many chats will stall every conversation at once. The benchmark literature is clear that waits past a few minutes spike abandonment — fix the speed and the stalls shrink on their own.
+- **Wrong-department stalls?** Your routing is sending visitors to agents who cannot help them. Fix the pre-chat routing or the canned reply that sent them there.
+- **Distracted?** Nothing to fix. Some visitors will always pause. The nudge handles most of them.
+
+One metric to watch: **re-engagement rate** — the share of nudged visitors who reply. If a healthy proportion of nudged visitors come back, your timing is right. If almost none do, your messages read as automated and your visitors have learned to ignore them.
+
+## What to do Monday morning
+
+Open last week's closed chats and count the silent ones — conversations that ended with an agent message and no visitor goodbye. Most teams are surprised at how many there are. Look at how they were closed: no nudge, three nudges, or left open for days. Pick the two worst-handled ones and rewrite the ending the way it should have gone. Then give your team the three-line timeout policy and one canned nudge they can personalise. A week later, check the re-engagement rate. The silence was always telling you something — now you are listening.
+
+## The takeaway
+
+A stalled chat is not a dead chat; it is a paused one, and pauses are recoverable if you handle them well. One useful nudge, one honest summary, one clean close — and the pattern of stalls becomes a dashboard, not a mystery. The teams with the best chat metrics are rarely the ones that never stall. They are the ones that treat silence as data instead of failure.`,
+    tags: ['engagement', 'playbook'],
+    author: 'Tariq Aziz',
+    published: true,
+    reading_mins: 5,
+    cover_image: 'images/blog/recover-stalled-chats.jpg',
+  },
 ];
 
 export const HELP_SEED: HelpSeed[] = [
