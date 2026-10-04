@@ -811,7 +811,49 @@ Open last week's closed chats and count the silent ones — conversations that e
 
 ## The takeaway
 
-A stalled chat is not a dead chat; it is a paused one, and pauses are recoverable if you handle them well. One useful nudge, one honest summary, one clean close — and the pattern of stalls becomes a dashboard, not a mystery. The teams with the best chat metrics are rarely the ones that never stall. They are the ones that treat silence as data instead of failure.`,tags:[`engagement`,`playbook`],author:`Tariq Aziz`,published:!0,reading_mins:5,cover_image:`images/blog/recover-stalled-chats.jpg`}],Ns=[{slug:`create-workspace`,title:`Create your workspace`,body:`## What a workspace is
+A stalled chat is not a dead chat; it is a paused one, and pauses are recoverable if you handle them well. One useful nudge, one honest summary, one clean close — and the pattern of stalls becomes a dashboard, not a mystery. The teams with the best chat metrics are rarely the ones that never stall. They are the ones that treat silence as data instead of failure.`,tags:[`engagement`,`playbook`],author:`Tariq Aziz`,published:!0,reading_mins:5,cover_image:`images/blog/recover-stalled-chats.jpg`},{slug:`ai-hallucination-guardrails`,title:`Your support bot will invent answers — here is how to stop it`,excerpt:`An AI support bot would rather guess than admit it does not know. Ground its answers in your own content, make refusal a first-class outcome, and review the near-misses — the practical guardrails that keep bots honest.`,body:`## The short answer
+
+A support bot hallucinates when it answers confidently from nothing — inventing a refund policy, a delivery window, a step that does not exist. Nobody can eliminate this completely, but you can shrink it to something manageable with four guardrails: answer only from your own content, teach the bot that refusing is a good outcome, test with real ticket text instead of demo questions, and review the answers that only just passed your confidence checks.
+
+## Why support bots invent answers
+
+A language model is trained to be helpful, and "helpful" in its training mostly meant "produce a plausible, complete-sounding answer". Admitting ignorance was rarely rewarded. So when a visitor asks something your help centre does not cover — an edge case, a brand-new feature, a question about a competitor — the bot does not stop. It improvises.
+
+The vague instruction "use the help centre when answering" does not fix this. Without an explicit rule, the model treats a thin search result as a starting point rather than a limit, and fills the rest from general knowledge that sounds right and is not yours. That is how visitors end up being told your 14-day return window is 30 days, or that a feature you have never built "is coming soon".
+
+## Guardrail 1: answer only from what it was given
+
+Feed the bot passages from your own knowledge base at answer time, and write the instruction explicitly: reply using only the passages you were handed, and say so when they do not cover the question. "Say so" is doing half the work — the bot needs a permitted, unembarrassing sentence for not knowing, like "I can't find that in our help docs — let me get a person on this."
+
+The hidden half of this guardrail is keeping your knowledge base clean. Stale help articles are the number-one source of confident wrong answers: the bot is not hallucinating, it is faithfully quoting last year's pricing page. If two articles disagree, the bot will effectively flip a coin. One question, one current source of truth. Archive or delete the rest.
+
+## Guardrail 2: make "I don't know" a first-class outcome
+
+An agent that declines when its context does not support an answer is far safer than one tuned to always respond. This has to be designed in, not hoped for: your test suite should specifically reward correct refusals, so that behaviour does not quietly regress the next time someone tweaks the prompt.
+
+Draw hard lines for high-risk topics. Billing, refunds, account security, anything contractual — these get explicit rules: never guess, quote the policy verbatim or escalate to a human. A bot that refuses cleanly in these areas is working as intended. A bot that improvises a refund policy is a liability wearing a friendly avatar.
+
+## Guardrail 3: test with real ticket text, not demo questions
+
+Real visitors type half-sentences, misspell product names, paste error codes with no context, and ask two things at once. Demo questions written for a launch checklist ("What are your opening hours?") tell you nothing about how the bot behaves in the wild. Pull a hundred real past tickets — including the messy ones — and run them through the bot before launch and after every change.
+
+After every change matters more than people expect. Model updates, prompt edits, and new documents all shift behaviour in ways you cannot predict, and a change that fixes one answer routinely breaks another. A standing test set of your hardest real questions, re-run after each update, is what keeps the guardrails you built in guardrail 1 and 2 actually standing.
+
+Also test the edges deliberately: ask about a competitor, ask it to guess a price, ask something wildly out of scope. A bot that refuses cleanly is ready. A bot that improvises is not — and it is better to learn that in a test than from a screenshot a customer posts.
+
+## Guardrail 4: review the near-misses
+
+Most AI chat setups score how confident the retrieval is for each answer. The answers you need to read are not the ones visitors complained about — it is the ones that scraped past your confidence threshold. Those are the most likely to be wrong and the least likely to be reported, because the visitor has no reason to doubt a confident answer.
+
+Make it a weekly habit: pull the lowest-confidence answers that were still served, read them against your help docs, and fix what you find. Each review session makes two things better at once — you catch wrong answers before they repeat, and you discover which of your help articles are thin, missing, or contradictory, which is the actual root cause half the time.
+
+## What to do Monday morning
+
+Open last week's bot conversations and find five answers you are unsure about. For each one, ask: was that in our help docs, or did the bot write it from general knowledge? If you cannot point at the source passage, you have a hallucination risk sitting in production. Then pick your ten most common visitor questions and check the bot's answers against the current docs — not the answers you remember, the docs as they exist today. Where they disagree, fix the docs first and the prompt second. The bot is only ever as honest as the material it is allowed to quote.
+
+## The takeaway
+
+You will never get a support bot to zero hallucinations, and anyone who promises that is selling you something. What you can get is a bot whose answers are traceable to your content, that declines instead of guessing, that gets tested on the questions your visitors actually ask, and whose near-misses get reviewed every week. None of that is exotic technology — it is discipline around the knowledge base and the prompt. The bots that embarrass their companies are not the ones with the worst models. They are the ones whose owners never gave them permission to say "I don't know."`,tags:[`ai`,`quality`],author:`Nadia Rahman`,published:!0,reading_mins:5,cover_image:`images/blog/ai-hallucination-guardrails.jpg`}],Ns=[{slug:`create-workspace`,title:`Create your workspace`,body:`## What a workspace is
 
 A workspace holds everything for one business: websites, chats, team members, settings. Most teams need exactly one.
 
