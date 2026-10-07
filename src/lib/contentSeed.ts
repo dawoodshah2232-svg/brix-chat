@@ -1044,6 +1044,71 @@ You will never get a support bot to zero hallucinations, and anyone who promises
     reading_mins: 5,
     cover_image: 'images/blog/ai-hallucination-guardrails.jpg',
   },
+  {
+    slug: 'whatsapp-service-message-charges',
+    title: 'WhatsApp charges per reply now: keep your support bill under control',
+    excerpt:
+      'From 1 October 2026, WhatsApp bills every business reply after the first 1,000 free ones each month. What changed, what it costs, and how to keep support affordable without leaving the channel.',
+    body: `## The short answer
+
+Until 30 September 2026, answering a customer on the WhatsApp Business API was free: the customer wrote in, you replied as many times as you liked within 24 hours, and Meta billed nothing. From 1 October 2026 that ended. Every outbound reply — typed by a human agent or sent by your chatbot — is a billable service message once you pass 1,000 free messages per month, per phone number. If your team or your bot sends lots of short messages, the bill adds up faster than you expect. The fix is not leaving WhatsApp; it is sending fewer, better messages and knowing what each conversation actually costs.
+
+## What exactly changed
+
+Three things, all at once, on 1 October:
+
+1. **Service messages became billable after the allowance.** Free-form replies inside the 24-hour customer-service window — the ordinary back-and-forth of support — used to be free. Now they bill per delivered message, not per conversation.
+2. **The allowance: 1,000 free service messages per business phone number, per calendar month.** It does not roll over, and it is per number — a business running three numbers gets 1,000 on each. Charges start on message 1,001.
+3. **Utility templates sent inside an open 24-hour window also became billable.** Order updates and shipping notifications used to ride free inside the window; now they are charged per delivered message.
+
+What did not change: messages your customers send you are still free. The 72-hour free entry-point window that opens from a Click-to-WhatsApp ad or a Facebook Page button still exists. And the free WhatsApp Business App — the one on your phone — is untouched. This is a Platform (API) change only.
+
+Meta also made it a hard cutoff: businesses needed a payment method on file by 30 September, or Meta would stop delivering service messages entirely. That was the stick that made everyone finally read the announcement.
+
+## What it actually costs
+
+Meta prices by message category and the recipient's country, with service messages beyond the allowance billed at the utility rate. Provider write-ups put it at roughly 14 paise (about ₹0.115) per service message in India and around 0.0401 SAR in Saudi Arabia. Those numbers move by market and Meta's own rate card is the only authoritative source — treat any figure you read, including mine, as a snapshot. The arithmetic that matters is yours: count your outbound service messages per month, subtract 1,000 per number, multiply by your market's utility rate. That is your new monthly line item.
+
+## The bot design that suddenly got expensive
+
+Here is who gets stung hardest: the chatty bot. A support bot that sends "Got it", then "Let me check that", then "Found it", then the answer across four more messages burns seven service messages on a single conversation. Under the old pricing that was a style choice. Now it is a cost.
+
+Patterns built for website chat — where every message is free — do not translate. On a website widget you can afford a "typing…" indicator followed by a preamble followed by the answer. On the API, every one of those sends is metered. The efficient shape now: one consolidated reply per turn. Acknowledge, answer, and ask the follow-up question in a single message.
+
+## The plays that keep the bill sane
+
+**Consolidate replies.** This is the single biggest lever. Rewrite your bot flows so one conversation turn produces one message. Same for human agents: answer fully instead of in fragments. A lone "Let me check that" costs a message and adds nothing to the conversation anyway.
+
+**Move the long tail to cheaper channels.** Not every conversation needs WhatsApp. Routine status checks — order tracking, opening hours, appointment confirmations — can resolve in a website widget, which has no per-message charge, or through self-service links. Reserve WhatsApp for conversations where the customer genuinely needs a person and a timeline.
+
+**Deflect before the window opens, not after.** If the question is answered by your help centre, get the customer there before they message you. A good widget or a pinned FAQ deflects questions that would otherwise become billable conversations.
+
+**Watch the allowance like a budget.** 1,000 free messages sounds like plenty until you do the arithmetic: if your bot averages six outbound messages per conversation, the allowance covers about 166 conversations a month. Know your per-number volume and your per-conversation message count, per month, before the invoice arrives.
+
+**Count messages per conversation, not just conversations.** The old metric was "how many chats did we handle". The metric that predicts your bill is outbound messages per chat. Track it, set a target, and treat a rising number as a cost problem, not a style problem.
+
+**Do not treat the 72-hour window as a loophole.** The free entry-point window is real, but it exists for conversations that start from your ads and page buttons. Using it as a general escape hatch is asking for Meta's enforcement to notice. Keep it clean.
+
+## The disclosure angle got sharper too
+
+Cost is one reason to rethink your bot; honesty is another. Since 5 October, OpenAI has let API customers opt in to machine-readable text watermarking — the direction the EU's AI Act is pushing everyone, so AI-generated text can be identified as such. Whether or not you flip that switch, label the bot plainly: "Our assistant can help with common questions — a person replies within [window]." Customers who know they are talking to a bot calibrate their expectations; customers who discover it mid-conversation feel tricked, and that costs more than any per-message fee.
+
+## What to do this week
+
+1. Confirm a payment method is on file — otherwise your replies stop.
+2. Pull last month's outbound service message count per number. Subtract 1,000. Multiply by your market's utility rate.
+3. Audit your bot's message count per turn. Merge the multi-message replies into single ones.
+4. Add "outbound messages per conversation" to your weekly reports.
+
+## The takeaway
+
+WhatsApp support did not get expensive — it got honest about having a cost. A thousand free replies a month keeps small teams untouched; everyone else just has to run their bot like every send costs money, because now it does. Fewer messages, more substance per message, and the cheap channels absorbing what they should have been absorbing all along. The teams that treat the meter as a design constraint will end up with tighter bots and lower bills than before the change.`,
+    tags: ['whatsapp', 'ai', 'conversion'],
+    author: 'Tariq Aziz',
+    published: true,
+    reading_mins: 5,
+    cover_image: 'images/blog/whatsapp-service-message-charges.jpg',
+  },
 ];
 
 export const HELP_SEED: HelpSeed[] = [
