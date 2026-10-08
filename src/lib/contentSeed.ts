@@ -1109,6 +1109,52 @@ WhatsApp support did not get expensive — it got honest about having a cost. A 
     reading_mins: 5,
     cover_image: 'images/blog/whatsapp-service-message-charges.jpg',
   },
+  {
+    slug: 'earn-trust-complex-support',
+    title: 'Your bot wins easy questions — now earn the hard ones',
+    excerpt:
+      'Fresh research: 6 in 10 customers trust AI only with simple requests. What earns their trust on complicated issues — and how to design handoffs that keep it.',
+    body: `## The short answer
+
+Your customers already trust your support bot with the easy stuff — order tracking, opening hours, password resets. New research from Zingtree, released on 6 October 2026, puts the other side of that coin in plain numbers: six in ten consumers trust AI for simple requests but not for complex issues, and half said AI gave them generic, unhelpful answers during their most recent complicated support case. The gap between "works fine" and "actually helpful" is where customers decide whether they like your company.
+
+## What a "complex" issue means to your customer
+
+In the survey — 1,040 US consumers, run by CMSWire INSIGHTS in July and August 2026 — a complex issue was anything needing multiple interactions, taking more than 30 minutes, or involving something high-stakes like money or health. Ninety percent of respondents had at least one such issue in the past year. Of those, half had one or more that was never resolved at all. Think about that: one in two of your customers has, in the last twelve months, given up on a support problem entirely.
+
+And when things went unresolved, who did they blame? The company, not the technology. Thirty-seven percent felt the company could have solved the problem but made the process too difficult or slow. Thirty-four percent felt the company understood the problem but didn't know how to solve it. Only nineteen percent felt the company never understood the problem at all. Customers rarely blame the bot. They blame you for how the bot was set up.
+
+## The two things customers actually want
+
+Buried in the findings are the two clearest design instructions anyone has given the support-chat industry this year.
+
+**First: give them the escape hatch, and make it visible.** Sixty-four percent of respondents said they trust AI more when it gives them control over when they can transfer directly to a human agent. Not "when the bot decides" — when the customer decides. A "Talk to a person" button that actually works, present from the start, doesn't make your bot look weak. It makes customers willing to try the bot first.
+
+**Second: never make them repeat themselves.** The single biggest frustration in complex support was wasting time with AI that failed to resolve the issue (27%), followed immediately by having to repeat information to a human after the AI failed (24%). Half of all respondents had to repeat previously provided information to a human rep after being transferred. That is the moment trust dies — the customer did the work once, the system threw it away, and now a person is asking for it again.
+
+## What this means for your chat setup
+
+You don't need enterprise tooling to act on this. A small team running a chat widget can get most of the way there with five moves:
+
+**1. Scope the bot out loud.** Tell visitors what the bot is good at, right in its greeting: "I can track orders, answer pricing questions, and find help articles. For anything else, I'll connect you to the team." Honest scoping beats an ambitious bot that flails. The research says customers are willing to give AI a chance on complex issues — but the window to get it right is small.
+
+**2. Two-turn rule.** If the bot can't resolve something in two exchanges, it should offer the human — not attempt a third guess. Customers notice the moment a bot starts circling. Let it step aside before that moment.
+
+**3. Hand off with the full context.** Whatever the visitor already typed, pasted, or selected must travel to the agent. This is a configuration detail, not a philosophy: the transcript goes with the ticket. Your agent's first line should show they've read it. "I can see you've been trying to get the refund for order 4412 processed" is the difference between a rescue and a restart.
+
+**4. Spot complexity early.** Certain signals — the visitor mentions a refund, a charge, a deadline, or types more than two long messages — are complexity markers. Route those toward a human sooner, not later. An automated assistant is for the routine; the moment a case smells high-stakes, a person should be in the loop.
+
+**5. Own the unresolved ones.** Nineteen percent of customers felt the company never understood their problem. When your team can't fix something, say so plainly, explain why, and name the next step — even if the next step is "we're escalating this and I'll personally update you by Thursday." Being honest about a miss keeps more trust than a bot cheerfully pretending there wasn't one.
+
+## The takeaway
+
+The AI trust conversation has moved on from "will customers talk to a bot?" — they will, and they do. The new question is what happens when the problem is genuinely hard. The research answer: customers will give your bot a fair chance, but they keep score. A visible human escape hatch, a handoff that carries the full story, and the honesty to say "this needs a person" are what separate bots customers tolerate from support experiences they recommend.`,
+    tags: ['ai', 'quality'],
+    author: 'Nadia Rahman',
+    published: true,
+    reading_mins: 5,
+    cover_image: 'images/blog/earn-trust-complex-support.jpg',
+  },
 ];
 
 export const HELP_SEED: HelpSeed[] = [
